@@ -658,11 +658,21 @@
         // the user returns here from a pushed sub-screen) *before* calling our component's start(). A
         // one-time registration in the constructor would only win on the very first entry and silently
         // revert to the framework placeholder after any such round-trip.
+        //
+        // collectionSet(html, append) collects '.selector' elements from BOTH html and append into one
+        // flat, spatially-navigable collection (confirmed by reading its body in app.min.js — append's
+        // matches just get concat()-ed onto html's). Online Mod's own results screen does exactly this:
+        // collectionSet(scroll.render(), files.render()) — its filter/balancer chip row and its result
+        // rows end up in the SAME collection, so up/down naturally walks from one into the other. Passing
+        // `grid` here instead of `toolbar` was wrong twice over: grid is already a DOM descendant of
+        // scroll, so it added nothing, and it left `toolbar` (search/season/voice/filters chips) out of
+        // every collection entirely — confirmed live, arrow keys could not reach the toolbar at all, only
+        // mouse/touch could. `toolbar` as the second argument fixes both.
         function refreshGrid() {
             try {
                 var current = Lampa.Controller.enabled();
                 if (current && current.name === 'content') {
-                    Lampa.Controller.collectionSet(scroll.render(true), grid);
+                    Lampa.Controller.collectionSet(scroll.render(true), toolbar);
                     Lampa.Controller.collectionFocus(false, scroll.render(true));
                 }
             } catch (e) {}
@@ -672,11 +682,12 @@
             Lampa.Controller.add('content', {
                 link: this,
                 toggle: function () {
-                    Lampa.Controller.collectionSet(scroll.render(true), grid);
+                    Lampa.Controller.collectionSet(scroll.render(true), toolbar);
                     Lampa.Controller.collectionFocus(false, scroll.render(true));
                 },
-                left: function () { Lampa.Controller.toggle('explorer'); },
-                up: function () { Navigator.move('up'); },
+                left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },
+                right: function () { Navigator.move('right'); },
+                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('explorer'); },
                 down: function () { Navigator.move('down'); },
                 back: function () { Lampa.Controller.toggle('explorer'); }
             });

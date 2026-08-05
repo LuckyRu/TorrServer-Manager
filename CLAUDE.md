@@ -195,6 +195,22 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     lesson for any future Explorer-based plugin screen: **the framework only wires navigation for the
     parts of the layout it owns (the left card); anything a plugin adds to the body is the plugin's own
     responsibility to wire into `Controller`, not just visually append.**
+  - **`Controller.collectionSet(html, append)` concatenates `.selector` matches from *both* arguments
+    into one flat, spatially-navigable collection** (confirmed by reading its body in `app.min.js`) —
+    this is exactly how Online Mod's own results screen keeps its filter/balancer chip row and its result
+    rows reachable by the same up/down presses: `collectionSet(scroll.render(), files.render())`.
+    Torrent Mod's first pass got this backwards: it passed `grid` (a DOM descendant of `scroll`, already
+    covered by `html`, so a no-op) instead of `toolbar` (the search/season/voice/filters chip row, which
+    lives in Explorer's separate `.explorer__files-head` and was never in *any* collection) — confirmed
+    live by pushing the component and driving `Lampa.Controller.move('up'/'right'/...)` from script: the
+    toolbar was a dead zone, reachable only by mouse/touch, never by keyboard or a TV remote, which for an
+    app whose whole purpose is a Lampa/WebOS TV setup is as serious as the back-button bug. Fixed by
+    passing `toolbar` as the second argument. Caught a second, related gap the same way: the `'content'`
+    controller had no `right` handler at all — per `Controller`'s internal `run(name)` (confirmed live:
+    `if (active[name]) active[name](params)`, no fallback when the key is simply absent), an *undefined*
+    direction handler isn't a no-op with default behavior, it's a completely dead key. Any named controller
+    a plugin registers needs an explicit handler for every direction it wants to support; there is no
+    built-in default movement to fall back on.
   - `Lampa.Component.add`'s real contract, confirmed live: a bare `create`/`render`/`destroy` is
     enough (this is literally what Lampa's own `nocomponent` fallback implements) — `start`/`pause`/
     `stop`/`back` are optional extras the Activity wrapper calls if present. `Lampa.Component.create`
