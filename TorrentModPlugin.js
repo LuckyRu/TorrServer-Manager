@@ -442,18 +442,19 @@
     // once an episode is picked (auto-play on a confident match, a small picker otherwise), the
     // same division SmartTsPlugin.js already uses. Season/translation live in the toolbar (the
     // slot Online Mod uses for its balancer picker); anything else is a plain filter list.
+    // Left info panel + toolbar row + scrollable list — all built on Lampa.Explorer, the same
+    // helper the native full-card view and Online Mod itself use (confirmed live: its
+    // constructor auto-populates the left panel from object.movie, no hand-built markup for
+    // that part needed at all). Toolbar controls use Lampa's own real
+    // `.simple-button.simple-button--filter` markup (also confirmed live) instead of custom
+    // CSS, so they inherit native styling for free.
     function TorrentModComponent(object) {
-        var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var movie = object.movie || {};
-        var html = $('<div class="torrent-mod"></div>');
-        var info = $('<div class="torrent-mod__info"></div>');
-        var main = $('<div class="torrent-mod__main"></div>');
+        var explorer = new Lampa.Explorer(object);
+        var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var grid = $('<div class="torrent-mod__list"></div>');
         var status = $('<div class="torrent-mod__status"></div>');
-        var toolbar = $('<div class="torrent-mod__toolbar"></div>');
-        var seasonControl = $('<div class="torrent-mod__control selector" data-name="season"></div>');
-        var voiceControl = $('<div class="torrent-mod__control selector" data-name="voice">Перевод: любой</div>');
-        var filtersControl = $('<div class="torrent-mod__control selector" data-name="filters">Фильтры</div>');
+        var toolbar = $('<div class="torrent-filter"></div>');
         var hasSeasons = !!(movie.number_of_seasons);
         var state = {
             season: object.season || 0,
@@ -461,31 +462,25 @@
             resolution: 'any'
         };
 
-        info.append(buildInfoPanel());
-        if (hasSeasons) {
-            toolbar.append(seasonControl);
-            updateSeasonLabel();
-        }
-        toolbar.append(voiceControl).append(filtersControl);
-        main.append(toolbar).append(status).append(grid);
-        html.append(info).append(main);
-
-        function buildInfoPanel() {
-            var poster = movie.img || movie.poster_path || '';
-            var year = (movie.release_date || movie.first_air_date || '').slice(0, 4);
-            var country = (movie.production_countries && movie.production_countries[0] && movie.production_countries[0].name) || '';
-            var rating = movie.vote_average ? parseFloat(movie.vote_average).toFixed(1) : '';
-            var genres = (movie.genres || []).map(function (g) { return g.name; }).join(', ');
-            var head = [year, country].filter(Boolean).join(' - ');
-            return $(
-                '<div class="torrent-mod-info__poster" style="background-image:url(\'' + poster + '\')"></div>' +
-                (head ? '<div class="torrent-mod-info__head">' + escapeHtml(head) + '</div>' : '') +
-                (rating ? '<div class="torrent-mod-info__rating">★ ' + rating + '</div>' : '') +
-                '<div class="torrent-mod-info__title">' + escapeHtml(movie.title || movie.name || '') + '</div>' +
-                (genres ? '<div class="torrent-mod-info__genres">' + escapeHtml(genres) + '</div>' : '') +
-                (movie.overview ? '<div class="torrent-mod-info__overview">' + escapeHtml(movie.overview) + '</div>' : '')
+        function filterButton(label, value) {
+            var el = $(
+                '<div class="simple-button simple-button--filter selector">' +
+                '<span>' + escapeHtml(label) + '</span><div>' + escapeHtml(value) + '</div></div>'
             );
+            return { el: el, setValue: function (text) { el.find('> div').text(text); } };
         }
+
+        var seasonControl = hasSeasons ? filterButton('Сезон', String(state.season || 1)) : null;
+        var voiceControl = filterButton('Перевод', 'Любой');
+        var filtersControl = filterButton('Фильтры', '');
+
+        if (seasonControl) toolbar.append(seasonControl.el);
+        toolbar.append(voiceControl.el).append(filtersControl.el);
+        scroll.minus();
+        scroll.append(grid);
+        explorer.appendHead(toolbar);
+        explorer.appendFiles(status);
+        explorer.appendFiles(scroll.render());
 
         function playIcon() {
             return '<svg class="torrent-mod-row__icon" viewBox="0 0 24 24" width="26" height="26"><circle cx="12" cy="12" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="currentColor" d="M10 8l6 4-6 4z"/></svg>';
@@ -615,20 +610,22 @@
             loadEpisodes();
         }
 
-        seasonControl.on('hover:enter', function () {
-            Lampa.Select.show({
-                title: 'Выберите сезон',
-                items: buildSeasonItems(object.movie, state.season),
-                onSelect: function (choice) {
-                    if (choice.season === state.season) return;
-                    state.season = choice.season;
-                    updateSeasonLabel();
-                    loadEpisodes();
-                }
+        if (seasonControl) {
+            seasonControl.el.on('hover:enter', function () {
+                Lampa.Select.show({
+                    title: 'Выберите сезон',
+                    items: buildSeasonItems(movie, state.season),
+                    onSelect: function (choice) {
+                        if (choice.season === state.season) return;
+                        state.season = choice.season;
+                        seasonControl.setValue(String(state.season));
+                        loadEpisodes();
+                    }
+                });
             });
-        });
+        }
 
-        voiceControl.on('hover:enter', function () {
+        voiceControl.el.on('hover:enter', function () {
             Lampa.Select.show({
                 title: 'Перевод',
                 items: [
@@ -640,12 +637,12 @@
                 ],
                 onSelect: function (choice) {
                     state.voiceType = choice.value;
-                    voiceControl.text('Перевод: ' + choice.title.toLowerCase());
+                    voiceControl.setValue(choice.title);
                 }
             });
         });
 
-        filtersControl.on('hover:enter', function () {
+        filtersControl.el.on('hover:enter', function () {
             Lampa.Select.show({
                 title: 'Качество',
                 items: [
@@ -656,21 +653,21 @@
                 ],
                 onSelect: function (choice) {
                     state.resolution = choice.value;
-                    filtersControl.text(choice.value === 'any' ? 'Фильтры' : 'Качество: ' + choice.title);
+                    filtersControl.setValue(choice.value === 'any' ? '' : choice.title);
                 }
             });
         });
 
         this.create = function () { return this.render(true); };
-        this.render = function (js) { return js ? html : $('<div></div>').append(html); };
-        this.start = function () { start(); };
+        this.render = function (js) { return explorer.render(js); };
+        this.start = function () { explorer.toggle(); start(); };
         this.pause = function () {};
         this.stop = function () {};
         this.back = function () { Lampa.Activity.backward(); };
         this.destroy = function () {
             cancelSearch();
             try { scroll.destroy(); } catch (e) {}
-            html.remove();
+            try { explorer.destroy(); } catch (e) {}
         };
     }
 
@@ -725,23 +722,11 @@
         var style = document.createElement('style');
         style.id = 'torrent-mod-styles';
         style.textContent = [
-            '.torrent-mod{display:flex;gap:2em;padding:1.5em}',
-            '.torrent-mod__info{width:20em;flex-shrink:0}',
-            '.torrent-mod-info__poster{width:100%;height:16em;background-size:cover;background-position:center;background-color:#0b1220;border-radius:.6em;margin-bottom:1em}',
-            '.torrent-mod-info__head{opacity:.7;margin-bottom:.3em}',
-            '.torrent-mod-info__rating{margin-bottom:.5em}',
-            '.torrent-mod-info__title{font-size:1.4em;font-weight:700;margin-bottom:.4em}',
-            '.torrent-mod-info__genres{opacity:.7;margin-bottom:.6em}',
-            '.torrent-mod-info__overview{opacity:.85;font-size:.92em;line-height:1.4}',
-            '.torrent-mod__main{flex:1;min-width:0}',
-            '.torrent-mod__toolbar{display:flex;gap:.8em;margin-bottom:1em;flex-wrap:wrap}',
-            '.torrent-mod__control{padding:.5em .9em;background:#2c394b;border-radius:.6em}',
-            '.torrent-mod__control.focus{background:#fff;color:#111}',
-            '.torrent-mod__status{opacity:.7;margin-bottom:1em;min-height:1.2em}',
+            '.torrent-mod__status{opacity:.7;margin:0 0 1em 1.5em;min-height:1.2em}',
             '.torrent-mod__list{display:flex;flex-direction:column;gap:.6em}',
             '.torrent-mod-row{display:flex;align-items:center;gap:.9em;padding:.9em 1.1em;background:#182231;border-radius:.7em}',
             '.torrent-mod-row.focus{background:#fff;color:#111}',
-            '.torrent-mod-row__icon{flex-shrink:0;opacity:.85}',
+            '.torrent-mod-row__icon{width:26px;height:26px;flex-shrink:0;opacity:.85}',
             '.torrent-mod-row__body{flex:1;min-width:0}',
             '.torrent-mod-row__title{font-weight:600}',
             '.torrent-mod-row__subtitle{opacity:.65;font-size:.88em;margin-top:.2em}',

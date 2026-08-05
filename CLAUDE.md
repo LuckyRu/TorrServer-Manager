@@ -151,22 +151,48 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   no results list of its own (`Lampa.Select.show` overlay only, or falls back to Lampa's native
   `torrents` component when the pick is ambiguous).
 - **`TorrentModPlugin.js`** — embedded as `TorrServerManager.TorrentModPlugin.js`. A second, independent
-  torrent plugin (own card button, own `Lampa.Component.add('torrent_mod', ...)` results screen with
-  sort/filter, own `Lampa.SettingsApi` settings component) rather than a native-screen wrapper like
-  `SmartTsPlugin.js` — a deliberate product choice, see the plan this was built from
-  (`playful-leaping-wilkinson` in `~/.claude/plans/` at authoring time) for the tradeoffs considered.
-  Searches via `/api/torrent-search` (all Jackett indexers at once, not just RuTracker). Reuses several
-  functions verbatim/adapted from `SmartTsPlugin.js` (`parseSignals`, season/episode `Lampa.Select.show`
-  picker, the preload-polling pattern) but deliberately does **not** globally patch
-  `Lampa.Player.play`/`Lampa.Torserver.stream` the way `SmartTsPlugin.js` does — both plugins are enabled
-  simultaneously by default, and double-patching the same globals from two independent plugins is a
-  reliable source of hard-to-debug ordering bugs; Torrent Mod's preload flow is scoped to its own
-  "start download" handler instead. `parseRelease()` (quality/HDR/audio/subtitle/season/episode tagging
-  from raw Torznab titles) was tuned against real titles pulled live from this project's own Jackett
-  instance, not guessed — re-tune here if tag accuracy drifts. The exact `Lampa.Component.add` lifecycle
-  contract used was not independently verified against `yumata/lampa-source` before shipping (implemented
-  against the common create/render/start/pause/stop/destroy/back shape used elsewhere in this ecosystem)
-  — check here first if the results screen fails to mount on a real device.
+  torrent plugin (own card button, own `Lampa.Component.add('torrent_mod', ...)` results screen) rather
+  than a native-screen wrapper like `SmartTsPlugin.js` — a deliberate product choice; see the plan this
+  was built from (`playful-leaping-wilkinson` in `~/.claude/plans/` at authoring time) for the tradeoffs.
+  Searches via `/api/torrent-search` (all Jackett indexers at once, not just RuTracker). Primary content
+  is EPISODE metadata from TMDB (a scrollable list, not raw torrent results) — picking an episode
+  triggers an automatic, mostly-invisible torrent match (`episodeMatchScore`, adapted from
+  `SmartTsPlugin.js`'s `torrentScore`): auto-play on a confident match, a small `Lampa.Select.show`
+  picker otherwise. `parseRelease()` (quality/HDR/audio/subtitle/season/episode tagging from raw Torznab
+  titles) was tuned against real titles pulled live from this project's own Jackett instance, not
+  guessed — re-tune here if tag accuracy drifts.
+  - **The whole left info panel + toolbar + scrollable list chrome is `Lampa.Explorer`**, not hand-built
+    markup — confirmed live by opening this app's own `/app/` in a browser and inspecting the real,
+    running Lampa/Online Mod DOM (`new Lampa.Explorer(object)` auto-populates the left card from
+    `object.movie`; `explorer.appendHead(el)` fills the toolbar row, unhiding it;
+    `explorer.appendFiles(el)` fills the scrollable body; `explorer.render(js)`/`explorer.destroy()` map
+    straight onto the Component contract). An earlier hand-rolled version (custom flex CSS for the info
+    panel, custom `.torrent-mod__control` toolbar chips) visually didn't read as "native" at all — this
+    is why. Toolbar controls use Lampa's own real `.simple-button.simple-button--filter` markup
+    (`<div class="simple-button simple-button--filter selector"><span>Label</span><div>Value</div></div>`,
+    also confirmed live) instead of custom-styled divs, for free native styling.
+  - **`Lampa.Component.add`'s real contract, confirmed live**: a bare `create`/`render`/`destroy` is
+    enough (this is literally what Lampa's own `nocomponent` fallback implements) — `start`/`pause`/
+    `stop`/`back` are optional extras the Activity wrapper calls if present. `Lampa.Component.create`
+    wraps `new component[name](object)` in try/catch and **silently swaps in `nocomponent`** (a generic
+    "Здесь пусто" empty-state) on ANY constructor exception — a real bug (e.g. a typo'd API call) shows
+    no visible error at all, just the wrong empty screen. Check `console.log('Component', 'create error',
+    ...)` in devtools first if a results screen won't render.
+  - `Lampa.Utils.escape` **does not exist** in this Lampa build (confirmed live — was the actual cause of
+    the "silently falls back to nocomponent" bug above the first time). Use the plugin's own local
+    `escapeHtml()` for any HTML interpolation instead of assuming Lampa provides one.
+  - Deliberately does **not** globally patch `Lampa.Player.play`/`Lampa.Torserver.stream` the way
+    `SmartTsPlugin.js` does — both plugins are enabled simultaneously by default, and double-patching the
+    same globals from two independent plugins is a reliable source of hard-to-debug ordering bugs.
+    `Lampa.Torrent.start(...)` already drives Lampa's own native torrent-preparation dialog (percent,
+    speed, peers/seeds, cancel/force-play) with zero extra code — confirmed live end-to-end (search →
+    auto-match → native progress dialog), so no custom preload overlay was needed here at all.
+  - **Fast JS-only iteration without rebuilding the .NET app**: drop an updated copy of the file at
+    `%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js` (same file name as the
+    `EmbeddedResource`) — `BuiltInPlugins.Read` checks that path first and only falls back to the
+    embedded resource if it's absent. `POST /api/plugins/refresh` (loopback-only) then picks up the new
+    content via the normal SHA-256 cache-diff path — no `dotnet build`/`publish`/process-restart needed.
+    Applies to any built-in plugin, not just this one.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
