@@ -482,17 +482,21 @@
         explorer.appendFiles(status);
         explorer.appendFiles(scroll.render());
 
-        function playIcon() {
-            return '<svg class="torrent-mod-row__icon" viewBox="0 0 24 24" width="26" height="26"><circle cx="12" cy="12" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="currentColor" d="M10 8l6 4-6 4z"/></svg>';
-        }
-
+        // Row markup/CSS ported 1:1 from the real, currently-installed Online Mod (inspected live
+        // via this app's own /app/ in a browser, DOM + computed styles — not guessed): icon is an
+        // absolutely-positioned 2.4em circle at top:-0.3em/left:0, title/subtitle just get
+        // padding-left to clear it, rather than a flex row. Own class names, their exact technique.
         function row(title, subtitle) {
             return $(
-                '<div class="torrent-mod-row selector">' + playIcon() +
-                '<div class="torrent-mod-row__body">' +
+                '<div class="torrent-mod-row selector">' +
+                '<div class="torrent-mod-row__icon">' +
+                '<svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+                '<circle cx="64" cy="64" r="56" stroke="currentColor" stroke-width="16"></circle>' +
+                '<path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="currentColor"></path>' +
+                '</svg></div>' +
                 '<div class="torrent-mod-row__title">' + escapeHtml(title) + '</div>' +
                 (subtitle ? '<div class="torrent-mod-row__subtitle">' + escapeHtml(subtitle) + '</div>' : '') +
-                '</div></div>'
+                '</div>'
             );
         }
 
@@ -505,7 +509,7 @@
                     'Сезон ' + state.season + ' / Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
                     [episode.air_date, progressText(view)].filter(Boolean).join(' · ')
                 );
-                if (view && Lampa.Timeline && Lampa.Timeline.render) node.find('.torrent-mod-row__body').append(Lampa.Timeline.render(view));
+                if (view && Lampa.Timeline && Lampa.Timeline.render) node.append(Lampa.Timeline.render(view));
                 node.on('hover:enter', function () { selectEpisode(number); });
                 grid.append(node);
             });
@@ -721,15 +725,18 @@
         if (document.getElementById('torrent-mod-styles')) return;
         var style = document.createElement('style');
         style.id = 'torrent-mod-styles';
+        // .torrent-mod-row* mirrors Online Mod's real .online/.online__title structure and spacing
+        // 1:1 (absolute icon circle, padding-left text) — inspected live, see the `row()` comment.
         style.textContent = [
             '.torrent-mod__status{opacity:.7;margin:0 0 1em 1.5em;min-height:1.2em}',
             '.torrent-mod__list{display:flex;flex-direction:column;gap:.6em}',
-            '.torrent-mod-row{display:flex;align-items:center;gap:.9em;padding:.9em 1.1em;background:#182231;border-radius:.7em}',
+            '.torrent-mod-row{position:relative;padding:.8em;background:rgba(0,0,0,.3);border-radius:.2em}',
             '.torrent-mod-row.focus{background:#fff;color:#111}',
-            '.torrent-mod-row__icon{width:26px;height:26px;flex-shrink:0;opacity:.85}',
-            '.torrent-mod-row__body{flex:1;min-width:0}',
-            '.torrent-mod-row__title{font-weight:600}',
-            '.torrent-mod-row__subtitle{opacity:.65;font-size:.88em;margin-top:.2em}',
+            '.torrent-mod-row.focus .torrent-mod-row__icon{color:#111}',
+            '.torrent-mod-row__icon{position:absolute;left:0;top:-.3em;width:2.4em;height:2.4em}',
+            '.torrent-mod-row__icon svg{width:2.4em;height:2.4em}',
+            '.torrent-mod-row__title{padding-left:2.1em;font-size:1.1em}',
+            '.torrent-mod-row__subtitle{padding-left:2.1em;opacity:.65;font-size:.88em;margin-top:.2em}',
             '.view--torrent-mod svg{margin-right:.7em}'
         ].join('');
         document.head.appendChild(style);
