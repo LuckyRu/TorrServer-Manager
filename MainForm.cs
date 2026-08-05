@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 
 namespace TorrServerManager;
 
@@ -9,6 +10,11 @@ internal sealed class MainForm : Form
     private static readonly Color Amber = Color.FromArgb(217, 119, 6);
     private static readonly Color Red = Color.FromArgb(220, 38, 38);
     private static readonly Color Muted = Color.FromArgb(100, 116, 139);
+
+    private static readonly string AppVersion =
+        Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "?";
 
     private readonly ServerController controller = new();
     private readonly JackettController jackettController = new();
@@ -60,7 +66,7 @@ internal sealed class MainForm : Form
         updateService = new UpdateService(controller);
         AppPaths.EnsureDirectories();
 
-        Text = "TorrServer Manager";
+        Text = $"TorrServer Manager v{AppVersion}";
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(620, 648);
         MinimumSize = new Size(620, 648);
@@ -80,7 +86,7 @@ internal sealed class MainForm : Form
         };
         var subtitle = new Label
         {
-            Text = "Сервер для Lampa и устройств в локальной сети",
+            Text = $"Сервер для Lampa и устройств в локальной сети · v{AppVersion}",
             ForeColor = Muted,
             AutoSize = true,
             Location = new Point(27, 52)
@@ -326,7 +332,7 @@ internal sealed class MainForm : Form
             exitItem
         ]);
 
-        trayIcon.Text = "TorrServer Manager";
+        trayIcon.Text = $"TorrServer Manager v{AppVersion}";
         trayIcon.ContextMenuStrip = menu;
         trayIcon.Visible = true;
         trayIcon.DoubleClick += (_, _) => ShowFromTray();

@@ -20,10 +20,11 @@ Build (debug):
 dotnet build TorrServerManager.csproj
 ```
 
-Publish a self-contained single-file win-x64 executable (matches the `publish/` output already checked in):
+Publish a self-contained single-file win-x64 executable:
 ```bash
 dotnet publish TorrServerManager.csproj -c Release
 ```
+Output: `bin\Release\net10.0-windows\win-x64\publish\TorrServerManager.exe`.
 
 Run locally (starts the tray app):
 ```bash
@@ -34,6 +35,20 @@ Run hidden/minimized to tray (same flag the app uses for autostart):
 ```bash
 dotnet run --project TorrServerManager.csproj -- --background
 ```
+
+### Release workflow
+
+For a user-visible change, the full loop is commit → publish → deploy → restart:
+
+1. Bump `<Version>` in `TorrServerManager.csproj` per SemVer2 (see Conventions).
+2. `git commit` — Russian, Conventional Commits, short description.
+3. `dotnet publish TorrServerManager.csproj -c Release`.
+4. Deploy to the live install: stop the running `TorrServerManager.exe`, back up the old one in place as
+   `TorrServerManager.v<old-version>.bak.exe` (matches the existing `.bak.exe` files next to it), copy the
+   freshly published exe over `%LocalAppData%\Programs\TorrServer\TorrServerManager.exe`, then start it
+   again with `--background` (same flag the autostart shortcut uses).
+   `TorrServer.exe`/`JackettConsole.exe` are independent processes and don't need restarting for a manager
+   deploy.
 
 There is no test suite and no linter configured in this repo.
 
@@ -117,3 +132,10 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
 - Version strings from TorrServer follow the `MatriX.x.x.x` format and are parsed/compared with a
   dedicated regex + numeric part comparison (`UpdateService.IsNewer`); Jackett versions are standard
   `System.Version` strings compared with `JackettController.IsNewer`.
+- Commit messages are in Russian, following Conventional Commits (`тип(область): суть`, e.g.
+  `fix(jackett): ...`, `feat(hub): ...`). Keep the description short and to the point — no padding, no
+  restating the diff line by line.
+- The app itself (TorrServerManager, not TorrServer/Jackett) is versioned per SemVer2 via
+  `<Version>` in `TorrServerManager.csproj`. Bump it on every user-visible change. The version must be
+  surfaced in the UI (main window) and in the tray icon's hover tooltip (`NotifyIcon.Text`) — not just
+  buried in the assembly metadata.
