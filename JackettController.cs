@@ -34,6 +34,21 @@ internal sealed class JackettController : IDisposable
 
     public string LocalUrl => $"http://127.0.0.1:{AppPaths.JackettPort}";
 
+    public string? GetApiKey()
+    {
+        try
+        {
+            if (!File.Exists(AppPaths.JackettServerConfig))
+                return null;
+            using var document = JsonDocument.Parse(File.ReadAllText(AppPaths.JackettServerConfig));
+            return document.RootElement.TryGetProperty("APIKey", out var apiKeyProperty) ? apiKeyProperty.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public async Task<JackettStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         var installed = File.Exists(AppPaths.JackettExecutable);

@@ -27,6 +27,7 @@ internal static class AppPaths
     public static readonly string JackettAppDirectory = Path.Combine(JackettDirectory, "App");
     public static readonly string JackettExecutable = Path.Combine(JackettAppDirectory, "JackettConsole.exe");
     public static readonly string JackettIndexersDirectory = Path.Combine(JackettDirectory, "Indexers");
+    public static readonly string JackettServerConfig = Path.Combine(JackettDirectory, "ServerConfig.json");
     public const int Port = 8090;
     public const int PluginHubPort = 8095;
     public const int JackettPort = 9117;

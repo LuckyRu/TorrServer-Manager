@@ -133,6 +133,7 @@ internal sealed class PluginHub : IDisposable
     public string LocalPanelUrl => $"http://127.0.0.1:{AppPaths.PluginHubPort}/";
     public string LanLoaderUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/lampa.js";
     public string LampaAppUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/app/";
+    public string JackettProxyUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/jackett";
 
     public void Start()
     {
@@ -315,6 +316,14 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" &&
+                (path.Equals("/jackett", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/jackett/", StringComparison.OrdinalIgnoreCase)))
+            {
+                var relative = path.Length > "/jackett/".Length ? path["/jackett/".Length..] : "";
+                await ProxyToJackettAsync(context.Response, relative, context.Request.Url?.Query ?? "");
+                return;
+            }
+
             await WriteErrorAsync(context.Response, HttpStatusCode.NotFound, "Страница не найдена.");
         }
         catch (UnauthorizedAccessException exception)
@@ -380,6 +389,32 @@ internal sealed class PluginHub : IDisposable
             throw new InvalidDataException("Jackett вернул некорректный ответ RuTracker.");
 
         await WriteTextAsync(response, results.GetRawText(), "application/json; charset=utf-8");
+    }
+
+    private async Task ProxyToJackettAsync(HttpListenerResponse response, string relativePath, string query)
+    {
+        relativePath = Uri.UnescapeDataString(relativePath);
+        var url = $"http://127.0.0.1:{AppPaths.JackettPort}/{relativePath}{query}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        HttpResponseMessage upstream;
+        try
+        {
+            upstream = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+        }
+        catch (HttpRequestException)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Jackett недоступен на этом компьютере.");
+            return;
+        }
+
+        using (upstream)
+        {
+            response.StatusCode = (int)upstream.StatusCode;
+            response.ContentType = upstream.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+            await using var stream = await upstream.Content.ReadAsStreamAsync(cancellation.Token);
+            await stream.CopyToAsync(response.OutputStream, cancellation.Token);
+        }
     }
 
     private async Task WriteCachedPluginAsync(HttpListenerResponse response, string path)

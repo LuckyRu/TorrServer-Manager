@@ -94,6 +94,21 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     restricted to loopback requests (`EnsureLoopback`).
   - `/api/smart-search` proxies a RuTracker query through the locally running Jackett instance using its
     stored API key.
+  - `/jackett/*` reverse-proxies to loopback Jackett (`GET` only, path + query string passed through
+    verbatim) so LAN devices can reach it despite Jackett staying bound to `127.0.0.1`. This exists
+    because Lampa 3.2.8+ has its own native "Тип парсера: Jackett" setting (a direct URL + API key field,
+    separate from `SmartTsPlugin`'s RuTracker-only proxy) that needs a LAN-reachable Jackett endpoint.
+    Tried making Jackett itself bind `0.0.0.0` directly first (`AllowExternal`/`LocalBindAddress` in its
+    `ServerConfig.json`) — Jackett refuses with "Unable to switch to public listening without admin
+    rights" unless `JackettConsole.exe` itself runs elevated (its own internal check, confirmed by
+    running it manually with `-z` and watching the console output; a `netsh http add urlacl` reservation
+    for the port did *not* help, so it isn't an HTTP.SYS/URL-ACL issue). Running Jackett as a Windows
+    service (LocalSystem) would also satisfy that check, but reintroduces the UAC-per-click and
+    service-install complexity the migration away from a service (see below) deliberately removed, plus
+    runs Jackett with far broader privileges than the interactive user — rejected for both reasons. The
+    proxy keeps Jackett unprivileged and loopback-only exactly as before; `MainForm`'s Jackett card shows
+    `PluginHub.JackettProxyUrl` (`http://<lan-ip>:8095/jackett`) as the "Ссылка" to paste into Lampa's
+    parser settings, alongside `JackettController.GetApiKey()` (read straight from `ServerConfig.json`).
   - Plugin configuration persists to `lampa-plugins.json`; download cache metadata persists to
     `lampa-cache/cache-state.json`. Both are written atomically (write to `.tmp`, then `File.Move`).
   - Runs a periodic background refresh (`RefreshInterval` = 6h) of all enabled plugins in addition to

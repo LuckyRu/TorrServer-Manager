@@ -44,6 +44,8 @@ internal sealed class MainForm : Form
     private readonly Label jackettStatusText = new();
     private readonly Label jackettDetails = new();
     private readonly Label jackettVersionValue = new();
+    private readonly Label jackettLanAddress = new();
+    private readonly Label jackettApiKeyValue = new();
     private readonly Button startButton;
     private readonly Button stopButton;
     private readonly Button restartButton;
@@ -78,9 +80,9 @@ internal sealed class MainForm : Form
 
         Text = $"TorrServer Manager v{AppVersion}";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(620, 790);
-        MinimumSize = new Size(620, 790);
-        MaximumSize = new Size(780, 910);
+        ClientSize = new Size(620, 870);
+        MinimumSize = new Size(620, 870);
+        MaximumSize = new Size(780, 990);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Segoe UI", 10F);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -191,7 +193,7 @@ internal sealed class MainForm : Form
         ]);
         Controls.Add(lampaPanel);
 
-        var jackettPanel = CreateCard(new Rectangle(24, 548, 572, 104));
+        var jackettPanel = CreateCard(new Rectangle(24, 548, 572, 184));
         var jackettTitle = new Label
         {
             Text = "Jackett / Torznab",
@@ -226,14 +228,35 @@ internal sealed class MainForm : Form
             button.Height = 32;
             button.Top = 62;
         }
+        var jackettLanCaption = new Label
+        {
+            Text = "Для Lampa: Настройки → Тип парсера «Jackett»",
+            ForeColor = Muted,
+            AutoSize = true,
+            Location = new Point(18, 104)
+        };
+        jackettLanAddress.Text = pluginHub.JackettProxyUrl;
+        jackettLanAddress.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+        jackettLanAddress.AutoSize = true;
+        jackettLanAddress.Location = new Point(18, 126);
+        var jackettLanCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 118), 108);
+        jackettLanCopyButton.Height = 28;
+        jackettLanCopyButton.Click += (_, _) => CopyToClipboard(jackettLanCopyButton, jackettLanAddress.Text);
+        jackettApiKeyValue.Text = "API-ключ: —";
+        jackettApiKeyValue.AutoSize = true;
+        jackettApiKeyValue.Location = new Point(18, 152);
+        var jackettApiKeyCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 150), 108);
+        jackettApiKeyCopyButton.Height = 28;
+        jackettApiKeyCopyButton.Click += (_, _) => CopyToClipboard(jackettApiKeyCopyButton, jackettController.GetApiKey() ?? "");
         jackettPanel.Controls.AddRange([
             jackettTitle, jackettDot, jackettStatusText, jackettDetails,
             jackettVersionCaption, jackettVersionValue,
-            jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton
+            jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton,
+            jackettLanCaption, jackettLanAddress, jackettLanCopyButton, jackettApiKeyValue, jackettApiKeyCopyButton
         ]);
         Controls.Add(jackettPanel);
 
-        var updatePanel = CreateCard(new Rectangle(24, 668, 572, 94));
+        var updatePanel = CreateCard(new Rectangle(24, 748, 572, 94));
         var updateTitle = new Label
         {
             Text = "Обновления TorrServer",
@@ -504,6 +527,8 @@ internal sealed class MainForm : Form
             trayRestartItem.Enabled = !busy && status.ProcessRunning;
 
             jackettVersionValue.Text = jackettStatus.Version;
+            jackettLanAddress.Text = pluginHub.JackettProxyUrl;
+            jackettApiKeyValue.Text = $"API-ключ: {jackettController.GetApiKey() ?? "—"}";
             if (jackettStatus.IsRunning)
             {
                 jackettDot.ForeColor = Green;
