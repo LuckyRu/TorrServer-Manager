@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-TorrServerManager is a Windows tray application (WinForms, .NET 9) that installs, runs, and updates
+TorrServerManager is a Windows tray application (WinForms, .NET 10) that installs, runs, and updates
 [TorrServer](https://github.com/YouROK/TorrServer) and [Jackett](https://github.com/Jackett/Jackett) for
 use with the Lampa media center app. It also hosts a small local HTTP service ("Lampa Plugin Hub") that
 mirrors Lampa plugin scripts on the LAN, and ships a built-in Lampa plugin (`SmartTsPlugin.js`) for
