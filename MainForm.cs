@@ -24,6 +24,7 @@ internal sealed class MainForm : Form
     private readonly Label statusDetails = new();
     private readonly Label versionValue = new();
     private readonly LinkLabel addressValue = new();
+    private readonly LinkLabel hubAddress = new();
     private readonly Label updateText = new();
     private readonly Label jackettDot = new();
     private readonly Label jackettStatusText = new();
@@ -61,9 +62,9 @@ internal sealed class MainForm : Form
 
         Text = "TorrServer Manager";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(620, 640);
-        MinimumSize = new Size(620, 640);
-        MaximumSize = new Size(780, 760);
+        ClientSize = new Size(620, 676);
+        MinimumSize = new Size(620, 676);
+        MaximumSize = new Size(780, 796);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Segoe UI", 10F);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -111,7 +112,10 @@ internal sealed class MainForm : Form
         addressValue.Location = new Point(430, 51);
         addressValue.LinkColor = Accent;
         addressValue.LinkClicked += (_, _) => OpenWebInterface(useLanAddress: true);
-        statusPanel.Controls.AddRange([statusDot, statusText, statusDetails, versionCaption, versionValue, addressCaption, addressValue]);
+        var addressCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(430, 78), 90);
+        addressCopyButton.Height = 26;
+        addressCopyButton.Click += (_, _) => CopyToClipboard(addressCopyButton, addressValue.Text);
+        statusPanel.Controls.AddRange([statusDot, statusText, statusDetails, versionCaption, versionValue, addressCaption, addressValue, addressCopyButton]);
         Controls.Add(statusPanel);
 
         startButton = CreateButton("Запустить", Accent, new Point(24, 214), 106);
@@ -120,7 +124,7 @@ internal sealed class MainForm : Form
         openButton = CreateButton("Открыть веб", Green, new Point(404, 214), 132);
         Controls.AddRange([startButton, stopButton, restartButton, openButton]);
 
-        var hubPanel = CreateCard(new Rectangle(24, 274, 572, 80));
+        var hubPanel = CreateCard(new Rectangle(24, 274, 572, 116));
         var hubTitle = new Label
         {
             Text = "Плагины Lampa",
@@ -128,20 +132,29 @@ internal sealed class MainForm : Form
             AutoSize = true,
             Location = new Point(18, 12)
         };
-        var hubAddress = new LinkLabel
+        var hubCaption = new Label
         {
-            Text = pluginHub.LanLoaderUrl,
+            Text = "Добавьте на телевизоре: Настройки → Расширения → Добавить плагин",
+            ForeColor = Muted,
             AutoSize = true,
-            Location = new Point(19, 43),
-            LinkColor = Accent
+            Location = new Point(18, 44)
         };
+        hubAddress.Text = pluginHub.LanLoaderUrl;
+        hubAddress.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+        hubAddress.AutoSize = true;
+        hubAddress.Location = new Point(18, 68);
+        hubAddress.LinkColor = Accent;
         hubAddress.LinkClicked += (_, _) => OpenPluginHub();
-        var hubButton = CreateButton("Управлять", Color.FromArgb(124, 58, 237), new Point(440, 19), 108);
+        var hubButton = CreateButton("Управлять", Color.FromArgb(124, 58, 237), new Point(440, 10), 108);
+        hubButton.Height = 30;
         hubButton.Click += (_, _) => OpenPluginHub();
-        hubPanel.Controls.AddRange([hubTitle, hubAddress, hubButton]);
+        var hubCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 62), 108);
+        hubCopyButton.Height = 30;
+        hubCopyButton.Click += (_, _) => CopyToClipboard(hubCopyButton, hubAddress.Text);
+        hubPanel.Controls.AddRange([hubTitle, hubCaption, hubAddress, hubButton, hubCopyButton]);
         Controls.Add(hubPanel);
 
-        var jackettPanel = CreateCard(new Rectangle(24, 370, 572, 132));
+        var jackettPanel = CreateCard(new Rectangle(24, 406, 572, 132));
         var jackettTitle = new Label
         {
             Text = "Jackett / Torznab",
@@ -191,7 +204,7 @@ internal sealed class MainForm : Form
         ]);
         Controls.Add(jackettPanel);
 
-        var updatePanel = CreateCard(new Rectangle(24, 518, 572, 94));
+        var updatePanel = CreateCard(new Rectangle(24, 554, 572, 94));
         var updateTitle = new Label
         {
             Text = "Обновления TorrServer",
@@ -232,6 +245,13 @@ internal sealed class MainForm : Form
                 Hide();
             }
 
+            try { await FirewallService.EnsureRulesAsync(lifetime.Token); }
+            catch (Exception exception)
+            {
+                AppLog.Write(exception);
+                trayIcon.ShowBalloonTip(5000, "Файервол не настроен", exception.Message, ToolTipIcon.Warning);
+            }
+
             try { pluginHub.Start(); }
             catch (Exception exception)
             {
@@ -244,6 +264,13 @@ internal sealed class MainForm : Form
             {
                 AppLog.Write(exception);
                 trayIcon.ShowBalloonTip(5000, "TorrServer не запущен", exception.Message, ToolTipIcon.Error);
+            }
+
+            try { await jackettController.StartAsync(lifetime.Token); }
+            catch (Exception exception)
+            {
+                AppLog.Write(exception);
+                trayIcon.ShowBalloonTip(5000, "Jackett не запущен", exception.Message, ToolTipIcon.Error);
             }
 
             await RefreshStatusAsync();
@@ -370,8 +397,8 @@ internal sealed class MainForm : Form
         try
         {
             var status = await jackettController.GetStatusAsync(lifetime.Token);
-            var latest = await jackettController.GetLatestVersionAsync(lifetime.Token);
-            if (!JackettController.IsNewer(latest, status.Version))
+            var release = await jackettController.GetLatestReleaseAsync(lifetime.Token);
+            if (!JackettController.IsNewer(release.Version, status.Version))
             {
                 MessageBox.Show(this, $"Установлена актуальная версия Jackett {status.Version}.", "Jackett", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -379,7 +406,7 @@ internal sealed class MainForm : Form
 
             var answer = MessageBox.Show(
                 this,
-                $"Установить Jackett {latest}?\n\nСлужба будет кратковременно перезапущена.",
+                $"Установить Jackett {release.Version}?\n\nПроцесс будет кратковременно перезапущен.",
                 "Обновление Jackett",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
@@ -387,7 +414,8 @@ internal sealed class MainForm : Form
                 return;
 
             jackettStatusText.Text = "Обновление…";
-            await jackettController.TriggerBuiltInUpdateAsync(lifetime.Token);
+            var progress = new Progress<string>(message => jackettDetails.Text = message);
+            await jackettController.InstallUpdateAsync(release, progress, lifetime.Token);
             var updated = await jackettController.GetStatusAsync(lifetime.Token);
             MessageBox.Show(this, $"Jackett обновлён до {updated.Version}.", "Jackett", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -454,6 +482,7 @@ internal sealed class MainForm : Form
             var jackettStatus = await jackettController.GetStatusAsync(lifetime.Token);
             versionValue.Text = status.Version;
             addressValue.Text = status.LanAddress;
+            hubAddress.Text = pluginHub.LanLoaderUrl;
 
             if (status.IsRunning)
             {
@@ -494,6 +523,12 @@ internal sealed class MainForm : Form
                 jackettStatusText.Text = "Работает";
                 jackettDetails.Text = $"Настроено источников: {jackettStatus.ConfiguredIndexers}";
             }
+            else if (jackettStatus.ProcessRunning)
+            {
+                jackettDot.ForeColor = Amber;
+                jackettStatusText.Text = "Запускается";
+                jackettDetails.Text = "Процесс работает, ожидается веб-интерфейс";
+            }
             else if (jackettStatus.IsInstalled)
             {
                 jackettDot.ForeColor = Red;
@@ -507,14 +542,14 @@ internal sealed class MainForm : Form
                 jackettDetails.Text = "Локальный Torznab недоступен";
             }
 
-            jackettStartButton.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.IsRunning;
-            jackettStopButton.Enabled = !jackettBusy && jackettStatus.IsRunning;
-            jackettRestartButton.Enabled = !jackettBusy && jackettStatus.IsRunning;
+            jackettStartButton.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning;
+            jackettStopButton.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
+            jackettRestartButton.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
             jackettOpenButton.Enabled = jackettStatus.IsRunning;
-            jackettUpdateButton.Enabled = !jackettBusy && jackettStatus.IsRunning;
-            trayJackettStartItem.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.IsRunning;
-            trayJackettStopItem.Enabled = !jackettBusy && jackettStatus.IsRunning;
-            trayJackettRestartItem.Enabled = !jackettBusy && jackettStatus.IsRunning;
+            jackettUpdateButton.Enabled = !jackettBusy && jackettStatus.IsInstalled;
+            trayJackettStartItem.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning;
+            trayJackettStopItem.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
+            trayJackettRestartItem.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception exception)
@@ -732,6 +767,25 @@ internal sealed class MainForm : Form
         AutoSize = true,
         Location = location
     };
+
+    private static void CopyToClipboard(Button button, string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+        try { Clipboard.SetText(text); }
+        catch { return; }
+
+        var original = button.Text;
+        button.Text = "✓ Скопировано";
+        var timer = new System.Windows.Forms.Timer { Interval = 1500 };
+        timer.Tick += (_, _) =>
+        {
+            button.Text = original;
+            timer.Stop();
+            timer.Dispose();
+        };
+        timer.Start();
+    }
 
     private static Button CreateButton(string text, Color backColor, Point location, int width) => new()
     {

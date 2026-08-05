@@ -54,11 +54,13 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   HTTP health checks against `http://127.0.0.1:8090`, installed-version detection (parses `MatriX.x.x.x`
   version strings out of `--version` output), and LAN IP address discovery for handing out an address
   reachable from other devices (e.g. a TV running Lampa).
-- **`JackettController.cs`** — same idea for Jackett, but Jackett runs as a Windows *service*
-  (`sc.exe start/stop`, `Restart-Service` via PowerShell), so all control operations require UAC
-  elevation (`Process.Start` with `Verb = "runas"`). Also handles triggering Jackett's built-in
-  self-update over HTTP and programmatically saving RuTracker.org indexer credentials through Jackett's
-  config API.
+- **`JackettController.cs`** — manages Jackett's `JackettConsole.exe` as a plain child process, the
+  same shape as `ServerController` (find-by-path process lookup, `Process.Start`/`Kill`, no Windows
+  service, no UAC). Started with `-z --DataFolder <JackettDirectory> -p 9117 --NoUpdates` (loopback-only;
+  `--NoUpdates` because updates are the manager's job, not Jackett's own built-in updater). Updates mirror
+  `UpdateService`: download `Jackett.Binaries.Windows.zip` from GitHub Releases, verify its SHA-256
+  `digest`, swap the `App/` folder (`Directory.Move`, with an `App.previous` backup restored on a failed
+  start). Also programmatically saves RuTracker.org indexer credentials through Jackett's config API.
 - **`UpdateService.cs`** — checks GitHub Releases for the latest TorrServer build, downloads it,
   verifies SHA-256 and the reported version before replacing the running binary, and rolls back to a
   backup copy if the new binary fails to start.
@@ -98,14 +100,19 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
 - **`RutrackerCredentialsDialog.cs`** — simple modal dialog for entering RuTracker.org username/password,
   which `JackettController.SaveRutrackerCredentialsAsync` then pushes into Jackett's RuTracker indexer
   config over HTTP.
+- **`FirewallService.cs`** — on startup, checks (non-elevated `Get-NetFirewallRule`) whether the two
+  named inbound rules TorrServer/Plugin Hub need for LAN access already exist; if either is missing, runs
+  one elevated `New-NetFirewallRule` script (`-EncodedCommand`, single UAC prompt) to create them, scoped
+  to `Private,Domain`. Jackett needs no rule — it only ever listens on `127.0.0.1`.
 
 ## Conventions worth knowing
 
 - All user-facing strings (UI labels, error messages, exceptions surfaced via `MessageBox`) are in
   Russian. Keep new user-facing text consistent with this.
-- External processes (TorrServer, Jackett) are managed by locating the executable/service rather than
-  keeping a live `Process` handle across calls — status checks always re-query by process name / HTTP
-  health check, since the manager itself may restart while the child keeps running.
+- External processes (TorrServer, Jackett) are managed by locating the running process by name + exact
+  executable path rather than keeping a live `Process` handle across calls — status checks always
+  re-query by process name / HTTP health check, since the manager itself may restart while the child
+  keeps running.
 - Anything that writes shared state to disk (`PluginHub` config/cache, `UpdateService`'s binary swap)
   writes to a temp path first and then renames/moves into place.
 - Version strings from TorrServer follow the `MatriX.x.x.x` format and are parsed/compared with a
