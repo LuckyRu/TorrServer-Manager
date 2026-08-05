@@ -98,6 +98,23 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     `lampa-cache/cache-state.json`. Both are written atomically (write to `.tmp`, then `File.Move`).
   - Runs a periodic background refresh (`RefreshInterval` = 6h) of all enabled plugins in addition to
     on-demand refresh from the panel.
+  - Also hosts the Lampa web app itself (not just plugins for an existing install) at `/app/`, source
+    [yumata/lampa](https://github.com/yumata/lampa) (the built static distribution — not
+    `yumata/lampa-source`, which needs an npm build). Update checks read
+    `raw.githubusercontent.com/yumata/lampa/main/assembly.json` for `app_version`/`hash` (cheap; no
+    GitHub API calls, no rate limit concern); on a hash change it downloads the `main` branch zip via
+    `codeload.github.com`, validates `index.html` is present, then swaps `lampa-app/` with an
+    `App.previous`-style backup — same download/verify/swap/rollback shape as `UpdateService` and the
+    Jackett updater. Runs on the same 6h loop as plugin refresh, plus a manual "Обновить" button in
+    the UI. State persists to `lampa-app-state.json`.
+  - Static files under `/app/` are served relative to `AppPaths.LampaAppDirectory` with a path-traversal
+    guard and an extension → MIME map (`HttpListener` has none built in). `msx/start.json` gets its
+    `{domain}` placeholder rewritten on the fly to this machine's LAN address + `/app`, since Lampa's own
+    MSX install docs otherwise expect that substitution done at build/deploy time.
+  - Note: `HttpListenerRequest.Url.AbsolutePath` is trimmed of trailing slashes before routing (see
+    `path.TrimEnd('/')` in `HandleAsync`), so route matching must treat `/app` and `/app/` as the same
+    path — a route that 302-redirects `/app` to `/app/` will redirect-loop forever once the trailing
+    slash gets stripped back off. Handle both spellings in one branch instead.
 - **`BuiltInPlugins.cs`** — registers the embedded `SmartTsPlugin.js` (see below) as a pseudo-plugin with
   a synthetic `builtin://smart-ts` URL, served from the assembly's embedded resources rather than
   downloaded, but otherwise flowing through the same PluginHub caching/serving path.
@@ -109,7 +126,8 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
-  TorrServer 8090, Plugin Hub 8095, Jackett 9117).
+  TorrServer 8090, Plugin Hub 8095, Jackett 9117). The hosted Lampa app lives at `LampaAppDirectory`
+  (`lampa-app/` under the state dir) with its own `LampaAppState` JSON file.
 - **`AppLog.cs`** — a tiny best-effort file logger (`manager.log`); logging failures are swallowed since
   logging must never crash the tray app.
 - **`IconFactory.cs`** — renders the tray icon (a "T" badge with a colored status dot) in-memory via

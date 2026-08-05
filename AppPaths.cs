@@ -19,6 +19,8 @@ internal static class AppPaths
     public static readonly string PluginHubConfig = Path.Combine(StateDirectory, "lampa-plugins.json");
     public static readonly string PluginCacheDirectory = Path.Combine(StateDirectory, "lampa-cache");
     public static readonly string PluginCacheState = Path.Combine(PluginCacheDirectory, "cache-state.json");
+    public static readonly string LampaAppDirectory = Path.Combine(StateDirectory, "lampa-app");
+    public static readonly string LampaAppState = Path.Combine(StateDirectory, "lampa-app-state.json");
     public static readonly string JackettDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "Jackett");

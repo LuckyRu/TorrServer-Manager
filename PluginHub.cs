@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -61,9 +62,28 @@ internal sealed class PluginApiView
 
 internal sealed record PluginRefreshResult(string Id, string Name, bool Success, bool Updated, string Message);
 
+internal sealed class LampaAppState
+{
+    public string Version { get; set; } = "";
+    public string Hash { get; set; } = "";
+    public DateTimeOffset? DownloadedAtUtc { get; set; }
+    public DateTimeOffset? LastCheckedAtUtc { get; set; }
+    public string LastError { get; set; } = "";
+}
+
+internal sealed record LampaAppStatus(
+    bool Installed,
+    string Version,
+    DateTimeOffset? DownloadedAtUtc,
+    DateTimeOffset? LastCheckedAtUtc,
+    string LastError);
+
 internal sealed class PluginHub : IDisposable
 {
     private const long MaximumPluginBytes = 12L * 1024 * 1024;
+    private const long MaximumLampaAppBytes = 200L * 1024 * 1024;
+    private const string LampaAppRepo = "yumata/lampa";
+    private const string LampaAppBranch = "main";
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(6);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -72,14 +92,17 @@ internal sealed class PluginHub : IDisposable
 
     private readonly object configLock = new();
     private readonly object cacheStateLock = new();
+    private readonly object lampaAppStateLock = new();
     private readonly HttpListener listener = new();
     private readonly CancellationTokenSource cancellation = new();
     private readonly SemaphoreSlim refreshLock = new(1, 1);
+    private readonly SemaphoreSlim lampaAppRefreshLock = new(1, 1);
     private readonly HttpClient httpClient;
     private Task? listenerTask;
     private Task? refreshTask;
     private PluginHubConfiguration configuration;
     private PluginCacheState cacheState;
+    private LampaAppState lampaAppState;
 
     public PluginHub()
     {
@@ -88,6 +111,7 @@ internal sealed class PluginHub : IDisposable
         BuiltInPlugins.Ensure(configuration);
         SaveConfiguration(configuration);
         cacheState = LoadCacheState();
+        lampaAppState = LoadLampaAppState();
 
         var handler = new SocketsHttpHandler
         {
@@ -101,13 +125,14 @@ internal sealed class PluginHub : IDisposable
         {
             Timeout = TimeSpan.FromSeconds(25)
         };
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TorrServerManager/1.4.1");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TorrServerManager");
         httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/javascript, text/javascript, */*;q=0.8");
     }
 
     public bool IsRunning => listener.IsListening;
     public string LocalPanelUrl => $"http://127.0.0.1:{AppPaths.PluginHubPort}/";
     public string LanLoaderUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/lampa.js";
+    public string LampaAppUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/app/";
 
     public void Start()
     {
@@ -124,11 +149,15 @@ internal sealed class PluginHub : IDisposable
     private async Task RunRefreshLoopAsync(CancellationToken cancellationToken)
     {
         await RefreshAllSafelyAsync(cancellationToken);
+        await RefreshLampaAppSafelyAsync(cancellationToken);
         using var timer = new PeriodicTimer(RefreshInterval);
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
                 await RefreshAllSafelyAsync(cancellationToken);
+                await RefreshLampaAppSafelyAsync(cancellationToken);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
@@ -138,6 +167,19 @@ internal sealed class PluginHub : IDisposable
         try
         {
             await RefreshAllAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            AppLog.Write(exception);
+        }
+    }
+
+    private async Task RefreshLampaAppSafelyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RefreshLampaAppAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception exception)
@@ -265,6 +307,14 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" &&
+                (path.Equals("/app", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/app/", StringComparison.OrdinalIgnoreCase)))
+            {
+                var relative = path.Length > "/app/".Length ? path["/app/".Length..] : "";
+                await WriteLampaAppFileAsync(context.Response, relative);
+                return;
+            }
+
             await WriteErrorAsync(context.Response, HttpStatusCode.NotFound, "Страница не найдена.");
         }
         catch (UnauthorizedAccessException exception)
@@ -357,6 +407,63 @@ internal sealed class PluginHub : IDisposable
         await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         await stream.CopyToAsync(response.OutputStream, cancellation.Token);
     }
+
+    private async Task WriteLampaAppFileAsync(HttpListenerResponse response, string relativePath)
+    {
+        relativePath = Uri.UnescapeDataString(relativePath);
+        if (relativePath.Length == 0)
+            relativePath = "index.html";
+
+        if (relativePath.Contains("..", StringComparison.Ordinal) || Path.IsPathRooted(relativePath))
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadRequest, "Некорректный путь.");
+            return;
+        }
+
+        var root = Path.GetFullPath(AppPaths.LampaAppDirectory) + Path.DirectorySeparatorChar;
+        var fullPath = Path.GetFullPath(Path.Combine(AppPaths.LampaAppDirectory, relativePath));
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+        {
+            await WriteErrorAsync(response, HttpStatusCode.NotFound, "Приложение Lampa ещё не загружено или файл не найден.");
+            return;
+        }
+
+        if (relativePath.Replace('\\', '/').Equals("msx/start.json", StringComparison.OrdinalIgnoreCase))
+        {
+            var domain = $"{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/app";
+            var text = (await File.ReadAllTextAsync(fullPath, cancellation.Token)).Replace("{domain}", domain, StringComparison.Ordinal);
+            await WriteTextAsync(response, text, "application/json; charset=utf-8");
+            return;
+        }
+
+        response.ContentType = GetLampaAppContentType(fullPath);
+        response.ContentLength64 = new FileInfo(fullPath).Length;
+        await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await stream.CopyToAsync(response.OutputStream, cancellation.Token);
+    }
+
+    private static string GetLampaAppContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".html" => "text/html; charset=utf-8",
+        ".js" or ".mjs" => "application/javascript; charset=utf-8",
+        ".css" => "text/css; charset=utf-8",
+        ".json" => "application/json; charset=utf-8",
+        ".webmanifest" => "application/manifest+json",
+        ".svg" => "image/svg+xml",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".ico" => "image/x-icon",
+        ".woff" => "font/woff",
+        ".woff2" => "font/woff2",
+        ".ttf" => "font/ttf",
+        ".eot" => "application/vnd.ms-fontobject",
+        ".mp3" => "audio/mpeg",
+        ".mp4" => "video/mp4",
+        ".xml" => "application/xml",
+        ".txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream"
+    };
 
     private PluginHubConfiguration Snapshot()
     {
@@ -730,6 +837,196 @@ internal sealed class PluginHub : IDisposable
         SaveCacheState();
         AppLog.Write($"Cached built-in Lampa plugin {plugin.Name}: {hash}.");
         return new PluginRefreshResult(plugin.Id, plugin.Name, true, true, "Встроенный плагин обновлён.");
+    }
+
+    public LampaAppStatus GetLampaAppStatus()
+    {
+        var installed = File.Exists(Path.Combine(AppPaths.LampaAppDirectory, "index.html"));
+        lock (lampaAppStateLock)
+            return new LampaAppStatus(installed, lampaAppState.Version, lampaAppState.DownloadedAtUtc, lampaAppState.LastCheckedAtUtc, lampaAppState.LastError);
+    }
+
+    public async Task RefreshLampaAppAsync(CancellationToken cancellationToken)
+    {
+        await lampaAppRefreshLock.WaitAsync(cancellationToken);
+        try
+        {
+            await RefreshLampaAppCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            lampaAppRefreshLock.Release();
+        }
+    }
+
+    private async Task RefreshLampaAppCoreAsync(CancellationToken cancellationToken)
+    {
+        string version;
+        string hash;
+        try
+        {
+            (version, hash) = await FetchLampaAssemblyInfoAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            UpdateLampaAppState(state =>
+            {
+                state.LastCheckedAtUtc = DateTimeOffset.UtcNow;
+                state.LastError = CompactError(exception);
+            });
+            throw;
+        }
+
+        string existingHash;
+        lock (lampaAppStateLock)
+            existingHash = lampaAppState.Hash;
+        var indexExists = File.Exists(Path.Combine(AppPaths.LampaAppDirectory, "index.html"));
+
+        if (indexExists && !string.IsNullOrEmpty(hash) && hash.Equals(existingHash, StringComparison.OrdinalIgnoreCase))
+        {
+            UpdateLampaAppState(state =>
+            {
+                state.LastCheckedAtUtc = DateTimeOffset.UtcNow;
+                state.LastError = "";
+            });
+            return;
+        }
+
+        var temporaryZip = Path.Combine(AppPaths.StateDirectory, $"lampa-app.{Guid.NewGuid():N}.zip");
+        var extractRoot = Path.Combine(AppPaths.StateDirectory, $"lampa-app.extract.{Guid.NewGuid():N}");
+        var backupDirectory = AppPaths.LampaAppDirectory + ".previous";
+
+        try
+        {
+            await DownloadLampaAppArchiveAsync(temporaryZip, cancellationToken);
+            ZipFile.ExtractToDirectory(temporaryZip, extractRoot);
+
+            var contentRoot = LocateLampaAppContent(extractRoot)
+                ?? throw new InvalidDataException("В архиве Lampa не найден index.html.");
+
+            if (Directory.Exists(backupDirectory))
+                Directory.Delete(backupDirectory, recursive: true);
+            if (Directory.Exists(AppPaths.LampaAppDirectory))
+                Directory.Move(AppPaths.LampaAppDirectory, backupDirectory);
+
+            try
+            {
+                Directory.Move(contentRoot, AppPaths.LampaAppDirectory);
+            }
+            catch
+            {
+                if (!Directory.Exists(AppPaths.LampaAppDirectory) && Directory.Exists(backupDirectory))
+                    Directory.Move(backupDirectory, AppPaths.LampaAppDirectory);
+                throw;
+            }
+
+            UpdateLampaAppState(state =>
+            {
+                state.Version = version;
+                state.Hash = hash;
+                state.DownloadedAtUtc = DateTimeOffset.UtcNow;
+                state.LastCheckedAtUtc = DateTimeOffset.UtcNow;
+                state.LastError = "";
+            });
+            AppLog.Write($"Updated Lampa app to version {version}.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            UpdateLampaAppState(state =>
+            {
+                state.LastCheckedAtUtc = DateTimeOffset.UtcNow;
+                state.LastError = CompactError(exception);
+            });
+            throw;
+        }
+        finally
+        {
+            try { if (File.Exists(temporaryZip)) File.Delete(temporaryZip); } catch { }
+            try { if (Directory.Exists(extractRoot)) Directory.Delete(extractRoot, recursive: true); } catch { }
+        }
+    }
+
+    private async Task<(string Version, string Hash)> FetchLampaAssemblyInfoAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"https://raw.githubusercontent.com/{LampaAppRepo}/{LampaAppBranch}/assembly.json");
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var version = document.RootElement.GetProperty("app_version").GetString()
+            ?? throw new InvalidDataException("В assembly.json Lampa нет app_version.");
+        var hash = document.RootElement.TryGetProperty("hash", out var hashProperty) ? hashProperty.GetString() ?? "" : "";
+        return (version, hash);
+    }
+
+    private async Task DownloadLampaAppArchiveAsync(string destination, CancellationToken cancellationToken)
+    {
+        var url = $"https://codeload.github.com/{LampaAppRepo}/zip/refs/heads/{LampaAppBranch}";
+        using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+                break;
+            total += read;
+            if (total > MaximumLampaAppBytes)
+                throw new InvalidDataException($"Архив Lampa превышает {MaximumLampaAppBytes / 1024 / 1024} МБ.");
+            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+    }
+
+    private static string? LocateLampaAppContent(string extractRoot)
+    {
+        if (File.Exists(Path.Combine(extractRoot, "index.html")))
+            return extractRoot;
+        foreach (var directory in Directory.GetDirectories(extractRoot))
+        {
+            if (File.Exists(Path.Combine(directory, "index.html")))
+                return directory;
+        }
+        return null;
+    }
+
+    private void UpdateLampaAppState(Action<LampaAppState> mutate)
+    {
+        lock (lampaAppStateLock)
+            mutate(lampaAppState);
+        SaveLampaAppState();
+    }
+
+    private void SaveLampaAppState()
+    {
+        lock (lampaAppStateLock)
+            WriteJsonAtomically(AppPaths.LampaAppState, lampaAppState);
+    }
+
+    private LampaAppState LoadLampaAppState()
+    {
+        try
+        {
+            if (!File.Exists(AppPaths.LampaAppState))
+                return new LampaAppState();
+            return JsonSerializer.Deserialize<LampaAppState>(
+                File.ReadAllText(AppPaths.LampaAppState),
+                JsonOptions) ?? new LampaAppState();
+        }
+        catch (Exception exception)
+        {
+            AppLog.Write(exception);
+            return new LampaAppState();
+        }
     }
 
     private static async Task DownloadWithLimitAsync(

@@ -37,6 +37,8 @@ internal sealed class MainForm : Form
     private readonly Label versionValue = new();
     private readonly LinkLabel addressValue = new();
     private readonly LinkLabel hubAddress = new();
+    private readonly LinkLabel lampaAppAddress = new();
+    private readonly Label lampaAppCaption = new();
     private readonly Label updateText = new();
     private readonly Label jackettDot = new();
     private readonly Label jackettStatusText = new();
@@ -53,6 +55,7 @@ internal sealed class MainForm : Form
     private readonly Button jackettRestartButton;
     private readonly Button jackettOpenButton;
     private readonly Button jackettUpdateButton;
+    private readonly Button lampaAppUpdateButton;
 
     private readonly ToolStripMenuItem trayStartItem = new("Запустить");
     private readonly ToolStripMenuItem trayStopItem = new("Остановить");
@@ -64,6 +67,7 @@ internal sealed class MainForm : Form
     private bool allowExit;
     private bool busy;
     private bool jackettBusy;
+    private bool lampaAppBusy;
     private Icon? currentIcon;
     private int? currentIconColor;
 
@@ -74,9 +78,9 @@ internal sealed class MainForm : Form
 
         Text = $"TorrServer Manager v{AppVersion}";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(620, 686);
-        MinimumSize = new Size(620, 686);
-        MaximumSize = new Size(780, 806);
+        ClientSize = new Size(620, 790);
+        MinimumSize = new Size(620, 790);
+        MaximumSize = new Size(780, 910);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Segoe UI", 10F);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -137,37 +141,57 @@ internal sealed class MainForm : Form
         openButton = CreateButton("Открыть веб", Green, new Point(404, 252), 132);
         Controls.AddRange([startButton, stopButton, restartButton, openButton]);
 
-        var hubPanel = CreateCard(new Rectangle(24, 312, 572, 116));
-        var hubTitle = new Label
+        var lampaPanel = CreateCard(new Rectangle(24, 312, 572, 220));
+        var lampaTitle = new Label
         {
-            Text = "Плагины Lampa",
+            Text = "Lampa",
             Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(18, 12)
         };
+        lampaAppCaption.Text = "Приложение для ТВ и браузера · загрузка версии…";
+        lampaAppCaption.ForeColor = Muted;
+        lampaAppCaption.AutoSize = true;
+        lampaAppCaption.Location = new Point(18, 44);
+        lampaAppAddress.Text = pluginHub.LampaAppUrl;
+        lampaAppAddress.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+        lampaAppAddress.AutoSize = true;
+        lampaAppAddress.Location = new Point(18, 68);
+        lampaAppAddress.LinkColor = Accent;
+        lampaAppAddress.LinkClicked += (_, _) => OpenLampaApp();
+        lampaAppUpdateButton = CreateButton("Обновить", Accent, new Point(440, 10), 108);
+        lampaAppUpdateButton.Height = 30;
+        lampaAppUpdateButton.Click += async (_, _) => await RefreshLampaAppAsync();
+        var lampaAppCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 62), 108);
+        lampaAppCopyButton.Height = 30;
+        lampaAppCopyButton.Click += (_, _) => CopyToClipboard(lampaAppCopyButton, lampaAppAddress.Text);
+
+        var hubButton = CreateButton("Управлять", Color.FromArgb(124, 58, 237), new Point(440, 120), 108);
+        hubButton.Height = 30;
+        hubButton.Click += (_, _) => OpenPluginHub();
         var hubCaption = new Label
         {
-            Text = "Добавьте на телевизоре: Настройки → Расширения → Добавить плагин",
+            Text = "Плагины — добавьте вручную в отдельной Lampa: Настройки → Расширения → Добавить плагин",
             ForeColor = Muted,
             AutoSize = true,
-            Location = new Point(18, 44)
+            Location = new Point(18, 154)
         };
         hubAddress.Text = pluginHub.LanLoaderUrl;
         hubAddress.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
         hubAddress.AutoSize = true;
-        hubAddress.Location = new Point(18, 68);
+        hubAddress.Location = new Point(18, 178);
         hubAddress.LinkColor = Accent;
         hubAddress.LinkClicked += (_, _) => OpenPluginHub();
-        var hubButton = CreateButton("Управлять", Color.FromArgb(124, 58, 237), new Point(440, 10), 108);
-        hubButton.Height = 30;
-        hubButton.Click += (_, _) => OpenPluginHub();
-        var hubCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 62), 108);
+        var hubCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 172), 108);
         hubCopyButton.Height = 30;
         hubCopyButton.Click += (_, _) => CopyToClipboard(hubCopyButton, hubAddress.Text);
-        hubPanel.Controls.AddRange([hubTitle, hubCaption, hubAddress, hubButton, hubCopyButton]);
-        Controls.Add(hubPanel);
+        lampaPanel.Controls.AddRange([
+            lampaTitle, lampaAppCaption, lampaAppAddress, lampaAppUpdateButton, lampaAppCopyButton,
+            hubButton, hubCaption, hubAddress, hubCopyButton
+        ]);
+        Controls.Add(lampaPanel);
 
-        var jackettPanel = CreateCard(new Rectangle(24, 444, 572, 104));
+        var jackettPanel = CreateCard(new Rectangle(24, 548, 572, 104));
         var jackettTitle = new Label
         {
             Text = "Jackett / Torznab",
@@ -209,7 +233,7 @@ internal sealed class MainForm : Form
         ]);
         Controls.Add(jackettPanel);
 
-        var updatePanel = CreateCard(new Rectangle(24, 564, 572, 94));
+        var updatePanel = CreateCard(new Rectangle(24, 668, 572, 94));
         var updateTitle = new Label
         {
             Text = "Обновления TorrServer",
@@ -445,6 +469,7 @@ internal sealed class MainForm : Form
             versionValue.Text = status.Version;
             addressValue.Text = status.LanAddress;
             hubAddress.Text = pluginHub.LanLoaderUrl;
+            UpdateLampaAppCaption();
 
             if (status.IsRunning)
             {
@@ -651,6 +676,64 @@ internal sealed class MainForm : Form
             AppLog.Write(exception);
             MessageBox.Show(this, exception.Message, "Плагины Lampa", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void OpenLampaApp()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(pluginHub.LampaAppUrl) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            AppLog.Write(exception);
+            MessageBox.Show(this, exception.Message, "Lampa", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private async Task RefreshLampaAppAsync()
+    {
+        if (lampaAppBusy)
+            return;
+        lampaAppBusy = true;
+        lampaAppUpdateButton.Enabled = false;
+        var originalText = lampaAppUpdateButton.Text;
+        lampaAppUpdateButton.Text = "Обновление…";
+        try
+        {
+            await pluginHub.RefreshLampaAppAsync(lifetime.Token);
+        }
+        catch (OperationCanceledException) when (!lifetime.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            AppLog.Write(exception);
+            MessageBox.Show(this, exception.Message, "Обновление Lampa", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            lampaAppUpdateButton.Text = originalText;
+            lampaAppUpdateButton.Enabled = true;
+            lampaAppBusy = false;
+            UpdateLampaAppCaption();
+        }
+    }
+
+    private void UpdateLampaAppCaption()
+    {
+        var status = pluginHub.GetLampaAppStatus();
+        lampaAppAddress.Text = pluginHub.LampaAppUrl;
+
+        if (!status.Installed)
+        {
+            lampaAppCaption.Text = string.IsNullOrEmpty(status.LastError)
+                ? "Приложение для ТВ и браузера · загрузка версии…"
+                : $"Приложение для ТВ и браузера · ошибка загрузки: {status.LastError}";
+            return;
+        }
+
+        lampaAppCaption.Text = string.IsNullOrEmpty(status.LastError)
+            ? $"Приложение для ТВ и браузера · версия {status.Version}"
+            : $"Приложение для ТВ и браузера · версия {status.Version} · обновление не удалось: {status.LastError}";
     }
 
     private void OpenJackett()
