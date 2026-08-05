@@ -303,6 +303,20 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   keeps running.
 - Anything that writes shared state to disk (`PluginHub` config/cache, `UpdateService`'s binary swap)
   writes to a temp path first and then renames/moves into place.
+- **A built-in plugin definition being removed from `BuiltInPlugins.cs` must not turn into config data
+  loss for unrelated plugins.** Found live, the hard way: removing Smart TS from `Definitions` made
+  `PluginHub.Validate()` reject the orphaned `builtin://smart-ts` entry still sitting in an existing
+  user's `lampa-plugins.json` as "not a valid URL" (it only special-cased *currently-known* built-ins,
+  not the `builtin://` scheme generally) — `LoadConfiguration()`'s catch-all responded to that exception
+  by discarding the *entire* configuration and starting over empty, then immediately persisting that
+  empty config over the good one on the very next startup. Online Mod's entry, completely unrelated,
+  was collateral damage. Two independent fixes, both worth keeping in mind for any future built-in
+  removal or config-shape change: (1) `Validate()` now accepts any `builtin://`-scheme URL as
+  structurally fine regardless of whether it's still a registered definition — whether it's *actually*
+  servable is `BuiltInPlugins.Read`'s job at actual use time, which already fails narrowly for just that
+  one plugin; (2) `RefreshAllAsync`'s per-plugin loop now catches per-plugin exceptions individually
+  (previously a single throw — e.g. from that same orphaned-builtin case — aborted the rest of the
+  batch too, silently starving every plugin after the broken one of its scheduled refresh).
 - Version strings from TorrServer follow the `MatriX.x.x.x` format and are parsed/compared with a
   dedicated regex + numeric part comparison (`UpdateService.IsNewer`); Jackett versions are standard
   `System.Version` strings compared with `JackettController.IsNewer`.

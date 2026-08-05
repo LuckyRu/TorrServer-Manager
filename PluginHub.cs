@@ -656,7 +656,16 @@ internal sealed class PluginHub : IDisposable
 
             if (plugin.Id.Length > 100 || plugin.Name.Length > 100 || plugin.Category.Length > 50 || plugin.Url.Length > 2048)
                 throw new InvalidDataException("Идентификатор, название, категория или URL плагина слишком длинные.");
+            // A `builtin://` URL passes here even if it doesn't (or no longer) name a real entry in
+            // BuiltInPlugins.Definitions — e.g. a plugin removed from a later app version, still
+            // sitting in a config saved by an older one. Rejecting it here as "not a valid URL" would
+            // throw out of Validate(), which LoadConfiguration() catches by discarding the *entire*
+            // configuration and starting over empty — silently deleting every other plugin's settings
+            // over one orphaned reference (confirmed live: removing Smart TS wiped Online Mod's entry
+            // too on the next startup). Whether the built-in still exists is BuiltInPlugins.Read's job
+            // at actual use time, which already fails narrowly, just for that one plugin.
             if (!BuiltInPlugins.IsBuiltIn(plugin.Url) &&
+                !plugin.Url.StartsWith("builtin://", StringComparison.OrdinalIgnoreCase) &&
                 (!Uri.TryCreate(plugin.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")))
                 throw new InvalidDataException($"Некорректный URL плагина «{plugin.Name}».");
             if (!ids.Add(plugin.Id))
@@ -744,7 +753,25 @@ internal sealed class PluginHub : IDisposable
         {
             var results = new List<PluginRefreshResult>();
             foreach (var plugin in Snapshot().Plugins.Where(plugin => plugin.Enabled))
-                results.Add(await RefreshPluginAsync(plugin, cancellationToken));
+            {
+                // One plugin's refresh throwing (e.g. an orphaned builtin:// reference to a
+                // since-removed built-in) must not abort the whole batch — every other enabled
+                // plugin still needs its turn. RefreshBuiltInPluginAsync in particular has no
+                // internal try/catch of its own around BuiltInPlugins.Read.
+                try
+                {
+                    results.Add(await RefreshPluginAsync(plugin, cancellationToken));
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    AppLog.Write(exception);
+                    results.Add(new PluginRefreshResult(plugin.Id, plugin.Name, false, false, exception.Message));
+                }
+            }
 
             lock (cacheStateLock)
                 cacheState.LastRefreshUtc = DateTimeOffset.UtcNow;
