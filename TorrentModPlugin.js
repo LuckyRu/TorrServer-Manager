@@ -45,6 +45,17 @@
         });
     }
 
+    // Lampa.Utils has no HTML-escaping helper (confirmed live against a real Lampa instance —
+    // Lampa.Utils.escape does not exist there), so this is our own.
+    function escapeHtml(text) {
+        return String(text == null ? '' : text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function notify(message) {
         if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(message);
         else console.log('Torrent Mod:', message);
@@ -468,11 +479,11 @@
             var head = [year, country].filter(Boolean).join(' - ');
             return $(
                 '<div class="torrent-mod-info__poster" style="background-image:url(\'' + poster + '\')"></div>' +
-                (head ? '<div class="torrent-mod-info__head">' + Lampa.Utils.escape(head) + '</div>' : '') +
+                (head ? '<div class="torrent-mod-info__head">' + escapeHtml(head) + '</div>' : '') +
                 (rating ? '<div class="torrent-mod-info__rating">★ ' + rating + '</div>' : '') +
-                '<div class="torrent-mod-info__title">' + Lampa.Utils.escape(movie.title || movie.name || '') + '</div>' +
-                (genres ? '<div class="torrent-mod-info__genres">' + Lampa.Utils.escape(genres) + '</div>' : '') +
-                (movie.overview ? '<div class="torrent-mod-info__overview">' + Lampa.Utils.escape(movie.overview) + '</div>' : '')
+                '<div class="torrent-mod-info__title">' + escapeHtml(movie.title || movie.name || '') + '</div>' +
+                (genres ? '<div class="torrent-mod-info__genres">' + escapeHtml(genres) + '</div>' : '') +
+                (movie.overview ? '<div class="torrent-mod-info__overview">' + escapeHtml(movie.overview) + '</div>' : '')
             );
         }
 
@@ -484,8 +495,8 @@
             return $(
                 '<div class="torrent-mod-row selector">' + playIcon() +
                 '<div class="torrent-mod-row__body">' +
-                '<div class="torrent-mod-row__title">' + Lampa.Utils.escape(title) + '</div>' +
-                (subtitle ? '<div class="torrent-mod-row__subtitle">' + Lampa.Utils.escape(subtitle) + '</div>' : '') +
+                '<div class="torrent-mod-row__title">' + escapeHtml(title) + '</div>' +
+                (subtitle ? '<div class="torrent-mod-row__subtitle">' + escapeHtml(subtitle) + '</div>' : '') +
                 '</div></div>'
             );
         }
