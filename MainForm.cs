@@ -11,10 +11,16 @@ internal sealed class MainForm : Form
     private static readonly Color Red = Color.FromArgb(220, 38, 38);
     private static readonly Color Muted = Color.FromArgb(100, 116, 139);
 
-    private static readonly string AppVersion =
-        Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-        ?? "?";
+    private static readonly string AppVersion = ReadAppVersion();
+
+    private static string ReadAppVersion()
+    {
+        var raw = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+            ?? "?";
+        var buildMetadataIndex = raw.IndexOf('+');
+        return buildMetadataIndex < 0 ? raw : raw[..buildMetadataIndex];
+    }
 
     private readonly ServerController controller = new();
     private readonly JackettController jackettController = new();
@@ -68,9 +74,9 @@ internal sealed class MainForm : Form
 
         Text = $"TorrServer Manager v{AppVersion}";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(620, 648);
-        MinimumSize = new Size(620, 648);
-        MaximumSize = new Size(780, 768);
+        ClientSize = new Size(620, 686);
+        MinimumSize = new Size(620, 686);
+        MaximumSize = new Size(780, 806);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Segoe UI", 10F);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -94,7 +100,7 @@ internal sealed class MainForm : Form
         Controls.Add(title);
         Controls.Add(subtitle);
 
-        var statusPanel = CreateCard(new Rectangle(24, 82, 572, 112));
+        var statusPanel = CreateCard(new Rectangle(24, 82, 572, 150));
         statusDot.Text = "●";
         statusDot.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
         statusDot.ForeColor = Amber;
@@ -112,25 +118,26 @@ internal sealed class MainForm : Form
         versionValue.Text = "—";
         versionValue.AutoSize = true;
         versionValue.Location = new Point(430, 18);
-        var addressCaption = CreateCaption("Для Lampa", new Point(340, 51));
+        var addressCaption = CreateCaption("Для Lampa", new Point(18, 88));
         addressValue.Text = controller.LanUrl;
+        addressValue.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
         addressValue.AutoSize = true;
-        addressValue.Location = new Point(430, 51);
+        addressValue.Location = new Point(18, 110);
         addressValue.LinkColor = Accent;
         addressValue.LinkClicked += (_, _) => OpenWebInterface(useLanAddress: true);
-        var addressCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(430, 78), 90);
-        addressCopyButton.Height = 26;
+        var addressCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 102), 108);
+        addressCopyButton.Height = 30;
         addressCopyButton.Click += (_, _) => CopyToClipboard(addressCopyButton, addressValue.Text);
         statusPanel.Controls.AddRange([statusDot, statusText, statusDetails, versionCaption, versionValue, addressCaption, addressValue, addressCopyButton]);
         Controls.Add(statusPanel);
 
-        startButton = CreateButton("Запустить", Accent, new Point(24, 214), 106);
-        stopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(140, 214), 112);
-        restartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(262, 214), 132);
-        openButton = CreateButton("Открыть веб", Green, new Point(404, 214), 132);
+        startButton = CreateButton("Запустить", Accent, new Point(24, 252), 106);
+        stopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(140, 252), 112);
+        restartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(262, 252), 132);
+        openButton = CreateButton("Открыть веб", Green, new Point(404, 252), 132);
         Controls.AddRange([startButton, stopButton, restartButton, openButton]);
 
-        var hubPanel = CreateCard(new Rectangle(24, 274, 572, 116));
+        var hubPanel = CreateCard(new Rectangle(24, 312, 572, 116));
         var hubTitle = new Label
         {
             Text = "Плагины Lampa",
@@ -160,7 +167,7 @@ internal sealed class MainForm : Form
         hubPanel.Controls.AddRange([hubTitle, hubCaption, hubAddress, hubButton, hubCopyButton]);
         Controls.Add(hubPanel);
 
-        var jackettPanel = CreateCard(new Rectangle(24, 406, 572, 104));
+        var jackettPanel = CreateCard(new Rectangle(24, 444, 572, 104));
         var jackettTitle = new Label
         {
             Text = "Jackett / Torznab",
@@ -202,7 +209,7 @@ internal sealed class MainForm : Form
         ]);
         Controls.Add(jackettPanel);
 
-        var updatePanel = CreateCard(new Rectangle(24, 526, 572, 94));
+        var updatePanel = CreateCard(new Rectangle(24, 564, 572, 94));
         var updateTitle = new Label
         {
             Text = "Обновления TorrServer",
@@ -214,7 +221,7 @@ internal sealed class MainForm : Form
         updateText.ForeColor = Muted;
         updateText.AutoEllipsis = true;
         updateText.Location = new Point(19, 45);
-        updateText.Size = new Size(295, 24);
+        updateText.Size = new Size(300, 24);
         checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 24), 100);
         updateButton = CreateButton("Обновить", Accent, new Point(440, 24), 108);
         updateButton.Enabled = false;
