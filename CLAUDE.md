@@ -48,8 +48,8 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   just brings the existing tray window forward instead of starting a second process.
 - **`MainForm.cs`** — the tray/status window. Polls status every 2.5s via a `System.Windows.Forms.Timer`,
   drives all user actions (start/stop/restart TorrServer and Jackett, open web UIs, check/install
-  updates, configure RuTracker credentials), and manages the tray icon/menu. Closing the window hides it
-  to the tray instead of exiting; only the tray menu's "Выход" actually exits.
+  updates), and manages the tray icon/menu. Closing the window hides it to the tray instead of exiting;
+  only the tray menu's "Выход" actually exits.
 - **`ServerController.cs`** — manages the external `TorrServer.exe` child process: start/stop/restart,
   HTTP health checks against `http://127.0.0.1:8090`, installed-version detection (parses `MatriX.x.x.x`
   version strings out of `--version` output), and LAN IP address discovery for handing out an address
@@ -60,7 +60,9 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   `--NoUpdates` because updates are the manager's job, not Jackett's own built-in updater). Updates mirror
   `UpdateService`: download `Jackett.Binaries.Windows.zip` from GitHub Releases, verify its SHA-256
   `digest`, swap the `App/` folder (`Directory.Move`, with an `App.previous` backup restored on a failed
-  start). Also programmatically saves RuTracker.org indexer credentials through Jackett's config API.
+  start). There used to be a `SaveRutrackerCredentialsAsync` that pushed RuTracker.org login/password
+  into Jackett's indexer config via API — removed because RuTracker's login intermittently requires a
+  CAPTCHA a script can't solve; RuTracker is now configured by hand through Jackett's own web UI.
 - **`UpdateService.cs`** — checks GitHub Releases for the latest TorrServer build, downloads it,
   verifies SHA-256 and the reported version before replacing the running binary, and rolls back to a
   backup copy if the new binary fails to start.
@@ -97,9 +99,6 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   logging must never crash the tray app.
 - **`IconFactory.cs`** — renders the tray icon (a "T" badge with a colored status dot) in-memory via
   GDI+; color reflects current server status (green/amber/red).
-- **`RutrackerCredentialsDialog.cs`** — simple modal dialog for entering RuTracker.org username/password,
-  which `JackettController.SaveRutrackerCredentialsAsync` then pushes into Jackett's RuTracker indexer
-  config over HTTP.
 - **`FirewallService.cs`** — on startup, checks (non-elevated `Get-NetFirewallRule`) whether the two
   named inbound rules TorrServer/Plugin Hub need for LAN access already exist; if either is missing, runs
   one elevated `New-NetFirewallRule` script (`-EncodedCommand`, single UAC prompt) to create them, scoped

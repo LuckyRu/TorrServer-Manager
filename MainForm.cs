@@ -62,9 +62,9 @@ internal sealed class MainForm : Form
 
         Text = "TorrServer Manager";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(620, 676);
-        MinimumSize = new Size(620, 676);
-        MaximumSize = new Size(780, 796);
+        ClientSize = new Size(620, 648);
+        MinimumSize = new Size(620, 648);
+        MaximumSize = new Size(780, 768);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Segoe UI", 10F);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -154,7 +154,7 @@ internal sealed class MainForm : Form
         hubPanel.Controls.AddRange([hubTitle, hubCaption, hubAddress, hubButton, hubCopyButton]);
         Controls.Add(hubPanel);
 
-        var jackettPanel = CreateCard(new Rectangle(24, 406, 572, 132));
+        var jackettPanel = CreateCard(new Rectangle(24, 406, 572, 104));
         var jackettTitle = new Label
         {
             Text = "Jackett / Torznab",
@@ -179,32 +179,24 @@ internal sealed class MainForm : Form
         jackettVersionValue.Text = "—";
         jackettVersionValue.AutoSize = true;
         jackettVersionValue.Location = new Point(468, 39);
-        var rutrackerLink = new LinkLabel
-        {
-            Text = "RuTracker.org: настроить аккаунт",
-            AutoSize = true,
-            LinkColor = Accent,
-            Location = new Point(20, 64)
-        };
-        rutrackerLink.LinkClicked += async (_, _) => await ConfigureRutrackerAsync();
-        jackettStartButton = CreateButton("Запустить", Accent, new Point(18, 86), 96);
-        jackettStopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(122, 86), 100);
-        jackettRestartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(230, 86), 112);
-        jackettOpenButton = CreateButton("Открыть", Green, new Point(350, 86), 94);
-        jackettUpdateButton = CreateButton("Обновить", Color.FromArgb(124, 58, 237), new Point(452, 86), 102);
+        jackettStartButton = CreateButton("Запустить", Accent, new Point(18, 62), 96);
+        jackettStopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(122, 62), 100);
+        jackettRestartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(230, 62), 112);
+        jackettOpenButton = CreateButton("Открыть", Green, new Point(350, 62), 94);
+        jackettUpdateButton = CreateButton("Обновить", Color.FromArgb(124, 58, 237), new Point(452, 62), 102);
         foreach (var button in new[] { jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton })
         {
             button.Height = 32;
-            button.Top = 88;
+            button.Top = 62;
         }
         jackettPanel.Controls.AddRange([
             jackettTitle, jackettDot, jackettStatusText, jackettDetails,
-            jackettVersionCaption, jackettVersionValue, rutrackerLink,
+            jackettVersionCaption, jackettVersionValue,
             jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton
         ]);
         Controls.Add(jackettPanel);
 
-        var updatePanel = CreateCard(new Rectangle(24, 554, 572, 94));
+        var updatePanel = CreateCard(new Rectangle(24, 526, 572, 94));
         var updateTitle = new Label
         {
             Text = "Обновления TorrServer",
@@ -301,14 +293,12 @@ internal sealed class MainForm : Form
         var pluginHubItem = new ToolStripMenuItem("Плагины Lampa", null, (_, _) => OpenPluginHub());
         var jackettMenu = new ToolStripMenuItem("Jackett");
         var jackettOpenItem = new ToolStripMenuItem("Открыть панель", null, (_, _) => OpenJackett());
-        var jackettRutrackerItem = new ToolStripMenuItem("Настроить RuTracker.org", null, async (_, _) => await ConfigureRutrackerAsync());
         trayJackettStartItem.Click += async (_, _) => await RunJackettOperationAsync("Запуск…", jackettController.StartAsync);
         trayJackettStopItem.Click += async (_, _) => await RunJackettOperationAsync("Остановка…", jackettController.StopAsync);
         trayJackettRestartItem.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", jackettController.RestartAsync);
         var jackettUpdateItem = new ToolStripMenuItem("Проверить обновление", null, async (_, _) => await CheckAndUpdateJackettAsync());
         jackettMenu.DropDownItems.AddRange([
             jackettOpenItem,
-            jackettRutrackerItem,
             new ToolStripSeparator(),
             trayJackettStartItem,
             trayJackettStopItem,
@@ -423,47 +413,6 @@ internal sealed class MainForm : Form
         {
             AppLog.Write(exception);
             MessageBox.Show(this, exception.Message, "Обновление Jackett", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            SetJackettBusy(false, null);
-            await RefreshStatusAsync();
-        }
-    }
-
-    private async Task ConfigureRutrackerAsync()
-    {
-        if (jackettBusy)
-            return;
-        using var dialog = new RutrackerCredentialsDialog();
-        if (dialog.ShowDialog(this) != DialogResult.OK)
-            return;
-
-        SetJackettBusy(true, "Настройка RuTracker…");
-        try
-        {
-            await jackettController.SaveRutrackerCredentialsAsync(
-                dialog.Username,
-                dialog.Password,
-                lifetime.Token);
-            MessageBox.Show(
-                this,
-                "RuTracker.org подключён к общему поиску. Перезапуск Lampa не требуется.",
-                "RuTracker.org",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
-        catch (Exception exception)
-        {
-            AppLog.Write(exception);
-            var answer = MessageBox.Show(
-                this,
-                $"Не удалось подключить RuTracker.org:\n\n{exception.Message}\n\nОткрыть панель Jackett для проверки или CAPTCHA?",
-                "RuTracker.org",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Error);
-            if (answer == DialogResult.Yes)
-                OpenJackett();
         }
         finally
         {

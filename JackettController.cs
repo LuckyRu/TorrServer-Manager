@@ -1,10 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Net;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace TorrServerManager;
 
@@ -265,58 +262,6 @@ internal sealed class JackettController : IDisposable
         return Convert.ToHexString(hash);
     }
 
-    public async Task SaveRutrackerCredentialsAsync(
-        string username,
-        string password,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
-            throw new InvalidDataException("Введите логин и пароль RuTracker.org.");
-        if (!await IsHttpRespondingAsync(cancellationToken))
-            throw new InvalidOperationException("Сначала запустите Jackett.");
-
-        var cookies = new CookieContainer();
-        using var handler = new HttpClientHandler
-        {
-            CookieContainer = cookies,
-            AllowAutoRedirect = true
-        };
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(2) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("TorrServerManager/1.4.1");
-
-        using (var dashboard = await client.GetAsync(LocalUrl + "/UI/Dashboard", cancellationToken))
-            dashboard.EnsureSuccessStatusCode();
-
-        using var configResponse = await client.GetAsync(
-            LocalUrl + "/api/v2.0/indexers/rutracker/config",
-            cancellationToken);
-        configResponse.EnsureSuccessStatusCode();
-        var configText = await configResponse.Content.ReadAsStringAsync(cancellationToken);
-        var configuration = JsonNode.Parse(configText)?.AsArray()
-            ?? throw new InvalidDataException("Jackett вернул некорректную конфигурацию RuTracker.org.");
-
-        SetConfigValue(configuration, "Username", username.Trim());
-        SetConfigValue(configuration, "Password", password);
-
-        using var body = new StringContent(configuration.ToJsonString(), Encoding.UTF8, "application/json");
-        using var saveResponse = await client.PostAsync(
-            LocalUrl + "/api/v2.0/indexers/rutracker/config",
-            body,
-            cancellationToken);
-        var resultText = await saveResponse.Content.ReadAsStringAsync(cancellationToken);
-        saveResponse.EnsureSuccessStatusCode();
-
-        if (!string.IsNullOrWhiteSpace(resultText))
-        {
-            var result = JsonNode.Parse(resultText);
-            if (string.Equals(result?["result"]?.GetValue<string>(), "error", StringComparison.OrdinalIgnoreCase))
-            {
-                var message = result?["error"]?.GetValue<string>() ?? "RuTracker.org отклонил авторизацию.";
-                throw new InvalidOperationException(message);
-            }
-        }
-    }
-
     private async Task<bool> IsHttpRespondingAsync(CancellationToken cancellationToken)
     {
         try
@@ -372,18 +317,6 @@ internal sealed class JackettController : IDisposable
                 : 0;
         }
         catch { return 0; }
-    }
-
-    private static void SetConfigValue(JsonArray configuration, string name, string value)
-    {
-        var field = configuration
-            .OfType<JsonObject>()
-            .FirstOrDefault(item => string.Equals(
-                item["name"]?.GetValue<string>(),
-                name,
-                StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidDataException($"В конфигурации RuTracker.org отсутствует поле {name}.");
-        field["value"] = value;
     }
 
     private static void EnsureInstalled()
