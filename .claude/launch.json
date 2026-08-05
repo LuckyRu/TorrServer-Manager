@@ -1,0 +1,10 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "plugin-hub",
+      "url": "http://127.0.0.1:8095",
+      "port": 8095
+    }
+  ]
+}

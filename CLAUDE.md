@@ -171,7 +171,31 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     is why. Toolbar controls use Lampa's own real `.simple-button.simple-button--filter` markup
     (`<div class="simple-button simple-button--filter selector"><span>Label</span><div>Value</div></div>`,
     also confirmed live) instead of custom-styled divs, for free native styling.
-  - **`Lampa.Component.add`'s real contract, confirmed live**: a bare `create`/`render`/`destroy` is
+  - **Lampa's real Controller/Activity navigation contract, confirmed live by reading `app.min.js`
+    directly (not guessed) after a real reported bug — the Torrent Mod screen broke Lampa's own back
+    button app-wide.** Root cause: `new Lampa.Explorer(object)` only ever registers **one** named
+    controller, `'explorer'`, for the left info card (`explorer.toggle()` → `Controller.add('explorer',
+    {..., right: () => Controller.toggle('content'), back: () => Activity.backward()})`). It does **not**
+    register `'content'` for the scrollable body/grid — that's left entirely to the caller. Without doing
+    that ourselves, `Controller.collectionSet(...)` calls from the results-rendering functions silently
+    mutate whatever controller happens to be active *at that moment* (usually still `'explorer'`, since
+    they often run before the user ever presses right), stomping Explorer's own left-card focus
+    collection with our grid rows while leaving Explorer's `left`/`back`/`toggle` handlers in place —
+    back then does the wrong thing depending on timing. The fix: register our own `'content'` controller
+    (`left` → `Controller.toggle('explorer')`, `back` → `Controller.toggle('explorer')` — i.e. leaving the
+    grid returns focus to the card, it does **not** pop the activity; only `'explorer'`'s own `back` does
+    that), symmetric with what Explorer already does for the card. **Must be (re-)registered inside the
+    component's own `start()`**, not once in the constructor — `ActivitySlide.start()` (Lampa's own
+    per-activity wrapper) unconditionally re-registers its placeholder `'content'` on every start/restart
+    of an activity (e.g. whenever the user returns from a pushed sub-screen) *before* calling the
+    component's `start()`, so a constructor-time-only registration silently reverts after any round trip.
+    Verified live via `Lampa.Controller.move('right')` / `Lampa.Controller.back()` / `Lampa.Activity.all()`
+    scripted against the running page: focus now goes `explorer → content → explorer → (pop, back to the
+    calling screen)`, one activity popped per back press, matching native Explorer-based screens. General
+    lesson for any future Explorer-based plugin screen: **the framework only wires navigation for the
+    parts of the layout it owns (the left card); anything a plugin adds to the body is the plugin's own
+    responsibility to wire into `Controller`, not just visually append.**
+  - `Lampa.Component.add`'s real contract, confirmed live: a bare `create`/`render`/`destroy` is
     enough (this is literally what Lampa's own `nocomponent` fallback implements) — `start`/`pause`/
     `stop`/`back` are optional extras the Activity wrapper calls if present. `Lampa.Component.create`
     wraps `new component[name](object)` in try/catch and **silently swaps in `nocomponent`** (a generic

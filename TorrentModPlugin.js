@@ -61,6 +61,40 @@
         else console.log('Torrent Mod:', message);
     }
 
+    // Behind the `torrent_mod_debug` setting (off by default). Prints a table of every scored
+    // candidate for a search — raw title, everything parseRelease() extracted from it, and the
+    // three score components — so parsing/scoring quality on real raздачи (especially season
+    // packs with inconsistent naming) can be checked directly in devtools without guessing.
+    function debugLogCandidates(candidates, target) {
+        try {
+            var rows = candidates.map(function (item) {
+                var r = item.release;
+                var s = item._score || {};
+                return {
+                    title: item.title,
+                    tracker: item.tracker,
+                    season: r.seasons.join(','),
+                    episodes: r.explicitEpisode ? (r.episodeFrom + '-' + r.episodeTo) : '',
+                    resolution: r.resolution,
+                    hdr: r.hdr,
+                    codec: r.codec,
+                    voice: r.voiceType,
+                    subs: r.subtitles,
+                    sizeMB: Math.round(item.size / 1048576),
+                    bitrateMbps: s.bitrateMbps ? s.bitrateMbps.toFixed(2) : '',
+                    seeders: item.seeders,
+                    peers: item.peers,
+                    match: s.matchScore,
+                    quality: s.qualityScore ? s.qualityScore.toFixed(1) : '',
+                    availability: s.availabilityScore ? s.availabilityScore.toFixed(1) : '',
+                    total: s.value ? s.value.toFixed(1) : ''
+                };
+            });
+            console.log('Torrent Mod debug: search target', target);
+            if (console.table) console.table(rows); else console.log(rows);
+        } catch (e) { console.warn('Torrent Mod debug logging failed', e); }
+    }
+
     function previousController() {
         try { return Lampa.Controller.enabled().name; } catch (e) { return 'content'; }
     }
@@ -230,6 +264,8 @@
     }
 
     function buildQueries(target) {
+        if (target.customQuery) return [target.customQuery];
+
         var titles = baseTitles(target.movie);
         var queries = [];
 
@@ -370,23 +406,54 @@
         return best;
     }
 
-    // Adapted from SmartTsPlugin.js's torrentScore — decides whether a torrent is confidently
-    // "this exact episode" (auto-play) or ambiguous (show a picker) once the user has already
-    // chosen an episode from metadata; the torrent match itself stays a secondary, automatic step.
-    function episodeMatchScore(item, target) {
-        var signals = item.release;
-        var score = Math.round(titleSimilarity(item.title, target.movie) * 25);
-        var seasonMatches = signals.seasons.indexOf(target.season) >= 0;
-        var episodeMatches = signals.explicitEpisode && target.episode >= signals.episodeFrom && target.episode <= signals.episodeTo;
+    function estimateBitrateMbps(item, target) {
+        var release = item.release;
+        var covered = (release.explicitEpisode && release.episodeTo >= release.episodeFrom)
+            ? (release.episodeTo - release.episodeFrom + 1)
+            : Math.max(1, target.seasonEpisodeCount || 1);
+        var perEpisodeBytes = item.size / covered;
+        var runtimeSeconds = (target.avgRuntimeMinutes || 42) * 60;
+        return runtimeSeconds > 0 ? (perEpisodeBytes * 8) / (runtimeSeconds * 1000000) : 0;
+    }
 
-        if (signals.explicitSeason) score += seasonMatches ? 28 : -100;
-        else score += target.season === 1 ? 5 : 0;
+    // Single integral score, not three separate ones: matchScore is a hard gate (wrong season/
+    // episode/title reject outright), qualityScore rewards a sane bitrate for the resolution
+    // (not "biggest wins" — that favors bloated remuxes) plus the user's preferred-quality
+    // setting, availabilityScore is seeders+peers log-scaled (peers matter almost as much as
+    // seeders — they're the live swarm that actually drives download speed). Same score feeds
+    // both the auto-play confidence check and candidate ranking, so "good enough to not bother
+    // the user" and "best of the list" mean the same thing. matchScore adapted from
+    // SmartTsPlugin.js's torrentScore.
+    function scoreCandidate(item, target) {
+        var release = item.release;
+        var seasonMatches = release.seasons.indexOf(target.season) >= 0;
+        var episodeMatches = release.explicitEpisode && target.episode >= release.episodeFrom && target.episode <= release.episodeTo;
 
-        if (signals.explicitEpisode) score += episodeMatches ? 65 : -90;
-        else if (seasonMatches) score += 22;
+        var matchScore = Math.round(titleSimilarity(item.title, target.movie) * 25);
+        if (release.explicitSeason) matchScore += seasonMatches ? 28 : -100;
+        else matchScore += target.season === 1 ? 5 : 0;
+        if (target.episode) {
+            if (release.explicitEpisode) matchScore += episodeMatches ? 65 : -90;
+            else if (seasonMatches) matchScore += 22;
+        }
 
-        score += Math.min(18, Math.round(Math.log(item.seeders + 1) * 4));
-        return { value: score, season: seasonMatches, episode: episodeMatches };
+        var bitrateMbps = estimateBitrateMbps(item, target);
+        item.bitrateMbps = bitrateMbps;
+        var qualityScore = Math.min(20, bitrateMbps * 2.5);
+        var preferred = field('torrent_mod_preferred_quality', 'any');
+        if (preferred !== 'any' && release.resolution === preferred) qualityScore += 10;
+
+        var availabilityScore = Math.min(20, Math.log(item.seeders + 1) * 5) + Math.min(8, Math.log(item.peers + 1) * 2.5);
+
+        return {
+            value: matchScore + qualityScore + availabilityScore,
+            matchScore: matchScore,
+            qualityScore: qualityScore,
+            availabilityScore: availabilityScore,
+            bitrateMbps: bitrateMbps,
+            season: seasonMatches,
+            episode: episodeMatches
+        };
     }
 
     function matchesTranslation(item, voiceType) {
@@ -470,10 +537,44 @@
             return { el: el, setValue: function (text) { el.find('> div').text(text); } };
         }
 
+        // Same slot/markup as Online Mod's own search chip (.filter--search, confirmed live) —
+        // Lampa's standard "what am I searching for" control stays first, our own controls
+        // (season/voice/filters) come after it, matching how Online Mod layers its own UI on top
+        // of Lampa's existing search flow instead of replacing it.
+        function searchQueryText(target) {
+            var titles = baseTitles(target.movie);
+            var base = titles[0] || '';
+            if (target.episode) return base + ' S' + pad(target.season) + 'E' + pad(target.episode);
+            if (target.season) return base + ' S' + pad(target.season);
+            return base;
+        }
+
+        var searchLabel = (function () {
+            var el = $(
+                '<div class="simple-button simple-button--filter selector filter--search">' +
+                '<svg><use xlink:href="#sprite-search"></use></svg><div></div></div>'
+            );
+            return { el: el, setValue: function (text) { el.find('> div').text(text); } };
+        })();
+        searchLabel.setValue(searchQueryText({ movie: movie, season: state.season }));
+        searchLabel.el.on('hover:enter', function () {
+            try {
+                Lampa.Input.edit({ value: searchLabel.el.find('> div').text() }, function (value) {
+                    if (!value) return;
+                    state.customQuery = value;
+                    searchLabel.setValue(value);
+                    selectEpisode(state.lastEpisode || 0);
+                });
+            } catch (e) {
+                notify('Ручное редактирование запроса недоступно');
+            }
+        });
+
         var seasonControl = hasSeasons ? filterButton('Сезон', String(state.season || 1)) : null;
         var voiceControl = filterButton('Перевод', 'Любой');
         var filtersControl = filterButton('Фильтры', '');
 
+        toolbar.append(searchLabel.el);
         if (seasonControl) toolbar.append(seasonControl.el);
         toolbar.append(voiceControl.el).append(filtersControl.el);
         scroll.minus();
@@ -513,7 +614,7 @@
                 node.on('hover:enter', function () { selectEpisode(number); });
                 grid.append(node);
             });
-            try { Lampa.Controller.collectionSet(scroll.render(), grid); } catch (e) {}
+            refreshGrid();
         }
 
         function renderMovieCard() {
@@ -521,7 +622,7 @@
             var node = row('Найти раздачи', '');
             node.on('hover:enter', function () { selectEpisode(0); });
             grid.append(node);
-            try { Lampa.Controller.collectionSet(scroll.render(), grid); } catch (e) {}
+            refreshGrid();
         }
 
         function showMessage(message, retry) {
@@ -532,7 +633,53 @@
                 retryNode.on('hover:enter', retry);
                 grid.append(retryNode);
             }
-            try { Lampa.Controller.collectionSet(scroll.render(), grid); } catch (e) {}
+            refreshGrid();
+        }
+
+        // Lampa.Explorer.toggle() (called below in this.start) only ever registers ONE named
+        // controller — 'explorer', for the left info card — with its own back:Activity.backward()
+        // and right:Controller.toggle('content'). It does NOT register 'content' for us; that's
+        // left to the caller (confirmed by reading Explorer's toggle() in app.min.js — its own
+        // `right` handler just does Controller.toggle('content') and trusts something else owns
+        // that name). Without registering it ourselves, Controller.collectionSet() calls from
+        // renderEpisodes/renderMovieCard/showMessage silently land on whatever controller happens
+        // to be active at that moment (usually still 'explorer', since these often run before the
+        // user ever presses right) — overwriting Explorer's own left-card focus collection with our
+        // grid rows while leaving Explorer's left/back/toggle handlers in place. That's the actual
+        // cause of the broken/erratic back button: back ends up bound to whichever controller last
+        // had our rows stomped into its collection, not to a controller we actually own. Registering
+        // 'content' properly — symmetric with Explorer's own 'explorer' entry, back returns focus to
+        // 'explorer' instead of leaving the activity — makes this screen a well-behaved participant
+        // in Lampa's own Controller/Activity navigation instead of a foreign, bolted-on screen.
+        //
+        // Registered fresh in this.start (not here at construction time) because ActivitySlide.start()
+        // — Lampa's own framework code, confirmed live in app.min.js — unconditionally re-registers its
+        // own placeholder 'content' controller on every start/restart of this activity (e.g. whenever
+        // the user returns here from a pushed sub-screen) *before* calling our component's start(). A
+        // one-time registration in the constructor would only win on the very first entry and silently
+        // revert to the framework placeholder after any such round-trip.
+        function refreshGrid() {
+            try {
+                var current = Lampa.Controller.enabled();
+                if (current && current.name === 'content') {
+                    Lampa.Controller.collectionSet(scroll.render(true), grid);
+                    Lampa.Controller.collectionFocus(false, scroll.render(true));
+                }
+            } catch (e) {}
+        }
+
+        function registerContentController() {
+            Lampa.Controller.add('content', {
+                link: this,
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render(true), grid);
+                    Lampa.Controller.collectionFocus(false, scroll.render(true));
+                },
+                left: function () { Lampa.Controller.toggle('explorer'); },
+                up: function () { Navigator.move('up'); },
+                down: function () { Navigator.move('down'); },
+                back: function () { Lampa.Controller.toggle('explorer'); }
+            });
         }
 
         function loadEpisodes() {
@@ -542,6 +689,10 @@
                 return [];
             }).then(function (episodes) {
                 episodes = episodes || [];
+                var runtimes = episodes.map(function (e) { return parseInt(e.runtime, 10) || 0; }).filter(Boolean);
+                state.seasonEpisodeCount = episodes.length || (episodeCounts(movie)[state.season] || 0);
+                state.avgRuntimeMinutes = runtimes.length ? runtimes.reduce(function (a, b) { return a + b; }, 0) / runtimes.length : 0;
+
                 if (!episodes.length) {
                     var fallbackCount = episodeCounts(movie)[state.season] || 0;
                     for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
@@ -552,8 +703,24 @@
             });
         }
 
+        // Min-availability floor on auto-play: a "confident" title/season/episode match with
+        // zero seeders would still auto-play under the old score-only gate — which stalls
+        // forever instead of feeling like an online service. Below this we always show the
+        // picker so the user can knowingly pick a low-seed release instead of getting stuck.
+        var MIN_SEEDERS_FOR_AUTOPLAY = 1;
+
         function selectEpisode(episode) {
-            var target = { movie: object.movie, season: state.season, episode: episode };
+            state.lastEpisode = episode;
+            var target = {
+                movie: object.movie,
+                season: state.season,
+                episode: episode,
+                seasonEpisodeCount: state.seasonEpisodeCount,
+                avgRuntimeMinutes: state.avgRuntimeMinutes,
+                customQuery: state.customQuery
+            };
+            searchLabel.setValue(state.customQuery || searchQueryText(target));
+            state.customQuery = null;
             status.text('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
             searchTorrentMod(target).then(function (response) {
                 if (response.failed) { notify('Jackett недоступен или не ответил'); status.text(''); return; }
@@ -565,23 +732,24 @@
                 }
                 if (!candidates.length) { notify('Ничего не найдено'); status.text(''); return; }
 
-                candidates.forEach(function (item) { item._score = episodeMatchScore(item, target); });
+                candidates.forEach(function (item) { item._score = scoreCandidate(item, target); });
                 candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
+                if (enabled('torrent_mod_debug', false)) debugLogCandidates(candidates, target);
                 status.text('');
 
                 var best = candidates[0];
                 var next = candidates[1];
-                var confident = episode
-                    ? best._score.value >= 58 && (best._score.episode || (best._score.season && !best.release.explicitEpisode)) &&
+                var confident = best.seeders >= MIN_SEEDERS_FOR_AUTOPLAY && (episode
+                    ? best._score.matchScore >= 58 && (best._score.episode || (best._score.season && !best.release.explicitEpisode)) &&
                         (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2)
-                    : best._score.value >= 25;
+                    : best._score.matchScore >= 25);
 
-                if (confident) startDownload(best);
-                else showCandidates(candidates.slice(0, 10));
+                if (confident) startDownload(best, target);
+                else showCandidates(candidates.slice(0, 10), target);
             });
         }
 
-        function showCandidates(candidates) {
+        function showCandidates(candidates, target) {
             var items = candidates.map(function (item, index) {
                 var info = [];
                 if (item.tracker) info.push(item.tracker);
@@ -594,19 +762,8 @@
             Lampa.Select.show({
                 title: 'Выбор раздачи',
                 items: items,
-                onSelect: function (choice) { startDownload(choice.torrent); }
+                onSelect: function (choice) { startDownload(choice.torrent, target); }
             });
-        }
-
-        function startDownload(item) {
-            notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
-            Lampa.Torrent.start({
-                Title: item.title,
-                title: item.title,
-                MagnetUri: item.magnet,
-                Link: item.link,
-                poster: object.movie && (object.movie.img || object.movie.poster_path) || ''
-            }, object.movie);
         }
 
         function start() {
@@ -664,15 +821,216 @@
 
         this.create = function () { return this.render(true); };
         this.render = function (js) { return explorer.render(js); };
-        this.start = function () { explorer.toggle(); start(); };
+        this.start = function () { explorer.toggle(); registerContentController(); start(); };
         this.pause = function () {};
         this.stop = function () {};
-        this.back = function () { Lampa.Activity.backward(); };
         this.destroy = function () {
             cancelSearch();
             try { scroll.destroy(); } catch (e) {}
             try { explorer.destroy(); } catch (e) {}
         };
+    }
+
+    // ---------- download + duration-aware smart preload ----------
+    //
+    // No global patching of Lampa.Player.play/Lampa.Torserver.stream here (see the plan this was
+    // built from) — SmartTsPlugin.js already permanently patches those, and this plugin runs
+    // alongside it by default, so a second permanent patch is how you get two preload overlays
+    // racing each other. Instead: we already know the torrent's infohash from its own magnet
+    // (we picked it ourselves via search, no need to intercept anything to learn it), so we can
+    // poll TorrServer's /cache for it directly and independently of whatever the native file-list
+    // UI does. We listen to the same 'torrent_file' event SmartTsPlugin listens to (listening is
+    // safe/composable — it's *patching a shared function* that isn't), scoped to only react while
+    // `pendingPlayback` is set (i.e. only for downloads *we* just started), auto-pick the right
+    // file the same way SmartTsPlugin's fileScore does, and just call the file's own native
+    // `hover:enter` once our duration-based buffer target is ready — that's the real Lampa file
+    // click, so playback starts through the exact same path it always would.
+
+    var pendingPlayback = null;
+
+    function extractInfoHash(magnet) {
+        var match = String(magnet || '').match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
+        return match ? match[1].toLowerCase() : '';
+    }
+
+    function torrServerBase() {
+        try { if (Lampa.Torserver && Lampa.Torserver.ip) return String(Lampa.Torserver.ip() || '').replace(/\/$/, ''); } catch (e) {}
+        return '';
+    }
+
+    function preloadFileScore(element, target) {
+        var path = String((element && (element.path || element.title)) || '');
+        var signals = parseSignals(path);
+        var score = 0;
+        if (target.episode) {
+            if (signals.explicitEpisode && target.episode >= signals.episodeFrom && target.episode <= signals.episodeTo) score += 100;
+            else if (signals.explicitEpisode) score -= 100;
+        }
+        if (signals.explicitSeason) score += signals.seasons.indexOf(target.season) >= 0 ? 30 : -100;
+        return score;
+    }
+
+    function maybeProceed(pending) {
+        if (!pending || pending.clicked || !pending.bestFile) return;
+        if (!pending.ready && !pending.timedOut) return;
+        pending.clicked = true;
+        cleanupSmartPreload(pending);
+        try { pending.bestFile.item.trigger('hover:enter'); } catch (e) {}
+        if (pendingPlayback === pending) pendingPlayback = null;
+    }
+
+    function pickBestFile(pending) {
+        if (!pending || pending.clicked || !pending.fileItems.length) return;
+        var scored = [];
+        for (var i = 0; i < pending.fileItems.length; i++) {
+            scored.push({ f: pending.fileItems[i], score: preloadFileScore(pending.fileItems[i].element, pending.target) });
+        }
+        scored.sort(function (a, b) { return b.score - a.score; });
+        pending.bestFile = scored[0].f;
+        maybeProceed(pending);
+    }
+
+    function onTorrentFile(event) {
+        if (!event || !pendingPlayback) return;
+        var pending = pendingPlayback;
+        if (event.type === 'list_open') {
+            pending.fileItems = [];
+        } else if (event.type === 'render' && pending.fileItems) {
+            pending.fileItems.push({ element: event.element, item: event.item });
+            clearTimeout(pending.renderDebounce);
+            pending.renderDebounce = setTimeout(function () { pickBestFile(pending); }, 150);
+        }
+    }
+
+    function cleanupSmartPreload(pending) {
+        clearInterval(pending.pollTimer);
+        clearInterval(pending.clockTimer);
+        clearTimeout(pending.renderDebounce);
+        if (pending.html) pending.html.remove();
+        try { Lampa.Controller.toggle(pending.previousController || 'content'); } catch (e) {}
+    }
+
+    function showSmartPreload(pending) {
+        pending.previousController = previousController();
+        var timeoutSeconds = pending.timeoutSeconds;
+        var html = $([
+            '<div class="torrent-mod-preload">',
+            ' <div class="torrent-mod-preload__box">',
+            '  <div class="torrent-mod-preload__title">Буферизация — под длительность просмотра, не под фиксированный размер</div>',
+            '  <div class="torrent-mod-preload__percent">0%</div>',
+            '  <div class="torrent-mod-preload__bar"><div></div></div>',
+            '  <div class="torrent-mod-preload__stats">Подключение к раздаче…</div>',
+            '  <div class="torrent-mod-preload__buttons">',
+            '   <div class="simple-button selector">Отмена</div>',
+            '   <div class="simple-button selector">Смотреть сейчас</div>',
+            '  </div>',
+            ' </div>',
+            '</div>'
+        ].join(''));
+        pending.html = html;
+        var buttons = html.find('.simple-button');
+        $('body').append(html);
+
+        function cancel() {
+            pending.clicked = true;
+            cleanupSmartPreload(pending);
+            if (pendingPlayback === pending) pendingPlayback = null;
+            notify('Отменено');
+        }
+        function forcePlay() {
+            pending.ready = true;
+            maybeProceed(pending);
+        }
+        buttons.eq(0).on('hover:enter click', cancel);
+        buttons.eq(1).on('hover:enter click', forcePlay);
+
+        Lampa.Controller.add('torrent_mod_preload', {
+            toggle: function () {
+                Lampa.Controller.collectionSet(html);
+                Lampa.Controller.collectionFocus(buttons.eq(1)[0], html);
+            },
+            left: function () { Navigator.move('left'); },
+            right: function () { Navigator.move('right'); },
+            up: function () { Navigator.move('up'); },
+            down: function () { Navigator.move('down'); },
+            back: cancel
+        });
+        Lampa.Controller.toggle('torrent_mod_preload');
+
+        pending.clockTimer = setInterval(function () {
+            if ((Date.now() - pending.started) / 1000 >= timeoutSeconds) {
+                pending.timedOut = true;
+                maybeProceed(pending);
+            }
+        }, 1000);
+
+        var base = torrServerBase();
+        pending.pollTimer = setInterval(function () {
+            if (!base || pending.clicked) return;
+            $.ajax({
+                url: base + '/cache',
+                method: 'POST',
+                data: JSON.stringify({ action: 'get', hash: pending.hash }),
+                dataType: 'json',
+                timeout: 2500
+            }).done(function (response) {
+                if (pending.clicked) return;
+                var data = response && (response.Torrent || response);
+                if (!data) return;
+                var loaded = parseFloat(data.preloaded_bytes) || 0;
+                var speed = parseFloat(data.download_speed) || 0;
+                var seeds = parseInt(data.connected_seeders, 10) || 0;
+                var peers = parseInt(data.active_peers, 10) || 0;
+                var percent = pending.targetBytes ? Math.min(100, loaded * 100 / pending.targetBytes) : 0;
+                html.find('.torrent-mod-preload__percent').text(Math.round(percent) + '%');
+                html.find('.torrent-mod-preload__bar > div').css('width', percent + '%');
+                html.find('.torrent-mod-preload__stats').text(
+                    formatSize(loaded) + ' / ' + formatSize(pending.targetBytes) +
+                    ' · ' + formatSize(speed) + '/с · сиды ' + seeds + ' · пиры ' + peers
+                );
+                // Already downloading faster than real-time playback needs — safe to start now
+                // even short of the nominal buffer target, it won't be outrun.
+                var keepsUpWithPlayback = pending.bitrateMbps > 0 && speed > 0 && (speed * 8 / 1000000) >= pending.bitrateMbps * 0.9;
+                if (loaded >= pending.targetBytes || keepsUpWithPlayback) {
+                    pending.ready = true;
+                    maybeProceed(pending);
+                }
+            }).fail(function () {});
+        }, 1000);
+    }
+
+    function startDownload(item, target) {
+        notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
+        var hash = extractInfoHash(item.magnet);
+        var bitrateMbps = item.bitrateMbps || 3;
+        var timeoutSeconds = parseInt(field('torrent_mod_preload_timeout', '60'), 10) || 60;
+        var leadSeconds = 25;
+        var targetBytes = (bitrateMbps * 1000000 / 8) * leadSeconds;
+
+        Lampa.Torrent.start({
+            Title: item.title,
+            title: item.title,
+            MagnetUri: item.magnet,
+            Link: item.link,
+            poster: (target.movie && (target.movie.img || target.movie.poster_path)) || ''
+        }, target.movie);
+
+        if (!hash) return; // can't poll /cache without a hash — let native flow run unassisted
+
+        pendingPlayback = {
+            hash: hash,
+            item: item,
+            target: target,
+            bitrateMbps: bitrateMbps,
+            targetBytes: targetBytes,
+            timeoutSeconds: timeoutSeconds,
+            fileItems: [],
+            started: Date.now(),
+            clicked: false,
+            ready: false,
+            timedOut: false
+        };
+        showSmartPreload(pendingPlayback);
     }
 
     // ---------- card button ----------
@@ -717,6 +1075,12 @@
             param: { name: 'torrent_mod_query_russian', type: 'trigger', default: true },
             field: { name: 'Искать «N сезон»', description: 'Дополнительный локализованный вариант запроса' }
         });
+
+        Lampa.SettingsApi.addParam({
+            component: 'torrent_mod',
+            param: { name: 'torrent_mod_debug', type: 'trigger', default: false },
+            field: { name: 'Отладка поиска', description: 'Таблица разобранных раздач и их оценок в консоли браузера при каждом поиске' }
+        });
     }
 
     // ---------- styles ----------
@@ -737,7 +1101,17 @@
             '.torrent-mod-row__icon svg{width:2.4em;height:2.4em}',
             '.torrent-mod-row__title{padding-left:2.1em;font-size:1.1em}',
             '.torrent-mod-row__subtitle{padding-left:2.1em;opacity:.65;font-size:.88em;margin-top:.2em}',
-            '.view--torrent-mod svg{margin-right:.7em}'
+            '.view--torrent-mod svg{margin-right:.7em}',
+            '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:2em}',
+            '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',
+            '.torrent-mod-preload__title{font-size:1.2em;font-weight:700;margin-bottom:.6em}',
+            '.torrent-mod-preload__percent{font-size:2.5em;font-weight:700;margin:.4em 0 .15em}',
+            '.torrent-mod-preload__bar{height:.65em;background:#2c394b;border-radius:1em;overflow:hidden}',
+            '.torrent-mod-preload__bar>div{height:100%;width:0;background:#58d68d;transition:width .25s}',
+            '.torrent-mod-preload__stats{margin:1em 0 1.5em;min-height:1.4em;opacity:.85}',
+            '.torrent-mod-preload__buttons{display:flex;gap:.8em}',
+            '.torrent-mod-preload .simple-button{padding:.75em 1.2em;background:#2c394b;border-radius:.6em}',
+            '.torrent-mod-preload .simple-button.focus{background:#fff;color:#111}'
         ].join('');
         document.head.appendChild(style);
     }
@@ -747,5 +1121,6 @@
     Lampa.Template.add('torrent_mod', '<div></div>');
     Lampa.Component.add('torrent_mod', TorrentModComponent);
     Lampa.Listener.follow('full', addCardButton);
+    Lampa.Listener.follow('torrent_file', onTorrentFile);
     console.log('Torrent Mod ' + VERSION + ': ready');
 })(jQuery, Lampa);
