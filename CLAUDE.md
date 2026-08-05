@@ -140,27 +140,52 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     slash gets stripped back off. Handle both spellings in one branch instead.
 - **`BuiltInPlugins.cs`** — holds a static list of `BuiltInPluginDefinition` (id/url/name/category/embedded
   resource name) and loops over it in `Ensure`/`Read`/`IsBuiltIn`, rather than one hardcoded plugin — this
-  is what lets both `SmartTsPlugin.js` (`builtin://smart-ts`) and `TorrentModPlugin.js`
-  (`builtin://torrent-mod`) ship embedded in the assembly instead of fetched from a URL, while still
-  flowing through the same PluginHub caching/serving path as externally-added plugins. Add a new entry
-  here (plus the matching `<EmbeddedResource>` in the `.csproj`) for any future built-in plugin.
-- **`SmartTsPlugin.js`** — embedded as `TorrServerManager.SmartTsPlugin.js`. Adds season/episode-aware
-  playback UI and pre-buffering behavior on top of Lampa's torrent player, by *globally* wrapping
-  `Lampa.Torserver.stream` / `Lampa.Player.play` / `Lampa.Player.playlist` / `Lampa.Player.callback` /
-  `Lampa.Player.stat` — search is hardcoded to one Jackett indexer (RuTracker) via `/api/smart-search`,
-  no results list of its own (`Lampa.Select.show` overlay only, or falls back to Lampa's native
-  `torrents` component when the pick is ambiguous).
-- **`TorrentModPlugin.js`** — embedded as `TorrServerManager.TorrentModPlugin.js`. A second, independent
-  torrent plugin (own card button, own `Lampa.Component.add('torrent_mod', ...)` results screen) rather
-  than a native-screen wrapper like `SmartTsPlugin.js` — a deliberate product choice; see the plan this
-  was built from (`playful-leaping-wilkinson` in `~/.claude/plans/` at authoring time) for the tradeoffs.
-  Searches via `/api/torrent-search` (all Jackett indexers at once, not just RuTracker). Primary content
-  is EPISODE metadata from TMDB (a scrollable list, not raw torrent results) — picking an episode
-  triggers an automatic, mostly-invisible torrent match (`episodeMatchScore`, adapted from
-  `SmartTsPlugin.js`'s `torrentScore`): auto-play on a confident match, a small `Lampa.Select.show`
-  picker otherwise. `parseRelease()` (quality/HDR/audio/subtitle/season/episode tagging from raw Torznab
-  titles) was tuned against real titles pulled live from this project's own Jackett instance, not
-  guessed — re-tune here if tag accuracy drifts.
+  is what lets `TorrentModPlugin.js` (`builtin://torrent-mod`) ship embedded in the assembly instead of
+  fetched from a URL, while still flowing through the same PluginHub caching/serving path as
+  externally-added plugins. Add a new entry here (plus the matching `<EmbeddedResource>` in the `.csproj`)
+  for any future built-in plugin. (A second built-in, `SmartTsPlugin.js`, shipped earlier in this
+  project's history — a single-RuTracker-indexer, `Lampa.Select.show`-overlay-only predecessor. Retired
+  once `TorrentModPlugin.js` matured into a full replacement — same job, all Jackett indexers instead of
+  one, its own results screen instead of an overlay. If a plugin's config entry survives from before this
+  removal, `BuiltInPlugins.Read` throws `InvalidDataException("Неизвестный встроенный плагин.")` for it —
+  clear it via `POST /api/config` rather than hand-editing `lampa-plugins.json`.)
+- **`TorrentModPlugin.js`** — embedded as `TorrServerManager.TorrentModPlugin.js`. Own card button, own
+  `Lampa.Component.add('torrent_mod', ...)` results screen (not a native-screen wrapper) — a deliberate
+  product choice; see the plan this was built from (`playful-leaping-wilkinson` in `~/.claude/plans/` at
+  authoring time) for the tradeoffs. Searches via `/api/torrent-search` (all Jackett indexers at once).
+  Primary content is EPISODE metadata from TMDB (a scrollable list, not raw torrent results) — picking an
+  episode triggers an automatic, mostly-invisible torrent match: auto-play on a confident match, a small
+  `Lampa.Select.show` picker otherwise. `parseRelease()` (quality/HDR/audio/subtitle/season/episode
+  tagging from raw Torznab titles) was tuned against real titles pulled live from this project's own
+  Jackett instance, not guessed — re-tune here if tag accuracy drifts.
+  - **Candidate scoring is matchScore-as-gate, then qualityScore+availabilityScore for ranking — not one
+    blended number.** `passesMatchGate(item, target)` is a hard filter: title similarity below 0.34, or a
+    release that explicitly states the wrong season, or explicitly states an episode range that excludes
+    the target episode, and the candidate is dropped from the list entirely — it does not get ranked low,
+    it does not appear in the fallback picker either. A torrent titled with the right `SxxExx` tag for a
+    completely different show must never be an option just because nothing else matched. Releases that
+    don't state season/episode explicitly at all (common on some trackers) pass through ungated for
+    quality/availability to rank. Among gate-passed candidates, `qualityScore` is a **triangular peak**
+    around `referenceBitrateMbps(release)` (a resolution → Mbps table, halved for `H.265`/HEVC since it's
+    roughly twice as efficient as H.264 at the same perceived quality) — full marks on-target, falling off
+    in *both* directions, so a bloated 80 Mbps 1080p remux does not automatically outrank a sane 6 Mbps
+    encode the way a monotonic "bigger bitrate wins" score would. `availabilityScore` folds seeders and
+    peers into one `log(seeders + peers*1.5 + 1)` figure (peers weighted above seeders — they're the live
+    swarm that actually drives download *speed*; a seeder can be idle) instead of two separately-capped
+    terms. Auto-play requires `availabilityScore` above a floor (`MIN_AVAILABILITY_FOR_AUTOPLAY`) on top of
+    being the clear top-ranked candidate — a perfect title/season/episode match with an empty swarm must
+    never auto-play, that's a hang, not "feels like an online service". Sanity-checked against synthetic
+    candidates in a standalone Node harness (gate correctly excludes a same-`SxxExx`-tagged wrong show and
+    a wrong-season release of the right show; season packs score the same per-episode bitrate as an
+    equivalent single-episode release, via `estimateBitrateMbps`'s coverage-aware division; a bloated
+    remux loses to a sane encode on `qualityScore`; HEVC at half the H.264 reference bitrate still scores
+    near-peak) since live Jackett search is occasionally slow/unavailable and the scoring functions are
+    pure enough to test without a browser.
+  - **Per-candidate data pulled from Jackett's own response, not just regexed off the title**: publish
+    date (`raw.PublishDate` → `item.publishedAt`, shown in the picker as "N дн. назад" — a stale season
+    pack sometimes has a data problem a newer one already fixed), plus the already-parsed
+    `audioChannels`/`subtitles` (parsed since early on but previously computed and discarded — now shown
+    in the picker subtitle alongside tracker/seeders/peers/size/voice type).
   - **The whole left info panel + toolbar + scrollable list chrome is `Lampa.Explorer`**, not hand-built
     markup — confirmed live by opening this app's own `/app/` in a browser and inspecting the real,
     running Lampa/Online Mod DOM (`new Lampa.Explorer(object)` auto-populates the left card from
@@ -221,12 +246,33 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   - `Lampa.Utils.escape` **does not exist** in this Lampa build (confirmed live — was the actual cause of
     the "silently falls back to nocomponent" bug above the first time). Use the plugin's own local
     `escapeHtml()` for any HTML interpolation instead of assuming Lampa provides one.
-  - Deliberately does **not** globally patch `Lampa.Player.play`/`Lampa.Torserver.stream` the way
-    `SmartTsPlugin.js` does — both plugins are enabled simultaneously by default, and double-patching the
-    same globals from two independent plugins is a reliable source of hard-to-debug ordering bugs.
-    `Lampa.Torrent.start(...)` already drives Lampa's own native torrent-preparation dialog (percent,
-    speed, peers/seeds, cancel/force-play) with zero extra code — confirmed live end-to-end (search →
-    auto-match → native progress dialog), so no custom preload overlay was needed here at all.
+  - Deliberately does **not** globally patch `Lampa.Player.play`/`Lampa.Torserver.stream` — that would
+    affect every torrent screen in Lampa, not just this one, a reliable source of hard-to-debug ordering
+    bugs. `Lampa.Torrent.start(...)` is still called (it's what actually registers the magnet with
+    TorrServer and drives the native file-list UI our own file-picking listens to via the `torrent_file`
+    event), but playback readiness is our own: a full-screen `torrent-mod-preload` overlay polls
+    TorrServer's `/cache` for the picked file's infohash, with a **duration-based**, not fixed-size,
+    target — `targetBytes = bitrateMbps(from estimateBitrateMbps) × leadSeconds(25)`, i.e. "enough buffer
+    for ~25 seconds of this specific release's own bitrate", not a flat MB/timeout. Starts early
+    (`keepsUpWithPlayback`) the moment observed download speed already exceeds ~90% of that bitrate, since
+    at that point the buffer can't be outrun even short of the nominal target. Surfaces an explicit
+    stall-risk warning in the overlay (not just silently waiting out the timeout) once speed has held
+    below half the required bitrate for a few seconds — a stall *during* playback is a worse experience
+    than an honest heads-up before it starts.
+  - **Confirms the title-guessed quality/audio/subtitle badges against the real file once one is picked**,
+    via TorrServer's own `/ffp/{hash}/{fileId}` — TorrServer bundles `ffprobe` for its transcoding support
+    and exposes it at that path. Found by reading a third-party plugin, **MediaInfo** (`iptvgeek_mediainfo`,
+    formerly in this project's own plugin list), whose entire job is exactly this: it calls `/ffp/`, with a
+    fallback to a public "Tracks Inspector" service when a TorrServer build lacks `ffprobe` (that endpoint
+    then 400s). `fileId` isn't DOM/array position — it's TorrServer's own file `.id`, obtained the same way
+    MediaInfo gets it: `POST /torrents {action:'get', hash}` → match `file_stats[].path` against the
+    already-picked file, read `.id` off that entry. `probeRealTracks()` does this once per download, right
+    after `pickBestFile()` — on success, replaces the preload overlay's generic buffering copy with the
+    ffprobe-confirmed resolution/codec/audio-track-count/subtitle-track-count; on failure (no `ffprobe` on
+    this TorrServer build, or the request just fails) it stays quiet, same as the title-only badges already
+    shown elsewhere. Deliberately skips MediaInfo's own public-service fallback — a third-party dependency
+    outside this project's infrastructure, inconsistent with keeping everything (Jackett, TorrServer)
+    local/loopback-only.
   - **Fast JS-only iteration without rebuilding the .NET app**: drop an updated copy of the file at
     `%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js` (same file name as the
     `EmbeddedResource`) — `BuiltInPlugins.Read` checks that path first and only falls back to the

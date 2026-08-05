@@ -71,8 +71,10 @@
                 var r = item.release;
                 var s = item._score || {};
                 return {
+                    passes: s.passes ? '✓' : '✗',
                     title: item.title,
                     tracker: item.tracker,
+                    published: item.publishedAt ? new Date(item.publishedAt).toISOString().slice(0, 10) : '',
                     season: r.seasons.join(','),
                     episodes: r.explicitEpisode ? (r.episodeFrom + '-' + r.episodeTo) : '',
                     resolution: r.resolution,
@@ -382,12 +384,14 @@
         if (!magnet && /^magnet:/i.test(link)) magnet = link;
         if (!magnet && !link) return null;
         var title = raw.Title || raw.title || 'Без названия';
+        var published = Date.parse(raw.PublishDate || raw.publishDate || raw.pubDate || '');
         return {
             title: title,
             tracker: raw.Tracker || raw.indexer || '',
             size: raw.Size || raw.size || 0,
             seeders: parseInt(raw.Seeders || raw.Seed || raw.seeders, 10) || 0,
             peers: parseInt(raw.Peers || raw.Peer || raw.leechers, 10) || 0,
+            publishedAt: isNaN(published) ? 0 : published,
             magnet: magnet,
             link: link,
             release: parseRelease(title)
@@ -416,43 +420,70 @@
         return runtimeSeconds > 0 ? (perEpisodeBytes * 8) / (runtimeSeconds * 1000000) : 0;
     }
 
-    // Single integral score, not three separate ones: matchScore is a hard gate (wrong season/
-    // episode/title reject outright), qualityScore rewards a sane bitrate for the resolution
-    // (not "biggest wins" — that favors bloated remuxes) plus the user's preferred-quality
-    // setting, availabilityScore is seeders+peers log-scaled (peers matter almost as much as
-    // seeders — they're the live swarm that actually drives download speed). Same score feeds
-    // both the auto-play confidence check and candidate ranking, so "good enough to not bother
-    // the user" and "best of the list" mean the same thing. matchScore adapted from
-    // SmartTsPlugin.js's torrentScore.
+    // A believable "good enough for this resolution" bitrate per tier (H.264-ish; real releases
+    // vary, this only needs to be roughly right since qualityScore below is a peak, not a cliff).
+    // HEVC/H.265 gets scaled down — same perceived quality at a lower bitrate, so judging it
+    // against the H.264 reference would unfairly punish well-encoded HEVC releases.
+    var REFERENCE_BITRATE_MBPS = { '2160p': 18, '1080p': 6, '720p': 3, '480p': 1.5 };
+
+    function referenceBitrateMbps(release) {
+        var base = REFERENCE_BITRATE_MBPS[release.resolution] || REFERENCE_BITRATE_MBPS['1080p'];
+        return release.codec === 'H.265' ? base * 0.6 : base;
+    }
+
+    // matchScore is a hard gate, not a scored component: title has to plausibly be this movie/show,
+    // and if the release states a season/episode at all, it has to be the right one. Candidates that
+    // fail this don't get ranked lower, they don't participate — a "Заражённая земля 2019" torrent
+    // should never be an option when the target is "Игра престолов" S1E1, no matter how many seeds
+    // it has. Releases that *don't* state season/episode explicitly (ambiguous naming, common on
+    // some trackers) are let through for qualityScore/availabilityScore to sort out.
+    function passesMatchGate(item, target) {
+        var release = item.release;
+        if (titleSimilarity(item.title, target.movie) < 0.34) return false;
+        if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
+        if (target.episode && release.explicitEpisode &&
+            !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) return false;
+        return true;
+    }
+
+    // Once a candidate clears the matchScore gate, ranking is qualityScore + availabilityScore only
+    // (matchScore already did its job as a filter, it doesn't also weigh in here). qualityScore peaks
+    // near a sane bitrate for the release's own resolution instead of rewarding "bigger is better" —
+    // a 1080p release at 80 Mbps is a bloated remux, not a better watch, and would always win a
+    // monotonic score. availabilityScore folds seeders and peers into one log-scaled figure with
+    // peers weighted higher — peers are the live swarm that actually drives download *speed*, seeders
+    // alone can be idle. Auto-play additionally requires availabilityScore above a floor (see
+    // MIN_AVAILABILITY_FOR_AUTOPLAY below) — a perfect title/season/episode match with an empty swarm
+    // must never auto-play, that's a hang, not "feels like an online service".
     function scoreCandidate(item, target) {
         var release = item.release;
-        var seasonMatches = release.seasons.indexOf(target.season) >= 0;
-        var episodeMatches = release.explicitEpisode && target.episode >= release.episodeFrom && target.episode <= release.episodeTo;
-
-        var matchScore = Math.round(titleSimilarity(item.title, target.movie) * 25);
-        if (release.explicitSeason) matchScore += seasonMatches ? 28 : -100;
-        else matchScore += target.season === 1 ? 5 : 0;
-        if (target.episode) {
-            if (release.explicitEpisode) matchScore += episodeMatches ? 65 : -90;
-            else if (seasonMatches) matchScore += 22;
-        }
+        var passes = passesMatchGate(item, target);
+        var matchScore = Math.round(titleSimilarity(item.title, target.movie) * 40) +
+            (release.explicitSeason && release.seasons.indexOf(target.season) >= 0 ? 20 : 0) +
+            (target.episode && release.explicitEpisode &&
+                target.episode >= release.episodeFrom && target.episode <= release.episodeTo ? 40 : 0);
 
         var bitrateMbps = estimateBitrateMbps(item, target);
         item.bitrateMbps = bitrateMbps;
-        var qualityScore = Math.min(20, bitrateMbps * 2.5);
+        var reference = referenceBitrateMbps(release);
+        // Triangular peak at `reference`: full marks right on target, falling off in both
+        // directions (over-encoded remux and under-encoded transcode both lose points).
+        var deviation = Math.abs(bitrateMbps - reference) / reference;
+        var qualityScore = Math.max(0, 20 * (1 - deviation));
         var preferred = field('torrent_mod_preferred_quality', 'any');
         if (preferred !== 'any' && release.resolution === preferred) qualityScore += 10;
 
-        var availabilityScore = Math.min(20, Math.log(item.seeders + 1) * 5) + Math.min(8, Math.log(item.peers + 1) * 2.5);
+        var availabilityScore = Math.min(24, Math.log(item.seeders + item.peers * 1.5 + 1) * 6);
 
         return {
-            value: matchScore + qualityScore + availabilityScore,
+            passes: passes,
+            value: qualityScore + availabilityScore,
             matchScore: matchScore,
             qualityScore: qualityScore,
             availabilityScore: availabilityScore,
             bitrateMbps: bitrateMbps,
-            season: seasonMatches,
-            episode: episodeMatches
+            season: release.seasons.indexOf(target.season) >= 0,
+            episode: release.explicitEpisode && target.episode >= release.episodeFrom && target.episode <= release.episodeTo
         };
     }
 
@@ -506,9 +537,9 @@
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
-    // once an episode is picked (auto-play on a confident match, a small picker otherwise), the
-    // same division SmartTsPlugin.js already uses. Season/translation live in the toolbar (the
-    // slot Online Mod uses for its balancer picker); anything else is a plain filter list.
+    // once an episode is picked (auto-play on a confident match, a small picker otherwise).
+    // Season/translation live in the toolbar (the slot Online Mod uses for its balancer picker);
+    // anything else is a plain filter list.
     // Left info panel + toolbar row + scrollable list — all built on Lampa.Explorer, the same
     // helper the native full-card view and Online Mod itself use (confirmed live: its
     // constructor auto-populates the left panel from object.movie, no hand-built markup for
@@ -714,11 +745,12 @@
             });
         }
 
-        // Min-availability floor on auto-play: a "confident" title/season/episode match with
-        // zero seeders would still auto-play under the old score-only gate — which stalls
-        // forever instead of feeling like an online service. Below this we always show the
-        // picker so the user can knowingly pick a low-seed release instead of getting stuck.
-        var MIN_SEEDERS_FOR_AUTOPLAY = 1;
+        // Availability floor on auto-play, checked against the *score* (seeders+peers combined,
+        // log-scaled — see scoreCandidate), not raw seeders: a "confident" title/season/episode
+        // match with an empty swarm would still auto-play without this — which stalls forever
+        // instead of feeling like an online service. Below this we always show the picker so the
+        // user can knowingly pick a thin release instead of getting stuck.
+        var MIN_AVAILABILITY_FOR_AUTOPLAY = 3;
 
         function selectEpisode(episode) {
             state.lastEpisode = episode;
@@ -735,39 +767,54 @@
             status.text('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
             searchTorrentMod(target).then(function (response) {
                 if (response.failed) { notify('Jackett недоступен или не ответил'); status.text(''); return; }
-                var candidates = response.results.filter(function (item) { return matchesTranslation(item, state.voiceType); });
-                if (!candidates.length) candidates = response.results;
+                var pool = response.results.filter(function (item) { return matchesTranslation(item, state.voiceType); });
+                if (!pool.length) pool = response.results;
                 if (state.resolution !== 'any') {
-                    var byQuality = candidates.filter(function (item) { return item.release.resolution === state.resolution; });
-                    if (byQuality.length) candidates = byQuality;
+                    var byQuality = pool.filter(function (item) { return item.release.resolution === state.resolution; });
+                    if (byQuality.length) pool = byQuality;
                 }
-                if (!candidates.length) { notify('Ничего не найдено'); status.text(''); return; }
+                if (!pool.length) { notify('Ничего не найдено'); status.text(''); return; }
 
-                candidates.forEach(function (item) { item._score = scoreCandidate(item, target); });
+                // matchScore is a hard gate here, not a ranking input (see scoreCandidate): wrong
+                // title/season/episode candidates are dropped entirely, never just ranked lower.
+                pool.forEach(function (item) { item._score = scoreCandidate(item, target); });
+                if (enabled('torrent_mod_debug', false)) debugLogCandidates(pool, target);
+                var candidates = pool.filter(function (item) { return item._score.passes; });
                 candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
-                if (enabled('torrent_mod_debug', false)) debugLogCandidates(candidates, target);
                 status.text('');
+                if (!candidates.length) { notify('Похожих раздач не нашлось'); return; }
 
                 var best = candidates[0];
                 var next = candidates[1];
-                var confident = best.seeders >= MIN_SEEDERS_FOR_AUTOPLAY && (episode
-                    ? best._score.matchScore >= 58 && (best._score.episode || (best._score.season && !best.release.explicitEpisode)) &&
-                        (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2)
-                    : best._score.matchScore >= 25);
+                var confident = best._score.availabilityScore >= MIN_AVAILABILITY_FOR_AUTOPLAY &&
+                    (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2);
 
                 if (confident) startDownload(best, target);
                 else showCandidates(candidates.slice(0, 10), target);
             });
         }
 
+        function publishedText(item) {
+            if (!item.publishedAt) return '';
+            var days = Math.floor((Date.now() - item.publishedAt) / 86400000);
+            if (days <= 0) return 'сегодня';
+            if (days === 1) return 'вчера';
+            if (days < 30) return days + ' дн. назад';
+            return new Date(item.publishedAt).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' });
+        }
+
         function showCandidates(candidates, target) {
             var items = candidates.map(function (item, index) {
                 var info = [];
                 if (item.tracker) info.push(item.tracker);
-                info.push(item.seeders + ' сидов');
+                info.push(item.seeders + ' сидов · ' + item.peers + ' пиров');
                 var size = formatSize(item.size);
                 if (size) info.push(size);
                 if (item.release.voiceType) info.push(item.release.voiceType);
+                if (item.release.audioChannels) info.push(item.release.audioChannels);
+                if (item.release.subtitles) info.push('субтитры');
+                var published = publishedText(item);
+                if (published) info.push(published);
                 return { title: item.title, subtitle: info.join(' · '), torrent: item, selected: index === 0 };
             });
             Lampa.Select.show({
@@ -844,18 +891,18 @@
 
     // ---------- download + duration-aware smart preload ----------
     //
-    // No global patching of Lampa.Player.play/Lampa.Torserver.stream here (see the plan this was
-    // built from) — SmartTsPlugin.js already permanently patches those, and this plugin runs
-    // alongside it by default, so a second permanent patch is how you get two preload overlays
-    // racing each other. Instead: we already know the torrent's infohash from its own magnet
-    // (we picked it ourselves via search, no need to intercept anything to learn it), so we can
-    // poll TorrServer's /cache for it directly and independently of whatever the native file-list
-    // UI does. We listen to the same 'torrent_file' event SmartTsPlugin listens to (listening is
-    // safe/composable — it's *patching a shared function* that isn't), scoped to only react while
-    // `pendingPlayback` is set (i.e. only for downloads *we* just started), auto-pick the right
-    // file the same way SmartTsPlugin's fileScore does, and just call the file's own native
-    // `hover:enter` once our duration-based buffer target is ready — that's the real Lampa file
-    // click, so playback starts through the exact same path it always would.
+    // No global patching of Lampa.Player.play/Lampa.Torserver.stream — that would affect every
+    // torrent screen in Lampa, not just this one, and is a reliable source of hard-to-debug
+    // ordering bugs the moment more than one thing wants to react to playback start. Instead: we
+    // already know the torrent's infohash from its own magnet (we picked it ourselves via search,
+    // no need to intercept anything to learn it), so we can poll TorrServer's /cache for it
+    // directly and independently of whatever the native file-list UI does. We listen to Lampa's
+    // own 'torrent_file' event (listening is safe/composable — it's *patching a shared function*
+    // that isn't), scoped to only react while `pendingPlayback` is set (i.e. only for downloads
+    // *we* just started), auto-pick the right file by scoring season/episode signals in its path,
+    // and just call the file's own native `hover:enter` once our duration-based buffer target is
+    // ready — that's the real Lampa file click, so playback starts through the exact same path it
+    // always would.
 
     var pendingPlayback = null;
 
@@ -899,6 +946,51 @@
         scored.sort(function (a, b) { return b.score - a.score; });
         pending.bestFile = scored[0].f;
         maybeProceed(pending);
+        probeRealTracks(pending);
+    }
+
+    // Confirms our title-guessed badges (resolution/codec/audio/subs, all regexed out of the
+    // raздача name in parseRelease) against the *actual* file, the same way the MediaInfo plugin
+    // does: TorrServer bundles ffprobe for its own transcoding support and exposes it at
+    // /ffp/{hash}/{fileId} (confirmed by reading that plugin's own source — this is its whole job).
+    // fileId comes from TorrServer's own /torrents listing, not DOM/array position — same lookup
+    // MediaInfo itself does (its pickIndex() reads `.id` off that same list). Deliberately skips
+    // that plugin's public "Tracks Inspector" fallback for when ffprobe isn't available locally —
+    // it's a third-party service outside this project's own infrastructure, inconsistent with
+    // keeping everything (Jackett, TorrServer) local/loopback-only; if /ffp/ 400s (no ffprobe on
+    // this TorrServer build) we just stay quiet, same as the title-only badges already shown.
+    function probeRealTracks(pending) {
+        if (!pending || pending.probed || !pending.bestFile) return;
+        var base = torrServerBase();
+        if (!base) return;
+        pending.probed = true;
+        var wantPath = String((pending.bestFile.element && (pending.bestFile.element.path || pending.bestFile.element.title)) || '');
+        if (!wantPath) return;
+        $.ajax({
+            url: base + '/torrents', method: 'POST',
+            data: JSON.stringify({ action: 'get', hash: pending.hash }),
+            dataType: 'json', timeout: 4000
+        }).done(function (json) {
+            var files = (json && json.file_stats) || [];
+            var match = files.filter(function (f) { return f.path && wantPath.indexOf(f.path) >= 0; })[0];
+            if (!match || match.id == null) return;
+            $.ajax({ url: base + '/ffp/' + pending.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
+                .done(function (probe) {
+                    var streams = probe && probe.streams;
+                    if (!streams || !streams.length || pending.clicked) return;
+                    var video = streams.filter(function (s) { return s.codec_type === 'video'; })[0];
+                    var audio = streams.filter(function (s) { return s.codec_type === 'audio'; });
+                    var subs = streams.filter(function (s) { return s.codec_type === 'subtitle'; });
+                    var bits = [];
+                    if (video) bits.push((video.height ? video.height + 'p' : '') + (video.codec_name ? ' ' + video.codec_name.toUpperCase() : ''));
+                    if (audio.length) bits.push(audio.length + ' ауд.дорожек');
+                    if (subs.length) bits.push(subs.length + ' субтитров');
+                    bits = bits.filter(Boolean);
+                    if (bits.length && pending.html) {
+                        pending.html.find('.torrent-mod-preload__title').text('Подтверждено ffprobe: ' + bits.join(' · '));
+                    }
+                }).fail(function () {});
+        }).fail(function () {});
     }
 
     function onTorrentFile(event) {
@@ -931,6 +1023,7 @@
             '  <div class="torrent-mod-preload__percent">0%</div>',
             '  <div class="torrent-mod-preload__bar"><div></div></div>',
             '  <div class="torrent-mod-preload__stats">Подключение к раздаче…</div>',
+            '  <div class="torrent-mod-preload__risk"></div>',
             '  <div class="torrent-mod-preload__buttons">',
             '   <div class="simple-button selector">Отмена</div>',
             '   <div class="simple-button selector">Смотреть сейчас</div>',
@@ -1001,10 +1094,21 @@
                 );
                 // Already downloading faster than real-time playback needs — safe to start now
                 // even short of the nominal buffer target, it won't be outrun.
-                var keepsUpWithPlayback = pending.bitrateMbps > 0 && speed > 0 && (speed * 8 / 1000000) >= pending.bitrateMbps * 0.9;
+                var speedMbps = speed * 8 / 1000000;
+                var keepsUpWithPlayback = pending.bitrateMbps > 0 && speed > 0 && speedMbps >= pending.bitrateMbps * 0.9;
                 if (loaded >= pending.targetBytes || keepsUpWithPlayback) {
                     pending.ready = true;
                     maybeProceed(pending);
+                } else {
+                    // Speed is holding well below what this bitrate needs, and enough time has
+                    // passed to trust the reading (not just a slow start) — say so explicitly
+                    // instead of quietly waiting out the timeout: a stall during playback is a
+                    // worse experience than an honest heads-up now.
+                    var elapsed = (Date.now() - pending.started) / 1000;
+                    var risk = elapsed > 8 && pending.bitrateMbps > 0 && speed > 0 && speedMbps < pending.bitrateMbps * 0.5;
+                    html.find('.torrent-mod-preload__risk').text(
+                        risk ? 'Скорость закачки ниже битрейта — возможны остановки при просмотре' : ''
+                    );
                 }
             }).fail(function () {});
         }, 1000);
@@ -1039,7 +1143,8 @@
             started: Date.now(),
             clicked: false,
             ready: false,
-            timedOut: false
+            timedOut: false,
+            probed: false
         };
         showSmartPreload(pendingPlayback);
     }
@@ -1060,7 +1165,7 @@
             openTarget(movie, initialSeason(movie), previousController());
         });
 
-        var reference = activity.find('.view--torrent, .view--smart-ts').last();
+        var reference = activity.find('.view--torrent').last();
         if (reference.length) reference.after(button);
         else activity.find('.full-start__buttons').append(button);
     }
@@ -1119,7 +1224,8 @@
             '.torrent-mod-preload__percent{font-size:2.5em;font-weight:700;margin:.4em 0 .15em}',
             '.torrent-mod-preload__bar{height:.65em;background:#2c394b;border-radius:1em;overflow:hidden}',
             '.torrent-mod-preload__bar>div{height:100%;width:0;background:#58d68d;transition:width .25s}',
-            '.torrent-mod-preload__stats{margin:1em 0 1.5em;min-height:1.4em;opacity:.85}',
+            '.torrent-mod-preload__stats{margin:1em 0 0;min-height:1.4em;opacity:.85}',
+            '.torrent-mod-preload__risk{margin:.3em 0 1.5em;min-height:1.2em;color:#f2b84b;font-size:.9em}',
             '.torrent-mod-preload__buttons{display:flex;gap:.8em}',
             '.torrent-mod-preload .simple-button{padding:.75em 1.2em;background:#2c394b;border-radius:.6em}',
             '.torrent-mod-preload .simple-button.focus{background:#fff;color:#111}'

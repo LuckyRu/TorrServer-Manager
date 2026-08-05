@@ -8,7 +8,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>TorrServerManager</AssemblyName>
     <RootNamespace>TorrServerManager</RootNamespace>
-    <Version>1.9.1</Version>
+    <Version>1.10.0</Version>
     <Authors>Local TorrServer Manager</Authors>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -20,7 +20,6 @@
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="SmartTsPlugin.js" LogicalName="TorrServerManager.SmartTsPlugin.js" />
     <EmbeddedResource Include="TorrentModPlugin.js" LogicalName="TorrServerManager.TorrentModPlugin.js" />
   </ItemGroup>
 </Project>

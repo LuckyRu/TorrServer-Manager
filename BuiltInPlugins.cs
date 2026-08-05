@@ -8,7 +8,6 @@ internal static class BuiltInPlugins
 {
     private static readonly BuiltInPluginDefinition[] Definitions =
     [
-        new("smart_ts", "builtin://smart-ts", "Smart TS — сезоны, серии и предзагрузка", "Торренты", "TorrServerManager.SmartTsPlugin.js"),
         new("torrent_mod", "builtin://torrent-mod", "Torrent Mod — поиск и просмотр торрентов", "Торренты", "TorrServerManager.TorrentModPlugin.js")
     ];
 
