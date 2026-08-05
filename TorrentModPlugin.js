@@ -165,23 +165,12 @@
 
     // ---------- season/episode picker (reused pattern from Smart TS) ----------
 
-    function showSeasons(movie) {
-        var controller = previousController();
+    // Builds the season picker list shown inline in TorrentModComponent's toolbar (the slot
+    // Online Mod uses for its balancer picker) — no separate pre-screen anymore, episode-level
+    // choice happens naturally when the user opens a multi-file torrent's file list.
+    function buildSeasonItems(movie, currentSeason) {
         var continueAt = scanProgress(movie);
-        var items = [];
-
-        if (continueAt) {
-            items.push({
-                title: 'Продолжить: S' + pad(continueAt.season) + 'E' + pad(continueAt.episode),
-                subtitle: progressText(continueAt.view),
-                season: continueAt.season,
-                episode: continueAt.episode,
-                selected: true,
-                resume: true
-            });
-        }
-
-        getSeasonMeta(movie).forEach(function (meta) {
+        return getSeasonMeta(movie).map(function (meta) {
             var season = parseInt(meta.season_number, 10);
             var watched = 0;
             var started = 0;
@@ -191,77 +180,31 @@
                 if (view && view.percent >= 90) watched++;
                 else if (view && view.percent > 0) started++;
             }
-            var status = count ? count + ' серий' : 'открыть список';
-            if (watched) status += ' · просмотрено ' + watched;
-            if (started) status += ' · начато ' + started;
-            items.push({
+            var bits = [count ? count + ' серий' : ''];
+            if (watched) bits.push('просмотрено ' + watched);
+            if (started) bits.push('начато ' + started);
+            return {
                 title: meta.name || ('Сезон ' + season),
-                subtitle: status,
+                subtitle: bits.filter(Boolean).join(' · '),
                 season: season,
-                selected: !continueAt && season === 1
-            });
-        });
-
-        Lampa.Select.show({
-            title: 'Torrent Mod · выберите сезон',
-            items: items,
-            onBack: function () { restoreController(controller); },
-            onSelect: function (choice) {
-                if (choice.resume) openTarget(movie, choice.season, choice.episode, controller);
-                else showEpisodes(movie, choice.season, controller);
-            }
+                selected: currentSeason ? season === currentSeason : (!continueAt && season === 1) || (continueAt && season === continueAt.season)
+            };
         });
     }
 
-    function showEpisodes(movie, season, controller) {
-        Lampa.Loading.start(function () {
-            cancelSearch();
-            Lampa.Loading.stop();
-            restoreController(controller);
-        });
-
-        fetchSeason(movie, season).then(function (episodes) {
-            Lampa.Loading.stop();
-            if (!episodes.length) {
-                var fallbackCount = episodeCounts(movie)[season] || 24;
-                for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
-            }
-
-            var items = episodes.map(function (episode) {
-                var number = parseInt(episode.episode_number, 10);
-                var view = canonicalTimeline(movie, season, number);
-                var bits = [];
-                if (episode.air_date) bits.push(episode.air_date);
-                bits.push(progressText(view));
-                return {
-                    title: number + '. ' + (episode.name || ('Серия ' + number)),
-                    subtitle: bits.join(' · '),
-                    episode: number,
-                    view: view,
-                    selected: !!(view && view.percent > 0 && view.percent < 90)
-                };
-            });
-
-            Lampa.Select.show({
-                title: 'Сезон ' + season + ' · выберите серию',
-                items: items,
-                onBack: function () { setTimeout(function () { showSeasons(movie); }, 20); },
-                onSelect: function (choice) { openTarget(movie, season, choice.episode, controller); },
-                onDraw: function (item, choice) {
-                    if (choice.view && Lampa.Timeline && Lampa.Timeline.render) item.append(Lampa.Timeline.render(choice.view));
-                }
-            });
-        });
+    function initialSeason(movie) {
+        if (!movie.number_of_seasons) return 0;
+        var continueAt = scanProgress(movie);
+        return continueAt ? continueAt.season : 1;
     }
 
-    function openTarget(movie, season, episode, controller) {
+    function openTarget(movie, season, controller) {
         Lampa.Activity.push({
             url: '',
-            title: 'Torrent Mod' + (season ? ' · S' + pad(season) + 'E' + pad(episode) : ''),
+            title: 'Torrent Mod' + (season ? ' · Сезон ' + season : ''),
             component: 'torrent_mod',
             movie: movie,
             season: season || 0,
-            episode: episode || 0,
             back_controller: controller || 'content'
         });
     }
@@ -279,21 +222,22 @@
         var titles = baseTitles(target.movie);
         var queries = [];
 
-        if (target.season) {
+        if (target.episode) {
             var exact = 'S' + pad(target.season) + 'E' + pad(target.episode);
-            var pack = 'S' + pad(target.season);
             titles.forEach(function (title) { queries.push(title + ' ' + exact); });
-            if (enabled('torrent_mod_query_pack', true)) {
-                titles.forEach(function (title) { queries.push(title + ' ' + pack); });
-            }
+        }
+        if (target.season) {
+            var pack = 'S' + pad(target.season);
+            titles.forEach(function (title) { queries.push(title + ' ' + pack); });
             if (enabled('torrent_mod_query_russian', true) && titles[0]) {
                 queries.push(titles[0] + ' ' + target.season + ' сезон');
             }
-        } else {
+        }
+        if (!target.season) {
             titles.forEach(function (title) { queries.push(title); });
         }
 
-        return unique(queries, compact).slice(0, 3);
+        return unique(queries, compact).slice(0, 4);
     }
 
     // ---------- release parsing ----------
@@ -403,6 +347,42 @@
         };
     }
 
+    function titleSimilarity(title, movie) {
+        var haystack = ' ' + compact(title) + ' ';
+        var best = 0;
+        baseTitles(movie).forEach(function (name) {
+            var tokens = compact(name).split(' ').filter(function (token) { return token.length > 2; });
+            if (!tokens.length) return;
+            var hits = tokens.filter(function (token) { return haystack.indexOf(' ' + token + ' ') >= 0; }).length;
+            best = Math.max(best, hits / tokens.length);
+        });
+        return best;
+    }
+
+    // Adapted from SmartTsPlugin.js's torrentScore — decides whether a torrent is confidently
+    // "this exact episode" (auto-play) or ambiguous (show a picker) once the user has already
+    // chosen an episode from metadata; the torrent match itself stays a secondary, automatic step.
+    function episodeMatchScore(item, target) {
+        var signals = item.release;
+        var score = Math.round(titleSimilarity(item.title, target.movie) * 25);
+        var seasonMatches = signals.seasons.indexOf(target.season) >= 0;
+        var episodeMatches = signals.explicitEpisode && target.episode >= signals.episodeFrom && target.episode <= signals.episodeTo;
+
+        if (signals.explicitSeason) score += seasonMatches ? 28 : -100;
+        else score += target.season === 1 ? 5 : 0;
+
+        if (signals.explicitEpisode) score += episodeMatches ? 65 : -90;
+        else if (seasonMatches) score += 22;
+
+        score += Math.min(18, Math.round(Math.log(item.seeders + 1) * 4));
+        return { value: score, season: seasonMatches, episode: episodeMatches };
+    }
+
+    function matchesTranslation(item, voiceType) {
+        if (!voiceType || voiceType === 'any') return true;
+        return item.release.voiceType === voiceType;
+    }
+
     function searchTorrentMod(target) {
         var queries = buildQueries(target);
         if (!queries.length) return Promise.resolve({ results: [], indexers: [], failed: true });
@@ -446,110 +426,151 @@
     // Activity/Component contract (create/render/start/pause/stop/destroy/back) used across
     // this ecosystem; adjust here first if the results screen fails to mount.
 
+    // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
+    // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
+    // once an episode is picked (auto-play on a confident match, a small picker otherwise), the
+    // same division SmartTsPlugin.js already uses. Season/translation live in the toolbar (the
+    // slot Online Mod uses for its balancer picker); anything else is a plain filter list.
     function TorrentModComponent(object) {
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var html = $('<div class="torrent-mod"></div>');
-        var body = $('<div class="torrent-mod__list"></div>');
-        var status = $('<div class="torrent-mod__status">Поиск…</div>');
+        var grid = $('<div class="torrent-mod__grid"></div>');
+        var status = $('<div class="torrent-mod__status"></div>');
         var toolbar = $('<div class="torrent-mod__toolbar"></div>');
-        var sortSelect = $('<div class="torrent-mod__control selector" data-name="sort">Сортировка: сиды</div>');
-        var minSeedersSelect = $('<div class="torrent-mod__control selector" data-name="filter">Фильтр: качество</div>');
-        var state = { results: [], sort: field('torrent_mod_default_sort', 'seeders'), minSeeders: parseInt(field('torrent_mod_min_seeders', '0'), 10) || 0, resolution: 'any' };
+        var seasonControl = $('<div class="torrent-mod__control selector" data-name="season"></div>');
+        var voiceControl = $('<div class="torrent-mod__control selector" data-name="voice">Перевод: любой</div>');
+        var filtersControl = $('<div class="torrent-mod__control selector" data-name="filters">Фильтры</div>');
+        var hasSeasons = !!(object.movie && object.movie.number_of_seasons);
+        var state = {
+            season: object.season || 0,
+            voiceType: 'any',
+            resolution: 'any'
+        };
 
-        toolbar.append(sortSelect).append(minSeedersSelect);
-        html.append(toolbar).append(status).append(body);
+        if (hasSeasons) {
+            toolbar.append(seasonControl);
+            updateSeasonLabel();
+        }
+        toolbar.append(voiceControl).append(filtersControl);
+        html.append(toolbar).append(status).append(grid);
 
-        function applyFilters(results) {
-            return results.filter(function (item) {
-                if (item.seeders < state.minSeeders) return false;
-                if (state.resolution !== 'any' && item.release.resolution !== state.resolution) return false;
-                return true;
-            });
+        function updateSeasonLabel() {
+            seasonControl.text('Сезон: ' + (state.season || 1));
         }
 
-        function applySort(results) {
-            var sorted = results.slice();
-            if (state.sort === 'size') sorted.sort(function (a, b) { return b.size - a.size; });
-            else if (state.sort === 'title') sorted.sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); });
-            else sorted.sort(function (a, b) { return b.seeders - a.seeders; });
-            return sorted;
-        }
-
-        function badge(text) {
-            return text ? '<span class="torrent-mod-item__badge">' + Lampa.Utils.escape(text) + '</span>' : '';
-        }
-
-        function renderItem(item) {
-            var release = item.release;
-            var tags = [
-                badge(release.resolution),
-                badge(release.hdr),
-                badge(release.codec),
-                badge(release.audioChannels),
-                badge(release.voiceType),
-                release.subtitles ? badge('SUB') : '',
-                release.is3d ? badge('3D') : ''
-            ].join('');
-
-            var info = [];
-            if (item.tracker) info.push(Lampa.Utils.escape(item.tracker));
-            info.push(item.seeders + ' сидов');
-            info.push(item.peers + ' пиров');
-            var size = formatSize(item.size);
-            if (size) info.push(size);
-
+        function episodeCard(episode, view) {
+            var number = parseInt(episode.episode_number, 10);
+            var poster = episode.still_path
+                ? 'https://image.tmdb.org/t/p/w300' + episode.still_path
+                : (object.movie.img || object.movie.poster_path || '');
             var node = $(
-                '<div class="torrent-mod-item selector">' +
-                '<div class="torrent-mod-item__title">' + Lampa.Utils.escape(item.title) + '</div>' +
-                '<div class="torrent-mod-item__tags">' + tags + '</div>' +
-                '<div class="torrent-mod-item__info">' + info.join(' · ') + '</div>' +
-                '</div>'
+                '<div class="torrent-mod-episode selector">' +
+                '<div class="torrent-mod-episode__poster" style="background-image:url(\'' + poster + '\')"></div>' +
+                '<div class="torrent-mod-episode__body">' +
+                '<div class="torrent-mod-episode__title">' + number + '. ' + Lampa.Utils.escape(episode.name || ('Серия ' + number)) + '</div>' +
+                '<div class="torrent-mod-episode__meta">' + Lampa.Utils.escape(episode.air_date || '') + '</div>' +
+                '<div class="torrent-mod-episode__timeline"></div>' +
+                '</div></div>'
             );
-            node.on('hover:enter', function () { startDownload(item); });
+            if (view && Lampa.Timeline && Lampa.Timeline.render) node.find('.torrent-mod-episode__timeline').append(Lampa.Timeline.render(view));
+            node.on('hover:enter', function () { selectEpisode(number); });
             return node;
         }
 
-        function render() {
-            body.empty();
-            var results = applySort(applyFilters(state.results));
-            if (!results.length) {
-                body.append('<div class="torrent-mod__empty">Ничего не найдено по текущим фильтрам</div>');
-            } else {
-                results.forEach(function (item) { body.append(renderItem(item)); });
-            }
-            try { Lampa.Controller.collectionSet(scroll.render(), body); } catch (e) {}
+        function renderEpisodes(episodes) {
+            grid.empty();
+            episodes.forEach(function (episode) {
+                var view = canonicalTimeline(object.movie, state.season, parseInt(episode.episode_number, 10));
+                grid.append(episodeCard(episode, view));
+            });
+            try { Lampa.Controller.collectionSet(scroll.render(), grid); } catch (e) {}
         }
 
-        function showError(message) {
+        function renderMovieCard() {
+            grid.empty();
+            var node = $(
+                '<div class="torrent-mod-episode selector">' +
+                '<div class="torrent-mod-episode__poster" style="background-image:url(\'' + (object.movie.img || object.movie.poster_path || '') + '\')"></div>' +
+                '<div class="torrent-mod-episode__body"><div class="torrent-mod-episode__title">Найти раздачи</div></div>' +
+                '</div>'
+            );
+            node.on('hover:enter', function () { selectEpisode(0); });
+            grid.append(node);
+            try { Lampa.Controller.collectionSet(scroll.render(), grid); } catch (e) {}
+        }
+
+        function showMessage(message, retry) {
             status.text(message);
-            body.empty();
-            var retry = $('<div class="torrent-mod-item selector torrent-mod-item--retry">Повторить</div>');
-            retry.on('hover:enter', runSearch);
-            body.append(retry);
-            try { Lampa.Controller.collectionSet(scroll.render(), body); } catch (e) {}
+            grid.empty();
+            if (retry) {
+                var retryNode = $('<div class="torrent-mod-episode selector"><div class="torrent-mod-episode__body"><div class="torrent-mod-episode__title">Повторить</div></div></div>');
+                retryNode.on('hover:enter', retry);
+                grid.append(retryNode);
+            }
+            try { Lampa.Controller.collectionSet(scroll.render(), grid); } catch (e) {}
         }
 
-        function runSearch() {
-            status.text('Поиск…');
-            body.empty();
-            searchTorrentMod(object).then(function (response) {
-                if (response.failed) {
-                    showError('Не удалось выполнить поиск — Jackett недоступен или не ответил. Проверьте, что Jackett запущен.');
-                    return;
+        function loadEpisodes() {
+            status.text('Загрузка списка серий…');
+            fetchSeason(object.movie, state.season).then(function (episodes) {
+                if (!episodes.length) {
+                    var fallbackCount = episodeCounts(object.movie)[state.season] || 0;
+                    for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
                 }
-                state.results = response.results;
-                if (!state.results.length) {
-                    status.text('По вашему запросу ничего не найдено');
-                    body.empty();
-                    return;
+                if (!episodes.length) { showMessage('Список серий недоступен', loadEpisodes); return; }
+                status.text('');
+                renderEpisodes(episodes);
+            }).catch(function () { showMessage('Не удалось загрузить список серий', loadEpisodes); });
+        }
+
+        function selectEpisode(episode) {
+            var target = { movie: object.movie, season: state.season, episode: episode };
+            status.text('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
+            searchTorrentMod(target).then(function (response) {
+                if (response.failed) { notify('Jackett недоступен или не ответил'); status.text(''); return; }
+                var candidates = response.results.filter(function (item) { return matchesTranslation(item, state.voiceType); });
+                if (!candidates.length) candidates = response.results;
+                if (state.resolution !== 'any') {
+                    var byQuality = candidates.filter(function (item) { return item.release.resolution === state.resolution; });
+                    if (byQuality.length) candidates = byQuality;
                 }
-                var indexerNote = (response.indexers || []).filter(function (i) { return i.Error; });
-                status.text(state.results.length + ' раздач' + (indexerNote.length ? ' · ' + indexerNote.length + ' источник(ов) недоступны' : ''));
-                render();
+                if (!candidates.length) { notify('Ничего не найдено'); status.text(''); return; }
+
+                candidates.forEach(function (item) { item._score = episodeMatchScore(item, target); });
+                candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
+                status.text('');
+
+                var best = candidates[0];
+                var next = candidates[1];
+                var confident = episode
+                    ? best._score.value >= 58 && (best._score.episode || (best._score.season && !best.release.explicitEpisode)) &&
+                        (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2)
+                    : best._score.value >= 25;
+
+                if (confident) startDownload(best);
+                else showCandidates(candidates.slice(0, 10));
+            });
+        }
+
+        function showCandidates(candidates) {
+            var items = candidates.map(function (item, index) {
+                var info = [];
+                if (item.tracker) info.push(item.tracker);
+                info.push(item.seeders + ' сидов');
+                var size = formatSize(item.size);
+                if (size) info.push(size);
+                if (item.release.voiceType) info.push(item.release.voiceType);
+                return { title: item.title, subtitle: info.join(' · '), torrent: item, selected: index === 0 };
+            });
+            Lampa.Select.show({
+                title: 'Выбор раздачи',
+                items: items,
+                onSelect: function (choice) { startDownload(choice.torrent); }
             });
         }
 
         function startDownload(item) {
+            notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
             Lampa.Torrent.start({
                 Title: item.title,
                 title: item.title,
@@ -559,23 +580,42 @@
             }, object.movie);
         }
 
-        sortSelect.on('hover:enter', function () {
+        function start() {
+            if (!hasSeasons) { status.text(''); renderMovieCard(); return; }
+            loadEpisodes();
+        }
+
+        seasonControl.on('hover:enter', function () {
             Lampa.Select.show({
-                title: 'Сортировка',
-                items: [
-                    { title: 'Сиды', sort: 'seeders' },
-                    { title: 'Размер', sort: 'size' },
-                    { title: 'Название', sort: 'title' }
-                ],
+                title: 'Выберите сезон',
+                items: buildSeasonItems(object.movie, state.season),
                 onSelect: function (choice) {
-                    state.sort = choice.sort;
-                    sortSelect.text('Сортировка: ' + choice.title.toLowerCase());
-                    render();
+                    if (choice.season === state.season) return;
+                    state.season = choice.season;
+                    updateSeasonLabel();
+                    loadEpisodes();
                 }
             });
         });
 
-        minSeedersSelect.on('hover:enter', function () {
+        voiceControl.on('hover:enter', function () {
+            Lampa.Select.show({
+                title: 'Перевод',
+                items: [
+                    { title: 'Любой', value: 'any' },
+                    { title: 'Дубляж', value: 'Дубляж' },
+                    { title: 'Многоголосый', value: 'Многоголосый' },
+                    { title: 'Одноголосый', value: 'Одноголосый' },
+                    { title: 'Оригинал', value: 'Оригинал' }
+                ],
+                onSelect: function (choice) {
+                    state.voiceType = choice.value;
+                    voiceControl.text('Перевод: ' + choice.title.toLowerCase());
+                }
+            });
+        });
+
+        filtersControl.on('hover:enter', function () {
             Lampa.Select.show({
                 title: 'Качество',
                 items: [
@@ -586,15 +626,14 @@
                 ],
                 onSelect: function (choice) {
                     state.resolution = choice.value;
-                    minSeedersSelect.text('Фильтр: ' + choice.title);
-                    render();
+                    filtersControl.text(choice.value === 'any' ? 'Фильтры' : 'Качество: ' + choice.title);
                 }
             });
         });
 
         this.create = function () { return this.render(true); };
         this.render = function (js) { return js ? html : $('<div></div>').append(html); };
-        this.start = function () { runSearch(); };
+        this.start = function () { start(); };
         this.pause = function () {};
         this.stop = function () {};
         this.back = function () { Lampa.Activity.backward(); };
@@ -618,8 +657,7 @@
             '<svg viewBox="0 0 64 64" width="34" height="34"><path fill="currentColor" d="M32 4a28 28 0 100 56 28 28 0 000-56zm0 8a20 20 0 110 40 20 20 0 010-40zm0 8a12 12 0 100 24 12 12 0 000-24z"/></svg>' +
             '<span>Torrent Mod</span></div>');
         button.on('hover:enter', function () {
-            if (movie.number_of_seasons) showSeasons(movie);
-            else openTarget(movie, 0, 0, previousController());
+            openTarget(movie, initialSeason(movie), previousController());
         });
 
         var reference = activity.find('.view--torrent, .view--smart-ts').last();
@@ -645,46 +683,8 @@
 
         Lampa.SettingsApi.addParam({
             component: 'torrent_mod',
-            param: {
-                name: 'torrent_mod_default_sort',
-                type: 'select',
-                values: { seeders: 'Сиды', size: 'Размер', title: 'Название' },
-                default: 'seeders'
-            },
-            field: { name: 'Сортировка по умолчанию', description: '' }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: 'torrent_mod',
-            param: {
-                name: 'torrent_mod_min_seeders',
-                type: 'select',
-                values: { '0': 'Без ограничения', '1': '1', '3': '3', '5': '5', '10': '10' },
-                default: '0'
-            },
-            field: { name: 'Минимум сидов', description: 'Скрывать раздачи с сидами ниже этого значения' }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: 'torrent_mod',
-            param: {
-                name: 'torrent_mod_preload_timeout',
-                type: 'select',
-                values: { '30': '30 секунд', '60': '60 секунд', '90': '90 секунд', '120': '2 минуты' },
-                default: '60'
-            },
-            field: { name: 'Лимит предзагрузки', description: 'После этого времени видео запустится с текущим буфером' }
-        });
-
-        [
-            ['torrent_mod_query_pack', 'Искать сезон целиком', 'Дополнительный запрос на весь сезон, не только серию', true],
-            ['torrent_mod_query_russian', 'Искать «N сезон»', 'Дополнительный локализованный вариант запроса', true]
-        ].forEach(function (setting) {
-            Lampa.SettingsApi.addParam({
-                component: 'torrent_mod',
-                param: { name: setting[0], type: 'trigger', default: setting[3] },
-                field: { name: setting[1], description: setting[2] }
-            });
+            param: { name: 'torrent_mod_query_russian', type: 'trigger', default: true },
+            field: { name: 'Искать «N сезон»', description: 'Дополнительный локализованный вариант запроса' }
         });
     }
 
@@ -699,16 +699,15 @@
             '.torrent-mod__toolbar{display:flex;gap:.8em;margin-bottom:1em}',
             '.torrent-mod__control{padding:.5em .9em;background:#2c394b;border-radius:.6em}',
             '.torrent-mod__control.focus{background:#fff;color:#111}',
-            '.torrent-mod__status{opacity:.7;margin-bottom:1em}',
-            '.torrent-mod__empty{opacity:.6;padding:2em 0;text-align:center}',
-            '.torrent-mod-item{padding:1em;margin-bottom:.6em;background:#182231;border-radius:.8em}',
-            '.torrent-mod-item.focus{background:#fff;color:#111}',
-            '.torrent-mod-item__title{font-weight:600;margin-bottom:.4em}',
-            '.torrent-mod-item__tags{margin-bottom:.4em}',
-            '.torrent-mod-item__badge{display:inline-block;padding:.15em .5em;margin-right:.4em;background:#2c394b;border-radius:.4em;font-size:.8em}',
-            '.torrent-mod-item.focus .torrent-mod-item__badge{background:#e6e6e6;color:#111}',
-            '.torrent-mod-item__info{opacity:.75;font-size:.9em}',
-            '.torrent-mod-item--retry{text-align:center}',
+            '.torrent-mod__status{opacity:.7;margin-bottom:1em;min-height:1.2em}',
+            '.torrent-mod__grid{display:flex;flex-wrap:wrap;gap:1em}',
+            '.torrent-mod-episode{width:16em;border-radius:.8em;overflow:hidden;background:#182231}',
+            '.torrent-mod-episode.focus{background:#fff;color:#111}',
+            '.torrent-mod-episode__poster{width:100%;height:9em;background-size:cover;background-position:center;background-color:#0b1220}',
+            '.torrent-mod-episode__body{padding:.8em}',
+            '.torrent-mod-episode__title{font-weight:600;margin-bottom:.3em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+            '.torrent-mod-episode__meta{opacity:.7;font-size:.85em}',
+            '.torrent-mod-episode__timeline{margin-top:.4em}',
             '.view--torrent-mod svg{margin-right:.7em}'
         ].join('');
         document.head.appendChild(style);
