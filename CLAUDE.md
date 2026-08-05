@@ -93,7 +93,15 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   - `/api/config` (GET/POST) and `/api/plugins/refresh` (POST) drive the panel; mutating endpoints are
     restricted to loopback requests (`EnsureLoopback`).
   - `/api/smart-search` proxies a RuTracker query through the locally running Jackett instance using its
-    stored API key.
+    stored API key. Used by `SmartTsPlugin.js`.
+  - `/api/torrent-search` is the same idea but calls Jackett's aggregate `indexers/all/results` endpoint
+    (all configured indexers fanned out server-side by Jackett itself, not by us) instead of the hardcoded
+    `rutracker-ru` one, and returns `{results, indexers}` — `indexers` is Jackett's own per-source
+    `{ID,Name,Status,Results,Error,ElapsedTime}` array, verified live against this project's own Jackett
+    instance before wiring it up, so the client can tell "no results" apart from "half the trackers timed
+    out." Uses a request-scoped `CancelAfter(45s)` linked `CancellationTokenSource` rather than the shared
+    `httpClient.Timeout` (25s) — Jackett's own aggregate ceiling is ~40s, so the shared timeout would cut
+    the request off before Jackett gives up on its slowest indexer. Used by `TorrentModPlugin.js`.
   - `/jackett/*` reverse-proxies to loopback Jackett (`GET` only, path + query string passed through
     verbatim) so LAN devices can reach it despite Jackett staying bound to `127.0.0.1`. This exists
     because Lampa 3.2.8+ has its own native "Тип парсера: Jackett" setting (a direct URL + API key field,
@@ -130,14 +138,35 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     `path.TrimEnd('/')` in `HandleAsync`), so route matching must treat `/app` and `/app/` as the same
     path — a route that 302-redirects `/app` to `/app/` will redirect-loop forever once the trailing
     slash gets stripped back off. Handle both spellings in one branch instead.
-- **`BuiltInPlugins.cs`** — registers the embedded `SmartTsPlugin.js` (see below) as a pseudo-plugin with
-  a synthetic `builtin://smart-ts` URL, served from the assembly's embedded resources rather than
-  downloaded, but otherwise flowing through the same PluginHub caching/serving path.
-- **`SmartTsPlugin.js`** — the actual Lampa plugin, embedded as a resource (see
-  `<EmbeddedResource>` in the `.csproj`) and injected into TorrServerManager's assembly under the
-  logical name `TorrServerManager.SmartTsPlugin.js`. Adds season/episode-aware playback UI and
-  pre-buffering behavior on top of Lampa's torrent player, by wrapping `Lampa.Torserver.stream` /
-  `Lampa.Player.play` / `Lampa.Player.playlist` / `Lampa.Player.callback` / `Lampa.Player.stat`.
+- **`BuiltInPlugins.cs`** — holds a static list of `BuiltInPluginDefinition` (id/url/name/category/embedded
+  resource name) and loops over it in `Ensure`/`Read`/`IsBuiltIn`, rather than one hardcoded plugin — this
+  is what lets both `SmartTsPlugin.js` (`builtin://smart-ts`) and `TorrentModPlugin.js`
+  (`builtin://torrent-mod`) ship embedded in the assembly instead of fetched from a URL, while still
+  flowing through the same PluginHub caching/serving path as externally-added plugins. Add a new entry
+  here (plus the matching `<EmbeddedResource>` in the `.csproj`) for any future built-in plugin.
+- **`SmartTsPlugin.js`** — embedded as `TorrServerManager.SmartTsPlugin.js`. Adds season/episode-aware
+  playback UI and pre-buffering behavior on top of Lampa's torrent player, by *globally* wrapping
+  `Lampa.Torserver.stream` / `Lampa.Player.play` / `Lampa.Player.playlist` / `Lampa.Player.callback` /
+  `Lampa.Player.stat` — search is hardcoded to one Jackett indexer (RuTracker) via `/api/smart-search`,
+  no results list of its own (`Lampa.Select.show` overlay only, or falls back to Lampa's native
+  `torrents` component when the pick is ambiguous).
+- **`TorrentModPlugin.js`** — embedded as `TorrServerManager.TorrentModPlugin.js`. A second, independent
+  torrent plugin (own card button, own `Lampa.Component.add('torrent_mod', ...)` results screen with
+  sort/filter, own `Lampa.SettingsApi` settings component) rather than a native-screen wrapper like
+  `SmartTsPlugin.js` — a deliberate product choice, see the plan this was built from
+  (`playful-leaping-wilkinson` in `~/.claude/plans/` at authoring time) for the tradeoffs considered.
+  Searches via `/api/torrent-search` (all Jackett indexers at once, not just RuTracker). Reuses several
+  functions verbatim/adapted from `SmartTsPlugin.js` (`parseSignals`, season/episode `Lampa.Select.show`
+  picker, the preload-polling pattern) but deliberately does **not** globally patch
+  `Lampa.Player.play`/`Lampa.Torserver.stream` the way `SmartTsPlugin.js` does — both plugins are enabled
+  simultaneously by default, and double-patching the same globals from two independent plugins is a
+  reliable source of hard-to-debug ordering bugs; Torrent Mod's preload flow is scoped to its own
+  "start download" handler instead. `parseRelease()` (quality/HDR/audio/subtitle/season/episode tagging
+  from raw Torznab titles) was tuned against real titles pulled live from this project's own Jackett
+  instance, not guessed — re-tune here if tag accuracy drifts. The exact `Lampa.Component.add` lifecycle
+  contract used was not independently verified against `yumata/lampa-source` before shipping (implemented
+  against the common create/render/start/pause/stop/destroy/back shape used elsewhere in this ecosystem)
+  — check here first if the results screen fails to mount on a real device.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

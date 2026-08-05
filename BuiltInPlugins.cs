@@ -2,24 +2,26 @@ using System.Reflection;
 
 namespace TorrServerManager;
 
+internal sealed record BuiltInPluginDefinition(string Id, string Url, string Name, string Category, string ResourceName);
+
 internal static class BuiltInPlugins
 {
-    public const string SmartTsId = "smart_ts";
-    public const string SmartTsUrl = "builtin://smart-ts";
-    public const string SmartTsName = "Smart TS — сезоны, серии и предзагрузка";
-    public const string SmartTsCategory = "Торренты";
+    private static readonly BuiltInPluginDefinition[] Definitions =
+    [
+        new("smart_ts", "builtin://smart-ts", "Smart TS — сезоны, серии и предзагрузка", "Торренты", "TorrServerManager.SmartTsPlugin.js"),
+        new("torrent_mod", "builtin://torrent-mod", "Torrent Mod — поиск и просмотр торрентов", "Торренты", "TorrServerManager.TorrentModPlugin.js")
+    ];
 
     public static bool IsBuiltIn(string? url) =>
-        SmartTsUrl.Equals(url, StringComparison.OrdinalIgnoreCase);
+        Definitions.Any(definition => definition.Url.Equals(url, StringComparison.OrdinalIgnoreCase));
 
     public static byte[] Read(string url)
     {
-        if (!IsBuiltIn(url))
-            throw new InvalidDataException("Неизвестный встроенный плагин.");
+        var definition = Definitions.FirstOrDefault(item => item.Url.Equals(url, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidDataException("Неизвестный встроенный плагин.");
 
-        using var stream = Assembly.GetExecutingAssembly()
-            .GetManifestResourceStream("TorrServerManager.SmartTsPlugin.js")
-            ?? throw new InvalidDataException("Встроенный Smart TS отсутствует в приложении.");
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(definition.ResourceName)
+            ?? throw new InvalidDataException($"Встроенный плагин «{definition.Name}» отсутствует в приложении.");
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
         return memory.ToArray();
@@ -27,25 +29,28 @@ internal static class BuiltInPlugins
 
     public static void Ensure(PluginHubConfiguration configuration)
     {
-        var plugin = configuration.Plugins.FirstOrDefault(item =>
-            SmartTsId.Equals(item.Id, StringComparison.OrdinalIgnoreCase));
-
-        if (plugin is null)
+        foreach (var definition in Definitions)
         {
-            configuration.Plugins.Add(new ManagedPlugin
-            {
-                Id = SmartTsId,
-                Name = SmartTsName,
-                Url = SmartTsUrl,
-                Enabled = true,
-                Category = SmartTsCategory
-            });
-            return;
-        }
+            var plugin = configuration.Plugins.FirstOrDefault(item =>
+                definition.Id.Equals(item.Id, StringComparison.OrdinalIgnoreCase));
 
-        plugin.Id = SmartTsId;
-        plugin.Name = SmartTsName;
-        plugin.Url = SmartTsUrl;
-        plugin.Category = SmartTsCategory;
+            if (plugin is null)
+            {
+                configuration.Plugins.Add(new ManagedPlugin
+                {
+                    Id = definition.Id,
+                    Name = definition.Name,
+                    Url = definition.Url,
+                    Enabled = true,
+                    Category = definition.Category
+                });
+                continue;
+            }
+
+            plugin.Id = definition.Id;
+            plugin.Name = definition.Name;
+            plugin.Url = definition.Url;
+            plugin.Category = definition.Category;
+        }
     }
 }

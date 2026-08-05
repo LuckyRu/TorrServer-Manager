@@ -257,6 +257,15 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search", StringComparison.OrdinalIgnoreCase))
+            {
+                var query = context.Request.QueryString["query"]?.Trim() ?? "";
+                if (query.Length is < 2 or > 200)
+                    throw new InvalidDataException("Поисковый запрос должен содержать от 2 до 200 символов.");
+                await WriteTorrentSearchAsync(context.Response, query);
+                return;
+            }
+
             if (context.Request.HttpMethod == "POST" && path.Equals("/api/config", StringComparison.OrdinalIgnoreCase))
             {
                 EnsureLoopback(context.Request);
@@ -367,16 +376,7 @@ internal sealed class PluginHub : IDisposable
 
     private async Task WriteRutrackerSearchAsync(HttpListenerResponse response, string query)
     {
-        var serverConfigPath = Path.Combine(AppPaths.JackettDirectory, "ServerConfig.json");
-        if (!File.Exists(serverConfigPath))
-            throw new InvalidDataException("Jackett ещё не настроен.");
-
-        using var config = JsonDocument.Parse(await File.ReadAllTextAsync(serverConfigPath, cancellation.Token));
-        if (!config.RootElement.TryGetProperty("APIKey", out var apiKeyProperty))
-            throw new InvalidDataException("В конфигурации Jackett отсутствует API key.");
-        var apiKey = apiKeyProperty.GetString();
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidDataException("В конфигурации Jackett отсутствует API key.");
+        var apiKey = await ReadJackettApiKeyAsync();
 
         var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/rutracker-ru/results" +
             $"?apikey={Uri.EscapeDataString(apiKey)}&Query={Uri.EscapeDataString(query)}";
@@ -389,6 +389,76 @@ internal sealed class PluginHub : IDisposable
             throw new InvalidDataException("Jackett вернул некорректный ответ RuTracker.");
 
         await WriteTextAsync(response, results.GetRawText(), "application/json; charset=utf-8");
+    }
+
+    private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query)
+    {
+        string apiKey;
+        try
+        {
+            apiKey = await ReadJackettApiKeyAsync();
+        }
+        catch (InvalidDataException exception)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, exception.Message);
+            return;
+        }
+
+        var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/all/results" +
+            $"?apikey={Uri.EscapeDataString(apiKey)}&Query={Uri.EscapeDataString(query)}";
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+        timeoutSource.CancelAfter(TimeSpan.FromSeconds(45));
+
+        JsonDocument document;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var result = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutSource.Token);
+            result.EnsureSuccessStatusCode();
+            var json = await result.Content.ReadAsStringAsync(timeoutSource.Token);
+            document = JsonDocument.Parse(json);
+        }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Jackett не ответил вовремя (агрегированный поиск по всем источникам).");
+            return;
+        }
+        catch (HttpRequestException)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Jackett недоступен на этом компьютере.");
+            return;
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            var resultsText = root.TryGetProperty("Results", out var results) && results.ValueKind == JsonValueKind.Array
+                ? results.GetRawText()
+                : "[]";
+            var indexersText = root.TryGetProperty("Indexers", out var indexers) && indexers.ValueKind == JsonValueKind.Array
+                ? indexers.GetRawText()
+                : "[]";
+            await WriteTextAsync(
+                response,
+                $"{{\"results\":{resultsText},\"indexers\":{indexersText}}}",
+                "application/json; charset=utf-8");
+        }
+    }
+
+    private async Task<string> ReadJackettApiKeyAsync()
+    {
+        var serverConfigPath = Path.Combine(AppPaths.JackettDirectory, "ServerConfig.json");
+        if (!File.Exists(serverConfigPath))
+            throw new InvalidDataException("Jackett ещё не настроен.");
+
+        using var config = JsonDocument.Parse(await File.ReadAllTextAsync(serverConfigPath, cancellation.Token));
+        if (!config.RootElement.TryGetProperty("APIKey", out var apiKeyProperty))
+            throw new InvalidDataException("В конфигурации Jackett отсутствует API key.");
+        var apiKey = apiKeyProperty.GetString();
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidDataException("В конфигурации Jackett отсутствует API key.");
+        return apiKey;
     }
 
     private async Task ProxyToJackettAsync(HttpListenerResponse response, string relativePath, string query)
