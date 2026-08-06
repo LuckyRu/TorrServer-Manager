@@ -806,18 +806,52 @@
         }
         syncFilterChips();
 
-        scroll.minus();
         scroll.append(grid);
         explorer.appendHead(toolbar);
-        explorer.appendFiles(status);
+        // status lives in the head region too (not appendFiles, alongside the scroll) — it's fixed
+        // chrome above the scrollable list, the same as toolbar, and .minus() below only measures
+        // .explorer__files-head as a whole: if status sat outside it, its own height would go
+        // uncounted and the list would still under- or over-shoot Explorer's own left-card bottom
+        // by exactly status's height, the same class of misalignment the toolbar-height mixup was.
+        explorer.appendHead(status);
         explorer.appendFiles(scroll.render());
+
+        // .minus(el) tells Scroll to subtract el's own height from the scroll area's available
+        // height — without an argument it never constrains itself to the viewport at all, which was
+        // the actual cause of both the missing bottom mask/gradient and the last rows being
+        // permanently out of reach: an unconstrained container has nothing to internally scroll
+        // *within*, so hover:focus's own scroll.update() calls (see row()) have no effect.
+        //
+        // The element passed matters, and matters precisely: passing `toolbar` itself (Filter's own
+        // rendered output, before/independent of being mounted) subtracted the *wrong* height —
+        // confirmed live: with `toolbar` as the argument, this list's own scroll bottom landed at a
+        // different Y than Explorer's own left-card scroll bottom (703px vs 759px in one real test),
+        // breaking the aligned full-width fade Online Mod has (its left card and right list bottoms
+        // are pixel-identical — algebraically guaranteed once both subtract the *same* real toolbar
+        // height from the *same* window.innerHeight baseline). Online Mod's own call is
+        // `scroll.minus(files.render().find('.explorer__files-head'))` — the actual mounted
+        // `.explorer__files-head` container Explorer wraps around the toolbar, queried *after*
+        // `appendHead`, not the bare pre-mount element. Matched here the same way.
+        scroll.minus(explorer.render(true).querySelector('.explorer__files-head'));
 
         // Row markup/CSS ported 1:1 from the real, currently-installed Online Mod (inspected live
         // via this app's own /app/ in a browser, DOM + computed styles — not guessed): icon is an
         // absolutely-positioned 2.4em circle at top:-0.3em/left:0, title/subtitle just get
         // padding-left to clear it, rather than a flex row. Own class names, their exact technique.
+        //
+        // The hover:focus -> scroll.update() wire-up below isn't decorative — it's the one piece that
+        // makes keyboard/remote scrolling actually work, and it was missing entirely before (real user
+        // report: navigation moved focus but the viewport didn't follow it). Confirmed by reading Online
+        // Mod's own `this.append` verbatim: `item.on('hover:focus', e => scroll.update($(e.target),
+        // true)); scroll.append(item);` — not some separate Lampa "list" class, the exact same
+        // Scroll+Controller primitives this file already uses, just with this one hookup Lampa's own
+        // Navigator never does on its own (Navigator.move only ever shifts the .focus class between
+        // collection elements — scrolling the element into view is entirely the caller's job, wired
+        // per item, same shape as the collectionSet/collectionFocus/onBack contract elsewhere in this
+        // file). Centralized here in row() so every list in this component (episodes, candidates,
+        // messages) gets it automatically instead of needing it wired at each call site.
         function row(title, subtitle) {
-            return $(
+            var el = $(
                 '<div class="torrent-mod-row selector">' +
                 '<div class="torrent-mod-row__icon">' +
                 '<svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
@@ -829,6 +863,8 @@
                 '<div class="torrent-mod-row__badge"></div>' +
                 '</div>'
             );
+            el.on('hover:focus', function (e) { scroll.update($(e.target), true); });
+            return el;
         }
 
         function renderEpisodes(episodes) {
@@ -1489,9 +1525,21 @@
         // + subtitle vs. their single quality line) — both share the same stepped 3.4em indent
         // (title itself sits at 2.1em) rather than inventing a third indent level for it.
         style.textContent = [
-            '.torrent-mod__status{opacity:.7;margin:0 0 1em 1.5em;min-height:1.2em}',
-            '.torrent-mod__list{display:flex;flex-direction:column;gap:.6em}',
-            '.torrent-mod-row{position:relative;padding:.8em;background:rgba(0,0,0,.3);border-radius:.2em}',
+            // padding, not margin: status is the last child inside Explorer's native
+            // `.explorer__files-head` (moved there so scroll.minus() below can subtract its
+            // height too), which has no border/padding of its own — a bottom MARGIN here would
+            // collapse straight through .explorer__files-head's box and silently add 15.2px
+            // of unaccounted space between the head region and .explorer__files-body, throwing
+            // off the .minus() math and breaking left/right scroll bottom alignment (confirmed
+            // live: the gap matched this rule's old `1em` bottom margin to within 0.01px).
+            // Padding doesn't collapse, so it stays inside the height .minus() already measures.
+            '.torrent-mod__status{opacity:.7;padding:0 0 1em 1.5em;min-height:1.2em}',
+            // Horizontal padding on the list + matching negative margin on each row — copied from
+            // Online Mod's own real computed values (its scroll body carries a `torrent-list` class
+            // with ~1.4em horizontal padding, each `.online` row counters it with ~-.75em margin) —
+            // not obvious from a screenshot, only visible via getComputedStyle on the live DOM.
+            '.torrent-mod__list{display:flex;flex-direction:column;gap:.6em;padding:0 1.4em}',
+            '.torrent-mod-row{position:relative;margin:0 -.75em;padding:.8em;background:rgba(0,0,0,.3);border-radius:.2em}',
             '.torrent-mod-row.focus{padding:.8em 1.2em;box-shadow:0 0 0 2px #fff}',
             '.torrent-mod-row__icon{position:absolute;left:0;top:-.3em;width:2.4em;height:2.4em}',
             '.torrent-mod-row__icon svg{width:2.4em;height:2.4em}',

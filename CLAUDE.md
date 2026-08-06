@@ -296,6 +296,46 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     generic `voiceType` bucket when present, but deliberately isn't wired into the Перевод *filter*
     dimension itself — mixing specific studio names and generic MVO/AVO/Дубляж categories as sibling
     filter options would conflate two different things the user might want to filter by.
+  - **The results list wasn't using `Lampa.Scroll` correctly — keyboard scrolling silently did nothing,
+    the last rows were permanently unreachable, and there was no bottom mask/gradient**, all from the
+    same root cause: `scroll.minus()` was called with **no argument**. Reading `Lampa.Scroll.prototype.minus`
+    directly: `minus(el) { html.classList.add('layer--wheight'); html.mheight = el; }` — it only *marks*
+    the element and stores which other element's height to subtract; the actual math
+    (`window.innerHeight − head − navbar − el.height`) runs in `Lampa.Layer`'s own internal sweep over
+    every `.layer--wheight` element, apparently triggered automatically once when the marked element is
+    mounted (confirmed empirically — no explicit `Layer.update()` call was needed on our part once
+    `.minus()` had a real argument; Online Mod itself never calls `Layer.update` either). Without an
+    argument, the scroll container never gets a height constraint at all — it just grows to fit all
+    content, unconstrained, which is exactly why there was nothing to internally scroll and no mask
+    (mask-image fade only makes visual sense against an actually-clipped container). Fixed:
+    `scroll.minus(explorer.render(true).querySelector('.explorer__files-head'))` — the actual *mounted*
+    head container (a bare pre-mount `toolbar` element gave the wrong height — confirmed live, 56px off),
+    matching Online Mod's own `scroll.minus(files.render().find('.explorer__files-head'))`. `status` also
+    had to move from `explorer.appendFiles(status)` to `explorer.appendHead(status)` so its height was
+    covered by that same subtraction (33px off otherwise). Separately (but related): **`Navigator.move()`/
+    arrow-key focus changes never scroll anything into view by themselves** — that's `hover:focus`, a real
+    per-item jQuery event Lampa's own native lists all bind individually (`item.on('hover:focus', e =>
+    scroll.update($(e.target), true))`, confirmed both in core Select's own item binding and in Online
+    Mod's own `this.append`) to make the *scroll* follow whichever element focus lands on. `row()` now
+    does the same for every row. Also matched Online Mod's real horizontal spacing, found the same way
+    (`getComputedStyle`, not a screenshot): its scroll body carries a `torrent-list` class with ~1.4em
+    horizontal padding, and each row counters it with ~-.75em negative margin.
+  - **Even after all of the above, a stubborn ~15.2px gap remained** between the left card's scroll
+    bottom and the right content's scroll bottom — the two independent `mask-image` fades (each computed
+    as a percentage of its own container's height) landed at visibly different heights instead of forming
+    Online Mod's one continuous full-width fade band. Root cause: plain CSS margin collapse, nothing to do
+    with `Lampa.Scroll` at all. `.torrent-mod__status` (the last child inside `.explorer__files-head`) had
+    `margin: 0 0 1em 1.5em`; a block element's bottom margin collapses straight through its parent's own
+    bottom edge when the parent has no border/padding there (`.explorer__files-head` doesn't) — so that
+    `1em` (15.2073px on this build's base font-size, matched the observed gap to within 0.01px) silently
+    pushed `.explorer__files-body` down without ever showing up in `.explorer__files-head`'s own
+    `getBoundingClientRect().height`, which is exactly what `.minus()` measures. Fixed by changing that
+    rule to `padding: 0 0 1em 1.5em` — padding doesn't collapse, so the same visual spacing now counts
+    toward the measured height. Verified live via `getBoundingClientRect`, not a screenshot:
+    `leftTop + headH === rightTop` and `leftBottom === rightBottom === 703.0625` — pixel-identical to the
+    same measurement taken on live Online Mod. Lesson: a geometry mismatch between a plugin's layout and a
+    native reference doesn't have to be a JS/API misuse bug — it can just as easily be ordinary CSS margin
+    collapse on an element the code never directly touches.
   - **Found a real, pre-existing accuracy bug while building the above**: `matchOne`'s voiceType pattern
     for Дубляж was `/\bдубляж\b|\bdub\b/i` — the `\b` word-boundary wrapped around the *Cyrillic* word
     never matches, because JS regex `\b` is defined against `\w` (`[A-Za-z0-9_]` only) and neither side
