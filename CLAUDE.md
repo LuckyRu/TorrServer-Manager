@@ -302,9 +302,8 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     directly: `minus(el) { html.classList.add('layer--wheight'); html.mheight = el; }` — it only *marks*
     the element and stores which other element's height to subtract; the actual math
     (`window.innerHeight − head − navbar − el.height`) runs in `Lampa.Layer`'s own internal sweep over
-    every `.layer--wheight` element, apparently triggered automatically once when the marked element is
-    mounted (confirmed empirically — no explicit `Layer.update()` call was needed on our part once
-    `.minus()` had a real argument; Online Mod itself never calls `Layer.update` either). Without an
+    every `.layer--wheight` element, triggered automatically once when the marked element mounts (no
+    explicit `Layer.update()` call was needed for *that* first render). Without an
     argument, the scroll container never gets a height constraint at all — it just grows to fit all
     content, unconstrained, which is exactly why there was nothing to internally scroll and no mask
     (mask-image fade only makes visual sense against an actually-clipped container). Fixed:
@@ -336,6 +335,19 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     same measurement taken on live Online Mod. Lesson: a geometry mismatch between a plugin's layout and a
     native reference doesn't have to be a JS/API misuse bug — it can just as easily be ordinary CSS margin
     collapse on an element the code never directly touches.
+  - **A third, independent cause of the same symptom, found while re-verifying the above two fixes on
+    the candidate-list render (not just the episode list)**: `Lampa.Layer`'s `.layer--wheight` sweep only
+    fires on its own triggers (element mount, apparently), not on every mutation *inside* an
+    already-marked element. `status`'s text changes repeatedly during a screen's lifetime (`'Загрузка
+    списка серий…'` → `''` → `'Ищем S07E01…'` → `''`), which changes `.explorer__files-head`'s real
+    height each time — but the height baked into the scroll's `style.height` by `scroll.minus()` stays
+    pinned to whatever `.explorer__files-head` measured at the *first* sweep, silently drifting stale as
+    soon as status's height changes again. Confirmed live: after a search resolved, the candidate list's
+    scroll bottom sat 18.25px above the left card's — calling `Lampa.Layer.update()` (a public, no-arg
+    function, confirmed to exist) closed the gap back to 0 immediately. Fixed by calling it inside
+    `refreshGrid()` (the shared function both `renderEpisodes` and `renderCandidateList` already call
+    after rebuilding `grid`), so a fresh recompute happens every time content — and therefore potentially
+    the head's own height — changes, not just on first mount.
   - **Found a real, pre-existing accuracy bug while building the above**: `matchOne`'s voiceType pattern
     for Дубляж was `/\bдубляж\b|\bdub\b/i` — the `\b` word-boundary wrapped around the *Cyrillic* word
     never matches, because JS regex `\b` is defined against `\w` (`[A-Za-z0-9_]` only) and neither side

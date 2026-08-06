@@ -104,10 +104,6 @@
         try { return Lampa.Controller.enabled().name; } catch (e) { return 'content'; }
     }
 
-    function restoreController(name) {
-        try { Lampa.Controller.toggle(name || 'content'); } catch (e) {}
-    }
-
     function formatSize(value) {
         if (!value) return '';
         if (typeof value === 'string' && /[a-zа-я]/i.test(value)) return value;
@@ -425,8 +421,6 @@
             ]),
             translator: extractTranslator(source),
             subtitles: /\bsub\b|\bsubs\b|субтитр/i.test(source),
-            is3d: /\b3d\b/i.test(source),
-            year: (source.match(/\b(19|20)\d{2}\b/) || [])[0] || '',
             codec: matchOne(source, [[/\bh\.?265\b|\bhevc\b/i, 'H.265'], [/\bh\.?264\b|\bavc\b/i, 'H.264']])
         };
     }
@@ -492,9 +486,11 @@
     // should never be an option when the target is "Игра престолов" S1E1, no matter how many seeds
     // it has. Releases that *don't* state season/episode explicitly (ambiguous naming, common on
     // some trackers) are let through for qualityScore/availabilityScore to sort out.
+    var MIN_TITLE_SIMILARITY = 0.34;
+
     function passesMatchGate(item, target) {
         var release = item.release;
-        if (titleSimilarity(item.title, target.movie) < 0.34) return false;
+        if (titleSimilarity(item.title, target.movie) < MIN_TITLE_SIMILARITY) return false;
         if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
         if (target.episode && release.explicitEpisode &&
             !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) return false;
@@ -536,15 +532,26 @@
             matchScore: matchScore,
             qualityScore: qualityScore,
             availabilityScore: availabilityScore,
-            bitrateMbps: bitrateMbps,
-            season: release.seasons.indexOf(target.season) >= 0,
-            episode: release.explicitEpisode && target.episode >= release.episodeFrom && target.episode <= release.episodeTo
+            bitrateMbps: bitrateMbps
         };
     }
 
     function matchesTranslation(item, voiceType) {
         if (!voiceType || voiceType === 'any') return true;
         return item.release.voiceType === voiceType;
+    }
+
+    // Shared by both the season-pool reuse path and a fresh per-episode search — translation and
+    // quality are narrowing filters, not gates: if narrowing would leave nothing, fall back to the
+    // unfiltered pool rather than showing an empty result for a filter combination nothing matches.
+    function applyStateFilters(pool, state) {
+        var byVoice = pool.filter(function (item) { return matchesTranslation(item, state.voiceType); });
+        if (byVoice.length) pool = byVoice;
+        if (state.resolution !== 'any') {
+            var byQuality = pool.filter(function (item) { return item.release.resolution === state.resolution; });
+            if (byQuality.length) pool = byQuality;
+        }
+        return pool;
     }
 
     function searchTorrentMod(target) {
@@ -607,7 +614,6 @@
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var grid = $('<div class="torrent-mod__list"></div>');
         var status = $('<div class="torrent-mod__status"></div>');
-        var toolbar = $('<div class="torrent-filter"></div>');
         var hasSeasons = !!(movie.number_of_seasons);
         var state = {
             season: object.season || 0,
@@ -937,8 +943,24 @@
                     Lampa.Controller.collectionFocus(false, scroll.render(true));
                 }
             } catch (e) {}
+            // Lampa.Layer's own internal .layer--wheight sweep (what actually turns scroll.minus()'s
+            // stored element reference into a real height) only re-runs on its own triggers, not on
+            // every mutation inside the marked element — found live: our head region's height changes
+            // as `status` text comes and goes (e.g. "Ищем S07E01…" during a search, then '' once
+            // results render), and without forcing a recompute here the scroll height/mask stayed
+            // pinned to whatever headH happened to be true the *first* time Layer swept it, silently
+            // drifting the right list's scroll bottom away from the left card's by however much the
+            // head's height changed since — confirmed live (18.25px off after a search resolved,
+            // matching an earlier, taller head snapshot; Lampa.Layer.update() alone closed it back to
+            // 0). Called every time grid content changes since that's exactly when the head is most
+            // likely to have just changed size too.
+            try { Lampa.Layer.update(); } catch (e) {}
         }
 
+        // The bare `Navigator` below is Lampa's own global (window.Navigator.move/canmove), not the
+        // browser's native one — confirmed live (`typeof window.Navigator.move === 'function'`).
+        // Every other Lampa API in this file goes through the `Lampa.` namespace; this one doesn't
+        // because Lampa itself doesn't put it there.
         function registerContentController() {
             Lampa.Controller.add('content', {
                 link: this,
@@ -1020,12 +1042,7 @@
                 seasonEpisodeCount: state.seasonEpisodeCount,
                 avgRuntimeMinutes: state.avgRuntimeMinutes
             };
-            var filtered = pool.filter(function (item) { return matchesTranslation(item, state.voiceType); });
-            if (!filtered.length) filtered = pool;
-            if (state.resolution !== 'any') {
-                var byQuality = filtered.filter(function (item) { return item.release.resolution === state.resolution; });
-                if (byQuality.length) filtered = byQuality;
-            }
+            var filtered = applyStateFilters(pool, state);
             var scored = filtered.filter(function (item) {
                 item._score = scoreCandidate(item, target);
                 return item._score.passes;
@@ -1099,12 +1116,7 @@
             status.text('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
             searchTorrentMod(target).then(function (response) {
                 if (response.failed) { notify('Jackett недоступен или не ответил'); status.text(''); return; }
-                var pool = response.results.filter(function (item) { return matchesTranslation(item, state.voiceType); });
-                if (!pool.length) pool = response.results;
-                if (state.resolution !== 'any') {
-                    var byQuality = pool.filter(function (item) { return item.release.resolution === state.resolution; });
-                    if (byQuality.length) pool = byQuality;
-                }
+                var pool = applyStateFilters(response.results, state);
                 if (!pool.length) { notify('Ничего не найдено'); status.text(''); return; }
 
                 // matchScore is a hard gate here, not a ranking input (see scoreCandidate): wrong
