@@ -1476,19 +1476,28 @@
         if (document.getElementById('torrent-mod-styles')) return;
         var style = document.createElement('style');
         style.id = 'torrent-mod-styles';
-        // .torrent-mod-row* mirrors Online Mod's real .online/.online__title structure and spacing
-        // 1:1 (absolute icon circle, padding-left text) — inspected live, see the `row()` comment.
+        // .torrent-mod-row* mirrors Online Mod's real .online/.online__title/.online__quality
+        // structure and computed spacing — inspected live against a real running episode list
+        // (getComputedStyle, not guessed from a screenshot): unfocused row padding is a uniform
+        // .8em, focus adds horizontal breathing room (.8em vertical / 1.2em horizontal) and a white
+        // ring (box-shadow), it does NOT invert to a white background/dark text the way the first
+        // version here did — title and the secondary info line(s) both stay pure white at opacity 1
+        // throughout, confirmed via computed style on both a focused and an unfocused row; the visual
+        // "dimmer" look of the secondary line in a screenshot is from its smaller font-size alone
+        // (≈0.625× the title's, with margin-top equal to its own font-size — a one-line-height gap),
+        // not from any opacity/color dimming. We have one more info line than Online Mod does (badge
+        // + subtitle vs. their single quality line) — both share the same stepped 3.4em indent
+        // (title itself sits at 2.1em) rather than inventing a third indent level for it.
         style.textContent = [
             '.torrent-mod__status{opacity:.7;margin:0 0 1em 1.5em;min-height:1.2em}',
             '.torrent-mod__list{display:flex;flex-direction:column;gap:.6em}',
             '.torrent-mod-row{position:relative;padding:.8em;background:rgba(0,0,0,.3);border-radius:.2em}',
-            '.torrent-mod-row.focus{background:#fff;color:#111}',
-            '.torrent-mod-row.focus .torrent-mod-row__icon{color:#111}',
+            '.torrent-mod-row.focus{padding:.8em 1.2em;box-shadow:0 0 0 2px #fff}',
             '.torrent-mod-row__icon{position:absolute;left:0;top:-.3em;width:2.4em;height:2.4em}',
             '.torrent-mod-row__icon svg{width:2.4em;height:2.4em}',
             '.torrent-mod-row__title{padding-left:2.1em;font-size:1.1em}',
-            '.torrent-mod-row__subtitle{padding-left:2.1em;opacity:.65;font-size:.88em;margin-top:.2em}',
-            '.torrent-mod-row__badge{padding-left:2.1em;opacity:.55;font-size:.82em;margin-top:.2em}',
+            '.torrent-mod-row__subtitle{padding-left:3.4em;font-size:.7em;margin-top:.7em}',
+            '.torrent-mod-row__badge{padding-left:3.4em;font-size:.7em;margin-top:.3em}',
             '.view--torrent-mod svg{margin-right:.7em}',
             '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:2em}',
             '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',
