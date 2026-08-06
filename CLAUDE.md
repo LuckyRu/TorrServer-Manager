@@ -248,20 +248,54 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     leafItem)` and Filter reopens the parent list itself, no extra code needed for that part).
     `filter.set('filter', ...)` gets re-called whenever the season pool resolves, so the options track
     what's actually available exactly like the old hand-built chips did.
-  - **Found the real, serious bug behind all of this while wiring it up: `Lampa.Select.show()`'s own
-    native `close()` never restores the previously-active `Controller` on its own** — confirmed by reading
-    it directly: `close$a() { hide$3(); Activity.mixState(); if (active.onBack) active.onBack(); ... }`,
-    no `Controller.toggle(...)` call anywhere in it. Restoring focus after a picker closes is entirely the
-    *caller's* job, done inside whatever `onBack` it supplies to `Select.show`/`Filter`. The first version
-    of this integration set `filter.onBack = function () {}` — a no-op — which meant `'select'` stayed the
-    permanently-active controller after *any* picker closed: arrow keys and Back both went dead. Confirmed
-    live with a completely vanilla `Lampa.Select.show(...)` call on the untouched native main screen, no
-    Torrent Mod code involved at all — so this is a real, general trap in the native API surface itself,
-    not something specific to this plugin, and worth remembering for any future `Select.show`/`Filter`
-    usage anywhere in this codebase: **always pass an `onBack` that explicitly calls
-    `Controller.toggle(...)` back to whatever was active before the picker opened** (fixed here on both
-    `filter.onBack` and the `showCandidates()` torrent picker's own `Lampa.Select.show`, which had never
-    had an `onBack` at all).
+  - **Found the real, serious bug behind all of this while wiring it up: `Lampa.Select.show()` has two
+    independent close paths, and only one of them restores focus.** Back/cancel goes through `close$a()`
+    (`hide$3(); Activity.mixState(); if (active.onBack) active.onBack();`) — the only path that calls
+    `onBack`. A **successful pick** goes through a completely different function, `hide$3()` alone (found
+    in `bind$3()`'s `goclose()`: `if (!active.nohide) hide$3();`) — it only flips the `selectbox--open`
+    body class, never touches `Controller`, never calls `onBack`. A first pass at fixing this (setting
+    `filter.onBack` to restore focus) looked complete because *nested* picks — Перевод→Дубляж, the
+    season submenu inside the Фильтр panel — happen to self-heal: `Lampa.Filter`'s own code reopens a
+    fresh `Select.show` right after a nested leaf pick, which re-toggles `'select'` and defers the actual
+    breakage to the next real Back press, which does go through `close$a()`. A **flat, non-nested** pick —
+    the reset entry, a season chosen directly off the fast season chip, a search suggestion picked
+    directly (no sub-menu involved) — never gets that reopen, so `onBack` never fires and `'select'`
+    stays permanently active. Confirmed live on both a vanilla `Lampa.Select.show(...)` call on the
+    untouched native main screen (general API trap, not specific to this plugin) and on each affected
+    branch here. **Fix: restore focus (`Controller.toggle('content')`) explicitly inside every branch of
+    `onSelect`/`onSearch` itself, not just in `onBack`** — safe to do unconditionally even on branches
+    that already self-heal via reopening (a redundant `toggle('content')` immediately followed by the
+    reopen's own `toggle('select')` is harmless synchronous churn). Full writeup with the exact source
+    read: [`docs/system-design/lampa-navigation-contract.md`](docs/system-design/lampa-navigation-contract.md).
+  - **The Фильтр panel's shape was rebuilt to match Online Mod's own, read directly from its source rather
+    than guessed from the screenshot alone**: a `{title:'Сбросить фильтр', reset:true}` leaf first (no
+    `.items`, so `Filter.show()` calls `onSelect(type, a)` directly on pick, no submenu), then one row per
+    dimension built the same way Online Mod's own `add(type, title)` helper does —
+    `{title, subtitle: currentValueLabel, items: subitems, kind}` — so the collapsed panel shows the
+    current value of every dimension at a glance instead of requiring a drill-down to see it. Season is
+    intentionally in both places (its own fast `'sort'` chip *and* a row inside the Фильтр panel) —
+    Online Mod does the same redundancy with its balancer, own chip plus a row in the comprehensive panel.
+  - **Torrent candidates now render as the screen's own primary content (reusing the episode row markup,
+    including the badge slot) instead of a `Lampa.Select.show` overlay** — for a movie this *is* the
+    primary content from the start (`start()` calls `selectEpisode(0)` directly instead of waiting on a
+    "Найти раздачи" button click); for a series it replaces the episode list when auto-play isn't
+    confident enough, with a "← К списку серий" row (using the already-fetched `state.episodesCache`, no
+    refetch) to go back. Two side benefits: richer info than a Select item's single subtitle line ever
+    fit (quality/source/HDR/codec/translator/tracks on one line, tracker/seeds/peers/size/date on
+    another), and one whole class of Select-focus-restoration bug (see above) no longer applies to this
+    particular interaction at all, because it isn't a `Select.show` anymore.
+  - **`parseRelease()` now extracts translator studio names, source type (WEB-DL/BDRip/Remux/HDTV/...),
+    and audio track count**, not just resolution/HDR/codec/generic voice category. `translator` is a
+    curated, deliberately incomplete list of common Russian-scene studios (`TRANSLATOR_STUDIOS` —
+    LostFilm, NewStudio, Jaskier, Кубик в Кубе, Кураж-Бамбей, etc.) matched via `containsWord()`, a
+    Cyrillic-safe manual word-boundary check (plain `\b` doesn't work — see the Дубляж regex bug below)
+    that also tolerates spaces being written as dots/underscores/hyphens in real release titles
+    (`Кубик.в.Кубе` matches `Кубик в Кубе`). Extend the list as new studios show up in
+    `torrent_mod_debug` logging rather than trying to enumerate every one up front. `translator` is shown
+    wherever a candidate's info line is built (row badges, picker text, debug table) in preference to the
+    generic `voiceType` bucket when present, but deliberately isn't wired into the Перевод *filter*
+    dimension itself — mixing specific studio names and generic MVO/AVO/Дубляж categories as sibling
+    filter options would conflate two different things the user might want to filter by.
   - **Found a real, pre-existing accuracy bug while building the above**: `matchOne`'s voiceType pattern
     for Дубляж was `/\bдубляж\b|\bdub\b/i` — the `\b` word-boundary wrapped around the *Cyrillic* word
     never matches, because JS regex `\b` is defined against `\w` (`[A-Za-z0-9_]` only) and neither side

@@ -78,9 +78,12 @@
                     season: r.seasons.join(','),
                     episodes: r.explicitEpisode ? (r.episodeFrom + '-' + r.episodeTo) : '',
                     resolution: r.resolution,
+                    source: r.sourceType,
                     hdr: r.hdr,
                     codec: r.codec,
                     voice: r.voiceType,
+                    translator: r.translator,
+                    audioTracks: r.audioTracks || '',
                     subs: r.subtitles,
                     sizeMB: Math.round(item.size / 1048576),
                     bitrateMbps: s.bitrateMbps ? s.bitrateMbps.toFixed(2) : '',
@@ -346,6 +349,44 @@
         return '';
     }
 
+    // JS \b is defined against \w ([A-Za-z0-9_] only) — it never forms a boundary next to a
+    // Cyrillic character, so \bИМЯ\b silently never matches (this cost a real bug once already,
+    // see CLAUDE.md). Manual boundary via "not a word character on either side" instead, safe for
+    // both scripts.
+    function containsWord(source, word) {
+        // Multi-word studio names ("Кубик в Кубе") commonly show up with dots/underscores/hyphens
+        // standing in for spaces in real release titles, not literal spaces — matched flexibly.
+        var pattern = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s._-]+');
+        return new RegExp('(?:^|[^a-zа-яё0-9])' + pattern + '(?:[^a-zа-яё0-9]|$)', 'i').test(source);
+    }
+
+    // Best-effort list of common Russian-scene voice-over studios/authors, matched by literal name
+    // rather than mapped to a generic category (voiceType) — genuinely more useful than "Многоголосый"
+    // for someone choosing between releases, the same way Online Mod's "Балансер" list names real
+    // sources instead of generic buckets. Not exhaustive — extend here as new studios show up in
+    // debug logging (torrent_mod_debug) rather than trying to guess a complete list up front.
+    var TRANSLATOR_STUDIOS = [
+        'LostFilm', 'NewStudio', 'Jaskier', 'AlexFilm', 'HDrezka', 'HDRezka', 'ColdFilm',
+        'FocusStudio', 'Red Head Sound', 'RHS', 'Кубик в Кубе', 'Кураж-Бамбей', 'NewComers',
+        'FreedomDub', 'SkySound', 'Wednesday Films', 'Гоблин', 'GoblinRUS', 'Пифагор',
+        'ViruseProject', 'START', 'ПКино', 'ProFilms'
+    ];
+
+    function extractTranslator(source) {
+        for (var i = 0; i < TRANSLATOR_STUDIOS.length; i++) {
+            if (containsWord(source, TRANSLATOR_STUDIOS[i])) return TRANSLATOR_STUDIOS[i];
+        }
+        return '';
+    }
+
+    // "NxAudio"/"dual audio" style tags — how many audio tracks the release actually bundles, not
+    // just what one of them is. Distinct from audioChannels (5.1/7.1 — channel layout of one track).
+    function extractAudioTracks(source) {
+        if (/\bdual[\s._-]*audio\b/i.test(source)) return 2;
+        var match = source.match(/\b(\d)\s*x\s*audio\b/i) || source.match(/\b(\d)\s*audio\s*track/i);
+        return match ? parseInt(match[1], 10) || 0 : 0;
+    }
+
     function parseRelease(title) {
         var source = String(title || '');
         var signals = parseSignals(source);
@@ -361,14 +402,28 @@
                 [/\b720p\b/i, '720p'],
                 [/\b480p\b/i, '480p']
             ]),
+            // Encoding lineage — distinct from resolution: a 1080p WEB-DL and a 1080p Remux are not
+            // the same thing to sit through, even at the same nominal resolution/bitrate estimate.
+            sourceType: matchOne(source, [
+                [/\bbdremux\b|\bremux\b/i, 'Remux'],
+                [/\bblu-?ray\b|\bbdrip\b/i, 'BDRip'],
+                [/\bweb-?dl\b/i, 'WEB-DL'],
+                [/\bwebrip\b/i, 'WEBRip'],
+                [/\bhdtv\b/i, 'HDTV'],
+                [/\bdvdrip\b/i, 'DVDRip'],
+                [/\bhdrip\b/i, 'HDRip'],
+                [/\bcamrip\b|\bts\b/i, 'CAM']
+            ]),
             hdr: /\bhdr10?\+?\b/i.test(source) ? 'HDR' : (/\bdolby ?vision\b|\bdv\b/i.test(source) ? 'DV' : ''),
             audioChannels: matchOne(source, [[/\b7\.1\b/, '7.1'], [/\b5\.1\b/, '5.1'], [/\b2\.0\b/, '2.0']]),
+            audioTracks: extractAudioTracks(source),
             voiceType: matchOne(source, [
                 [/дубляж|\bdub\b/i, 'Дубляж'],
                 [/\bmvo\b|многоголос/i, 'Многоголосый'],
                 [/\bavo\b|одноголос/i, 'Одноголосый'],
                 [/\borig(inal)?\b|ориг(инал)?/i, 'Оригинал']
             ]),
+            translator: extractTranslator(source),
             subtitles: /\bsub\b|\bsubs\b|субтитр/i.test(source),
             is3d: /\b3d\b/i.test(source),
             year: (source.match(/\b(19|20)\d{2}\b/) || [])[0] || '',
@@ -584,21 +639,51 @@
 
         var QUALITY_LABELS = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
 
+        function currentSeasonLabel() {
+            if (!hasSeasons) return '';
+            var found = buildSeasonItems(movie, state.season).filter(function (item) { return item.season === state.season; })[0];
+            return found ? found.title : ('Сезон ' + state.season);
+        }
+
         // Two of Lampa.Filter's three built-in chips ('sort'/'filter'), repurposed — confirmed live
         // this is exactly the native pattern, not a shortcut: Online Mod's own results screen does the
         // same thing (new Lampa.Filter(object), then filter.set('sort', its balancer list) and
         // filter.set('filter', its quality list)) rather than appending extra hand-built chips of its
         // own. 'sort' here is season (not literal sort order — Online Mod repurposes it too, for an
-        // unrelated balancer picker, so the label/semantics aren't locked to the chip's own name),
-        // 'filter' is a two-level Перевод/Качество menu using Filter.show()'s native submenu support
-        // (an item with its own `.items` array reopens as a nested Select).
+        // unrelated balancer picker, so the label/semantics aren't locked to the chip's own name).
+        //
+        // The 'filter' panel's shape (reset row first, then one row per dimension showing its current
+        // value as a subtitle, each opening a nested Select on pick) is copied from Online Mod's own
+        // `this.filter()` method, read directly rather than guessed — its `add(type, title)` helper
+        // builds exactly this: `{title, subtitle: currentValue, items: subitems, stype: type}`, plus
+        // a `{title: 'Сбросить фильтр', reset: true}` leaf with no `.items` (so Filter.show() calls
+        // onSelect(type, a) directly, no nested submenu, on pick). Online Mod also repeats its 'sort'
+        // dimension (balancer) inside this same panel for a one-stop view — we do the same with season.
         function buildFilterItems() {
+            var select = [{ title: 'Сбросить фильтр', reset: true }];
+
+            if (hasSeasons) {
+                select.push({
+                    title: 'Сезон',
+                    subtitle: currentSeasonLabel(),
+                    kind: 'season',
+                    items: buildSeasonItems(movie, state.season)
+                });
+            }
+
             var voiceFound = poolValues(function (item) { return item.release.voiceType; });
             var voiceItems = [{ title: 'Любой', value: 'any', selected: state.voiceType === 'any' }].concat(
                 (voiceFound.length ? voiceFound : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал']).map(function (v) {
                     return { title: v, value: v, selected: state.voiceType === v };
                 })
             );
+            select.push({
+                title: 'Перевод',
+                subtitle: state.voiceType === 'any' ? 'Любой' : state.voiceType,
+                kind: 'voice',
+                items: voiceItems
+            });
+
             var order = ['2160p', '1080p', '720p', '480p'];
             var qualityFound = poolValues(function (item) { return item.release.resolution; }, order);
             var qualityItems = [{ title: 'Любое', value: 'any', selected: state.resolution === 'any' }].concat(
@@ -606,17 +691,30 @@
                     return { title: QUALITY_LABELS[v] || v, value: v, selected: state.resolution === v };
                 })
             );
-            return [
-                { title: 'Перевод', kind: 'voice', items: voiceItems },
-                { title: 'Качество', kind: 'quality', items: qualityItems }
-            ];
+            select.push({
+                title: 'Качество',
+                subtitle: state.resolution === 'any' ? 'Любое' : (QUALITY_LABELS[state.resolution] || state.resolution),
+                kind: 'quality',
+                items: qualityItems
+            });
+
+            return select;
         }
 
+        // Season already has its own fast-access chip ('sort'), so the 'filter' chip's own summary
+        // (shown on the collapsed toolbar chip itself, via filter.chosen) only needs voice+quality —
+        // repeating the season label there too would just duplicate what's already visible next to it.
         function activeFilterLabels() {
             var labels = [];
             if (state.voiceType !== 'any') labels.push(state.voiceType);
             if (state.resolution !== 'any') labels.push(QUALITY_LABELS[state.resolution] || state.resolution);
             return labels;
+        }
+
+        function syncFilterChips() {
+            if (hasSeasons) filter.chosen('sort', [currentSeasonLabel()]);
+            filter.chosen('filter', activeFilterLabels());
+            filter.set('filter', buildFilterItems());
         }
 
         var initialTitles = baseTitles(movie);
@@ -632,27 +730,61 @@
         // flow call `this.onSearch`/`this.onSelect` directly with no built-in no-op fallback (confirmed
         // by reading both in app.min.js), so a caller that forgets to assign one gets a hard TypeError
         // the moment the chip is actually used, not a silent no-op.
+        // Restoring focus after ANY pick, not just after Back — confirmed live and by reading
+        // app.min.js that this matters: a *successful* pick with no further nesting (reset, a direct
+        // season pick off the fast chip, a direct search-suggestion pick) closes the selectbox via
+        // `hide$3()`, a completely different internal path from the Back/cancel one (`close$a()`) —
+        // `hide$3()` only flips the `selectbox--open` body class, it never touches `Controller` and
+        // never calls `onBack`. Only a *nested* pick (opens a child Select, e.g. Перевод→Дубляж) happens
+        // to self-heal, because Filter's own code reopens a fresh Select right after (which re-toggles
+        // 'select' itself) — by the time the user finally presses Back on *that*, the real
+        // `close$a()`/`onBack` path runs and restores things correctly. A flat, non-reopening pick has
+        // no such second chance: nothing after it ever calls `onBack`, so without an explicit restore
+        // here the controller is left pointing at a closed, dead selectbox forever. Restoring
+        // unconditionally after every pick is safe even on the nested/reopening branches — Filter's own
+        // `show()` call immediately after just re-toggles to 'select' again, harmless synchronous churn.
+        function restoreContentFocus() {
+            try { Lampa.Controller.toggle('content'); } catch (e) {}
+        }
+
         filter.onSearch = function (value) {
             if (!value) return;
             state.customQuery = value;
             toolbar.find('.filter--search > div').text(value).removeClass('hide');
+            restoreContentFocus();
             selectEpisode(state.lastEpisode || 0);
         };
         filter.onSelect = function (type, a, b) {
+            if (a && a.reset) {
+                state.voiceType = 'any';
+                state.resolution = 'any';
+                syncFilterChips();
+                restoreContentFocus();
+                annotateEpisodeRows();
+                return;
+            }
             if (type === 'sort') {
+                restoreContentFocus();
                 if (a.season === state.season) return;
                 state.season = a.season;
-                filter.chosen('sort', [a.title]);
+                syncFilterChips();
                 loadEpisodes();
                 return;
             }
-            if (type === 'filter' && b) {
-                if (a.kind === 'voice') state.voiceType = b.value;
-                else if (a.kind === 'quality') state.resolution = b.value;
-                filter.chosen('filter', activeFilterLabels());
-                filter.set('filter', buildFilterItems());
-                annotateEpisodeRows();
+            if (type !== 'filter' || !b) return;
+            if (a.kind === 'season') {
+                restoreContentFocus();
+                if (b.season === state.season) return;
+                state.season = b.season;
+                syncFilterChips();
+                loadEpisodes();
+                return;
             }
+            if (a.kind === 'voice') state.voiceType = b.value;
+            else if (a.kind === 'quality') state.resolution = b.value;
+            syncFilterChips();
+            restoreContentFocus();
+            annotateEpisodeRows();
         };
         // Select.show()'s own native close() (confirmed by reading it in app.min.js) never restores
         // the previously-active controller itself — it only hides the overlay and calls whatever
@@ -666,9 +798,13 @@
 
         if (hasSeasons) {
             filter.set('sort', buildSeasonItems(movie, state.season));
-            filter.chosen('sort', [String(state.season || 1)]);
+            // The chip's own label text ("Сортировать") is baked into Filter's template and not
+            // renameable via public API — Online Mod does the exact same direct-DOM-text override for
+            // its own repurposed 'sort' chip (confirmed live: its rendered label reads "Балансер", not
+            // "Сортировать"), so this is the established technique, not a workaround.
+            toolbar.find('.filter--sort span').text('Сезон');
         }
-        filter.set('filter', buildFilterItems());
+        syncFilterChips();
 
         scroll.minus();
         scroll.append(grid);
@@ -714,14 +850,6 @@
             annotateEpisodeRows();
         }
 
-        function renderMovieCard() {
-            grid.empty();
-            var node = row('Найти раздачи', '');
-            node.on('hover:enter', function () { selectEpisode(0); });
-            grid.append(node);
-            refreshGrid();
-        }
-
         function showMessage(message, retry) {
             status.text(message);
             grid.empty();
@@ -739,7 +867,7 @@
         // left to the caller (confirmed by reading Explorer's toggle() in app.min.js — its own
         // `right` handler just does Controller.toggle('content') and trusts something else owns
         // that name). Without registering it ourselves, Controller.collectionSet() calls from
-        // renderEpisodes/renderMovieCard/showMessage silently land on whatever controller happens
+        // renderEpisodes/renderCandidateList/showMessage silently land on whatever controller happens
         // to be active at that moment (usually still 'explorer', since these often run before the
         // user ever presses right) — overwriting Explorer's own left-card focus collection with our
         // grid rows while leaving Explorer's left/back/toggle handlers in place. That's the actual
@@ -807,6 +935,7 @@
                 }
                 if (!episodes.length) { showMessage('Список серий недоступен', loadEpisodes); return; }
                 status.text('');
+                state.episodesCache = episodes;
                 renderEpisodes(episodes);
                 ensureSeasonPool();
             });
@@ -874,6 +1003,7 @@
             var best = matches[0];
             var bits = [];
             if (best.release.resolution) bits.push(best.release.resolution);
+            if (best.release.translator || best.release.voiceType) bits.push(best.release.translator || best.release.voiceType);
             bits.push(best.seeders + ' сид.');
             if (matches.length > 1) bits.push('+' + (matches.length - 1));
             return bits.join(' · ');
@@ -902,7 +1032,7 @@
                 (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2);
 
             if (confident) startDownload(best, target);
-            else showCandidates(candidates.slice(0, 10), target);
+            else renderCandidateList(candidates.slice(0, 15), target);
         }
 
         function selectEpisode(episode) {
@@ -963,30 +1093,58 @@
             return new Date(item.publishedAt).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' });
         }
 
-        function showCandidates(candidates, target) {
-            var items = candidates.map(function (item, index) {
-                var info = [];
-                if (item.tracker) info.push(item.tracker);
-                info.push(item.seeders + ' сидов · ' + item.peers + ' пиров');
-                var size = formatSize(item.size);
-                if (size) info.push(size);
-                if (item.release.voiceType) info.push(item.release.voiceType);
-                if (item.release.audioChannels) info.push(item.release.audioChannels);
-                if (item.release.subtitles) info.push('субтитры');
-                var published = publishedText(item);
-                if (published) info.push(published);
-                return { title: item.title, subtitle: info.join(' · '), torrent: item, selected: index === 0 };
+        // Quality/source/translator/tracks line — everything parseRelease() can pull out of the raw
+        // title, distinct from the tracker/seeds/size/date line below it. Two lines instead of one
+        // because a torrent row has meaningfully more to say than an episode row.
+        function candidateBadgeText(item) {
+            var bits = [];
+            if (item.release.resolution) bits.push(item.release.resolution);
+            if (item.release.sourceType) bits.push(item.release.sourceType);
+            if (item.release.hdr) bits.push(item.release.hdr);
+            if (item.release.codec) bits.push(item.release.codec);
+            if (item.release.translator) bits.push(item.release.translator);
+            else if (item.release.voiceType) bits.push(item.release.voiceType);
+            if (item.release.audioTracks > 1) bits.push(item.release.audioTracks + ' ауд. дор.');
+            else if (item.release.audioChannels) bits.push(item.release.audioChannels);
+            if (item.release.subtitles) bits.push('субтитры');
+            return bits.join(' · ');
+        }
+
+        function candidateSubtitleText(item) {
+            var bits = [];
+            if (item.tracker) bits.push(item.tracker);
+            bits.push(item.seeders + ' сид. · ' + item.peers + ' пир.');
+            var size = formatSize(item.size);
+            if (size) bits.push(size);
+            var published = publishedText(item);
+            if (published) bits.push(published);
+            return bits.join(' · ');
+        }
+
+        // Renders torrent candidates as the screen's own primary content instead of a Select overlay —
+        // same row markup/badge slot as episode rows, richer info because there's more of it to show.
+        // For series this replaces the episode list temporarily (a "К списку серий" row returns to it,
+        // via the already-loaded state.episodesCache — no refetch); for movies it *is* the primary
+        // content, there being no episode list to return to.
+        function renderCandidateList(candidates, target) {
+            grid.empty();
+            episodeRows = {};
+            if (hasSeasons && state.episodesCache) {
+                var backNode = row('← К списку серий', '');
+                backNode.on('hover:enter', function () { status.text(''); renderEpisodes(state.episodesCache); });
+                grid.append(backNode);
+            }
+            candidates.forEach(function (item) {
+                var node = row(item.title, candidateSubtitleText(item));
+                node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
+                node.on('hover:enter', function () { startDownload(item, target); });
+                grid.append(node);
             });
-            Lampa.Select.show({
-                title: 'Выбор раздачи',
-                items: items,
-                onSelect: function (choice) { startDownload(choice.torrent, target); },
-                onBack: function () { Lampa.Controller.toggle('content'); }
-            });
+            refreshGrid();
         }
 
         function start() {
-            if (!hasSeasons) { status.text(''); renderMovieCard(); return; }
+            if (!hasSeasons) { status.text(''); selectEpisode(0); return; }
             loadEpisodes();
         }
 
