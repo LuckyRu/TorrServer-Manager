@@ -88,6 +88,15 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
   - Downloads and SHA-256-caches plugin `.js` files locally (`lampa-cache/`), so devices on the LAN load
     plugins from this machine rather than directly from the internet — see `/plugins/{cacheKey}.js`.
     Keeps a previous-version backup and never removes a working cached copy on a failed refresh.
+  - **`/plugins/*.js` and `/lampa.js` both send `Cache-Control: no-cache` + an `ETag`, and the plugin
+    route now actually honors `If-None-Match` with a real 304** — found missing while chasing a report of
+    a device seemingly running old plugin JS after an update. Without `Cache-Control`, nothing stops a
+    device's own HTTP cache from reusing a stale response indefinitely and never even asking the server
+    again — our own SHA-256 diffing on the *server* side (deciding when to re-download from the plugin's
+    real source) is a completely separate mechanism from whether a LAN device's *client-side* cache
+    thinks it needs to ask us again at all, and updating one doesn't fix the other. `no-cache` (not
+    `no-store`) keeps the cheap-revalidation win — the client still gets to skip the response body on an
+    unchanged 304, it just can't skip asking anymore.
   - Serves `/lampa.js`, a bootstrap loader script that Lampa fetches once; it reads `/api/config` and
     sequentially injects the enabled, locally cached plugin scripts.
   - `/api/config` (GET/POST) and `/api/plugins/refresh` (POST) drive the panel; mutating endpoints are

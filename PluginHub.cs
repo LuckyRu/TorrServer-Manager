@@ -307,13 +307,18 @@ internal sealed class PluginHub : IDisposable
 
             if (context.Request.HttpMethod == "GET" && path.Equals("/lampa.js", StringComparison.OrdinalIgnoreCase))
             {
+                // Same reasoning as /plugins/*.js below: a TV's own HTTP cache reusing this
+                // indefinitely means it keeps running old *fetching logic* even after a manager
+                // update ships new LoaderScript content, independent of the plugin cache-busting
+                // this file itself is responsible for.
+                context.Response.Headers["Cache-Control"] = "no-cache";
                 await WriteTextAsync(context.Response, LoaderScript, "application/javascript; charset=utf-8");
                 return;
             }
 
             if (context.Request.HttpMethod == "GET" && path.StartsWith("/plugins/", StringComparison.OrdinalIgnoreCase))
             {
-                await WriteCachedPluginAsync(context.Response, path);
+                await WriteCachedPluginAsync(context.Request, context.Response, path);
                 return;
             }
 
@@ -487,7 +492,7 @@ internal sealed class PluginHub : IDisposable
         }
     }
 
-    private async Task WriteCachedPluginAsync(HttpListenerResponse response, string path)
+    private async Task WriteCachedPluginAsync(HttpListenerRequest request, HttpListenerResponse response, string path)
     {
         var filePart = path["/plugins/".Length..];
         if (!filePart.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
@@ -505,10 +510,23 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
+        var etag = $"\"{record.Sha256}\"";
+        // Without Cache-Control, a device's own HTTP cache is free to reuse a stale copy of this
+        // script indefinitely and never even ask the server again — the ETag is useless if nothing
+        // forces revalidation. no-cache (not no-store) means "always ask first", which is what makes
+        // the If-None-Match check below actually get hit instead of skipped by the browser's cache.
+        response.Headers["Cache-Control"] = "no-cache";
+        response.Headers["ETag"] = etag;
+        response.Headers["X-Plugin-Source"] = Uri.EscapeDataString(plugin.Url);
+
+        if (request.Headers["If-None-Match"] == etag)
+        {
+            response.StatusCode = (int)HttpStatusCode.NotModified;
+            return;
+        }
+
         response.ContentType = "application/javascript; charset=utf-8";
         response.ContentLength64 = new FileInfo(filePath).Length;
-        response.Headers["ETag"] = $"\"{record.Sha256}\"";
-        response.Headers["X-Plugin-Source"] = Uri.EscapeDataString(plugin.Url);
         await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         await stream.CopyToAsync(response.OutputStream, cancellation.Token);
     }
