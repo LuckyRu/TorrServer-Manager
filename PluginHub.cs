@@ -248,15 +248,6 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
-            if (context.Request.HttpMethod == "GET" && path.Equals("/api/smart-search", StringComparison.OrdinalIgnoreCase))
-            {
-                var query = context.Request.QueryString["query"]?.Trim() ?? "";
-                if (query.Length is < 2 or > 200)
-                    throw new InvalidDataException("Поисковый запрос должен содержать от 2 до 200 символов.");
-                await WriteRutrackerSearchAsync(context.Response, query);
-                return;
-            }
-
             if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search", StringComparison.OrdinalIgnoreCase))
             {
                 var query = context.Request.QueryString["query"]?.Trim() ?? "";
@@ -377,23 +368,6 @@ internal sealed class PluginHub : IDisposable
                 lastRefreshUtc = GetLastRefreshUtc()
             }
         });
-    }
-
-    private async Task WriteRutrackerSearchAsync(HttpListenerResponse response, string query)
-    {
-        var apiKey = await ReadJackettApiKeyAsync();
-
-        var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/rutracker-ru/results" +
-            $"?apikey={Uri.EscapeDataString(apiKey)}&Query={Uri.EscapeDataString(query)}";
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        using var result = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
-        result.EnsureSuccessStatusCode();
-        var json = await result.Content.ReadAsStringAsync(cancellation.Token);
-        using var document = JsonDocument.Parse(json);
-        if (!document.RootElement.TryGetProperty("Results", out var results) || results.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("Jackett вернул некорректный ответ RuTracker.");
-
-        await WriteTextAsync(response, results.GetRawText(), "application/json; charset=utf-8");
     }
 
     private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query)

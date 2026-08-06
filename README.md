@@ -91,3 +91,6 @@ Lampa на WebOS сама по себе — только плеер-оболоч
 См. [CLAUDE.md](CLAUDE.md) — команды `dotnet build` / `dotnet publish`,
 архитектура компонентов (`ServerController`, `JackettController`, `UpdateService`,
 `PluginHub`, встроенный `TorrentModPlugin.js`).
+
+Более подробная документация — в [docs/](docs/README.md): пошаговые инструкции, архитектурные решения
+(ADR) и разборы того, как устроены поиск/скоринг Torrent Mod и навигация Lampa.

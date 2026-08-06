@@ -7,11 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 TorrServerManager is a Windows tray application (WinForms, .NET 10) that installs, runs, and updates
 [TorrServer](https://github.com/YouROK/TorrServer) and [Jackett](https://github.com/Jackett/Jackett) for
 use with the Lampa media center app. It also hosts a small local HTTP service ("Lampa Plugin Hub") that
-mirrors Lampa plugin scripts on the LAN, and ships a built-in Lampa plugin (`SmartTsPlugin.js`) for
-season/episode browsing and pre-buffering.
+mirrors Lampa plugin scripts on the LAN, and ships a built-in Lampa plugin (`TorrentModPlugin.js`) for
+aggregated torrent search, playback, and duration-aware buffering.
 
-There is no `.sln` file, no test project, and no README — this is a single-project WinForms app built
-directly from `TorrServerManager.csproj`.
+There is no `.sln` file and no test project — this is a single-project WinForms app built directly from
+`TorrServerManager.csproj`. See [`README.md`](README.md) for a user-facing overview and
+[`docs/`](docs/README.md) for Diataxis-structured documentation (tutorials/how-to/reference/explanation,
+plus ADRs and system-design write-ups) — this file stays a dense, agent-oriented instruction set; `docs/`
+is where the same knowledge lives reorganized for a human reading one topic at a time.
 
 ## Commands
 
