@@ -211,6 +211,45 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     correctly narrows to just the episode-specific release when the pack's own translation doesn't
     match, and correctly returns nothing — not a silent fallback to the whole pool — when a requested
     translation exists somewhere in the pool but not for that specific episode).
+  - **The toolbar's search chip is a real `new Lampa.Filter(object)`, not a hand-built lookalike** — this
+    was the actual gap behind "где системный интерфейс поиска по названию": the first version used
+    `Lampa.Input.edit`, a bare text box with none of what Lampa's own search-clarification flow gives for
+    free. Confirmed by reading `Lampa.Filter`'s constructor in `app.min.js`: pressing `.filter--search`
+    opens a native "Уточнить" picker with — a "Указать название" entry that opens `SearchInput` (a real
+    typed-search widget, not a plain prompt) and *saves what you type* to `Storage['user_clarifys'][movie.id]`
+    so it resurfaces as a history entry next time; a "Глобальный поиск" entry; the movie's own
+    `names`/`alternative_titles.titles` (TMDB alt-name data, when present); and title+year combinations
+    built from `search_one`/`search_two` (Torrent Mod passes `baseTitles(movie)`'s two entries here — the
+    localized and original titles). None of this is reachable by constructing the markup by hand; it only
+    exists inside `Lampa.Filter` itself.
+  - **Season/Перевод/Качество live in `Lampa.Filter`'s own `'sort'`/`'filter'` chip slots, not extra
+    hand-built chips appended alongside it** — confirmed by reading Online Mod's own source: it does the
+    same thing, `filter.set('sort', its own balancer list)` and `filter.set('filter', its own quality
+    list)`, not extra `.simple-button--filter` divs of its own. The two built-in chip labels
+    ("Сортировать"/"Фильтр") aren't tied to their literal meaning — Online Mod repurposes 'sort' for an
+    unrelated balancer/source picker the same way Torrent Mod repurposes it for season — so there was no
+    real tension in reusing them for three custom concepts across two slots: `filter.set('sort',
+    buildSeasonItems(...))` for season (flat list), `filter.set('filter', [{title:'Перевод', items:...},
+    {title:'Качество', items:...}])` for voice+quality (`Filter.prototype.show()`'s own nested-submenu
+    support — an item with its own `.items` reopens as a child `Select.show`, confirmed live: picking
+    "Перевод" opens a second-level list, picking a leaf there calls `onSelect(type, parentItem,
+    leafItem)` and Filter reopens the parent list itself, no extra code needed for that part).
+    `filter.set('filter', ...)` gets re-called whenever the season pool resolves, so the options track
+    what's actually available exactly like the old hand-built chips did.
+  - **Found the real, serious bug behind all of this while wiring it up: `Lampa.Select.show()`'s own
+    native `close()` never restores the previously-active `Controller` on its own** — confirmed by reading
+    it directly: `close$a() { hide$3(); Activity.mixState(); if (active.onBack) active.onBack(); ... }`,
+    no `Controller.toggle(...)` call anywhere in it. Restoring focus after a picker closes is entirely the
+    *caller's* job, done inside whatever `onBack` it supplies to `Select.show`/`Filter`. The first version
+    of this integration set `filter.onBack = function () {}` — a no-op — which meant `'select'` stayed the
+    permanently-active controller after *any* picker closed: arrow keys and Back both went dead. Confirmed
+    live with a completely vanilla `Lampa.Select.show(...)` call on the untouched native main screen, no
+    Torrent Mod code involved at all — so this is a real, general trap in the native API surface itself,
+    not something specific to this plugin, and worth remembering for any future `Select.show`/`Filter`
+    usage anywhere in this codebase: **always pass an `onBack` that explicitly calls
+    `Controller.toggle(...)` back to whatever was active before the picker opened** (fixed here on both
+    `filter.onBack` and the `showCandidates()` torrent picker's own `Lampa.Select.show`, which had never
+    had an `onBack` at all).
   - **Found a real, pre-existing accuracy bug while building the above**: `matchOne`'s voiceType pattern
     for Дубляж was `/\bдубляж\b|\bdub\b/i` — the `\b` word-boundary wrapped around the *Cyrillic* word
     never matches, because JS regex `\b` is defined against `\w` (`[A-Za-z0-9_]` only) and neither side

@@ -564,18 +564,6 @@
         };
         var episodeRows = {};
 
-        function filterButton(label, value) {
-            var el = $(
-                '<div class="simple-button simple-button--filter selector">' +
-                '<span>' + escapeHtml(label) + '</span><div>' + escapeHtml(value) + '</div></div>'
-            );
-            return { el: el, setValue: function (text) { el.find('> div').text(text); } };
-        }
-
-        // Same slot/markup as Online Mod's own search chip (.filter--search, confirmed live) —
-        // Lampa's standard "what am I searching for" control stays first, our own controls
-        // (season/voice/filters) come after it, matching how Online Mod layers its own UI on top
-        // of Lampa's existing search flow instead of replacing it.
         function searchQueryText(target) {
             var titles = baseTitles(target.movie);
             var base = titles[0] || '';
@@ -584,34 +572,104 @@
             return base;
         }
 
-        var searchLabel = (function () {
-            var el = $(
-                '<div class="simple-button simple-button--filter selector filter--search">' +
-                '<svg><use xlink:href="#sprite-search"></use></svg><div></div></div>'
+        // Options come from what's actually in the season pool once it's loaded — no point offering
+        // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
+        // list only while the pool is still loading (or for movies, which never populate one).
+        function poolValues(pluck, order) {
+            var pool = state.seasonPool || [];
+            var present = {};
+            pool.forEach(function (item) { var v = pluck(item); if (v) present[v] = true; });
+            return order ? order.filter(function (v) { return present[v]; }) : Object.keys(present);
+        }
+
+        var QUALITY_LABELS = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
+
+        // Two of Lampa.Filter's three built-in chips ('sort'/'filter'), repurposed — confirmed live
+        // this is exactly the native pattern, not a shortcut: Online Mod's own results screen does the
+        // same thing (new Lampa.Filter(object), then filter.set('sort', its balancer list) and
+        // filter.set('filter', its quality list)) rather than appending extra hand-built chips of its
+        // own. 'sort' here is season (not literal sort order — Online Mod repurposes it too, for an
+        // unrelated balancer picker, so the label/semantics aren't locked to the chip's own name),
+        // 'filter' is a two-level Перевод/Качество menu using Filter.show()'s native submenu support
+        // (an item with its own `.items` array reopens as a nested Select).
+        function buildFilterItems() {
+            var voiceFound = poolValues(function (item) { return item.release.voiceType; });
+            var voiceItems = [{ title: 'Любой', value: 'any', selected: state.voiceType === 'any' }].concat(
+                (voiceFound.length ? voiceFound : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал']).map(function (v) {
+                    return { title: v, value: v, selected: state.voiceType === v };
+                })
             );
-            return { el: el, setValue: function (text) { el.find('> div').text(text); } };
-        })();
-        searchLabel.setValue(searchQueryText({ movie: movie, season: state.season }));
-        searchLabel.el.on('hover:enter', function () {
-            try {
-                Lampa.Input.edit({ value: searchLabel.el.find('> div').text() }, function (value) {
-                    if (!value) return;
-                    state.customQuery = value;
-                    searchLabel.setValue(value);
-                    selectEpisode(state.lastEpisode || 0);
-                });
-            } catch (e) {
-                notify('Ручное редактирование запроса недоступно');
-            }
+            var order = ['2160p', '1080p', '720p', '480p'];
+            var qualityFound = poolValues(function (item) { return item.release.resolution; }, order);
+            var qualityItems = [{ title: 'Любое', value: 'any', selected: state.resolution === 'any' }].concat(
+                (qualityFound.length ? qualityFound : ['2160p', '1080p', '720p']).map(function (v) {
+                    return { title: QUALITY_LABELS[v] || v, value: v, selected: state.resolution === v };
+                })
+            );
+            return [
+                { title: 'Перевод', kind: 'voice', items: voiceItems },
+                { title: 'Качество', kind: 'quality', items: qualityItems }
+            ];
+        }
+
+        function activeFilterLabels() {
+            var labels = [];
+            if (state.voiceType !== 'any') labels.push(state.voiceType);
+            if (state.resolution !== 'any') labels.push(QUALITY_LABELS[state.resolution] || state.resolution);
+            return labels;
+        }
+
+        var initialTitles = baseTitles(movie);
+        var filter = new Lampa.Filter({
+            movie: movie,
+            search: searchQueryText({ movie: movie, season: state.season }),
+            search_one: initialTitles[0],
+            search_two: initialTitles[1]
         });
+        var toolbar = filter.render();
 
-        var seasonControl = hasSeasons ? filterButton('Сезон', String(state.season || 1)) : null;
-        var voiceControl = filterButton('Перевод', 'Любой');
-        var filtersControl = filterButton('Фильтры', '');
+        // onSearch/onSelect aren't optional defaults — Filter.prototype.show() and the SearchInput
+        // flow call `this.onSearch`/`this.onSelect` directly with no built-in no-op fallback (confirmed
+        // by reading both in app.min.js), so a caller that forgets to assign one gets a hard TypeError
+        // the moment the chip is actually used, not a silent no-op.
+        filter.onSearch = function (value) {
+            if (!value) return;
+            state.customQuery = value;
+            toolbar.find('.filter--search > div').text(value).removeClass('hide');
+            selectEpisode(state.lastEpisode || 0);
+        };
+        filter.onSelect = function (type, a, b) {
+            if (type === 'sort') {
+                if (a.season === state.season) return;
+                state.season = a.season;
+                filter.chosen('sort', [a.title]);
+                loadEpisodes();
+                return;
+            }
+            if (type === 'filter' && b) {
+                if (a.kind === 'voice') state.voiceType = b.value;
+                else if (a.kind === 'quality') state.resolution = b.value;
+                filter.chosen('filter', activeFilterLabels());
+                filter.set('filter', buildFilterItems());
+                annotateEpisodeRows();
+            }
+        };
+        // Select.show()'s own native close() (confirmed by reading it in app.min.js) never restores
+        // the previously-active controller itself — it only hides the overlay and calls whatever
+        // onBack the caller supplied. Leaving this as a no-op (the first version of this code did)
+        // means every Select.show Filter opens — search suggestions, the season list, the nested
+        // Перевод/Качество menu — leaves 'select' as the permanently-active controller once closed:
+        // arrow keys and back both go dead, confirmed live even with a plain vanilla Lampa.Select.show
+        // call with no Filter/Torrent Mod involved at all. Restoring focus to 'content' explicitly is
+        // the caller's job, same as the preload overlay's own cancel() already does correctly.
+        filter.onBack = function () { Lampa.Controller.toggle('content'); };
 
-        toolbar.append(searchLabel.el);
-        if (seasonControl) toolbar.append(seasonControl.el);
-        toolbar.append(voiceControl.el).append(filtersControl.el);
+        if (hasSeasons) {
+            filter.set('sort', buildSeasonItems(movie, state.season));
+            filter.chosen('sort', [String(state.season || 1)]);
+        }
+        filter.set('filter', buildFilterItems());
+
         scroll.minus();
         scroll.append(grid);
         explorer.appendHead(toolbar);
@@ -778,6 +836,7 @@
             state.seasonPoolPromise = searchTorrentMod(target).then(function (response) {
                 if (state.seasonPoolSeason !== state.season) return []; // season changed mid-flight
                 state.seasonPool = response.failed ? [] : response.results;
+                filter.set('filter', buildFilterItems());
                 annotateEpisodeRows();
                 return state.seasonPool;
             });
@@ -856,7 +915,7 @@
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
                 customQuery: state.customQuery
             };
-            searchLabel.setValue(state.customQuery || searchQueryText(target));
+            toolbar.find('.filter--search > div').text(state.customQuery || searchQueryText(target));
             var hadCustomQuery = !!state.customQuery;
             state.customQuery = null;
 
@@ -921,7 +980,8 @@
             Lampa.Select.show({
                 title: 'Выбор раздачи',
                 items: items,
-                onSelect: function (choice) { startDownload(choice.torrent, target); }
+                onSelect: function (choice) { startDownload(choice.torrent, target); },
+                onBack: function () { Lampa.Controller.toggle('content'); }
             });
         }
 
@@ -929,64 +989,6 @@
             if (!hasSeasons) { status.text(''); renderMovieCard(); return; }
             loadEpisodes();
         }
-
-        if (seasonControl) {
-            seasonControl.el.on('hover:enter', function () {
-                Lampa.Select.show({
-                    title: 'Выберите сезон',
-                    items: buildSeasonItems(movie, state.season),
-                    onSelect: function (choice) {
-                        if (choice.season === state.season) return;
-                        state.season = choice.season;
-                        seasonControl.setValue(String(state.season));
-                        loadEpisodes();
-                    }
-                });
-            });
-        }
-
-        // Options come from what's actually in the season pool once it's loaded — no point offering
-        // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
-        // list only while the pool is still loading (or for movies, which never populate one).
-        function poolValues(pluck, order) {
-            var pool = state.seasonPool || [];
-            var present = {};
-            pool.forEach(function (item) { var v = pluck(item); if (v) present[v] = true; });
-            return order ? order.filter(function (v) { return present[v]; }) : Object.keys(present);
-        }
-
-        voiceControl.el.on('hover:enter', function () {
-            var found = poolValues(function (item) { return item.release.voiceType; });
-            var items = [{ title: 'Любой', value: 'any' }].concat((found.length ? found : [
-                'Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал'
-            ]).map(function (v) { return { title: v, value: v }; }));
-            Lampa.Select.show({
-                title: 'Перевод',
-                items: items,
-                onSelect: function (choice) {
-                    state.voiceType = choice.value;
-                    voiceControl.setValue(choice.title);
-                    annotateEpisodeRows();
-                }
-            });
-        });
-
-        filtersControl.el.on('hover:enter', function () {
-            var order = ['2160p', '1080p', '720p', '480p'];
-            var found = poolValues(function (item) { return item.release.resolution; }, order);
-            var labels = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
-            var items = [{ title: 'Любое', value: 'any' }].concat((found.length ? found : ['2160p', '1080p', '720p'])
-                .map(function (v) { return { title: labels[v], value: v }; }));
-            Lampa.Select.show({
-                title: 'Качество',
-                items: items,
-                onSelect: function (choice) {
-                    state.resolution = choice.value;
-                    filtersControl.setValue(choice.value === 'any' ? '' : choice.title);
-                    annotateEpisodeRows();
-                }
-            });
-        });
 
         this.create = function () { return this.render(true); };
         this.render = function (js) { return explorer.render(js); };
