@@ -364,7 +364,7 @@
             hdr: /\bhdr10?\+?\b/i.test(source) ? 'HDR' : (/\bdolby ?vision\b|\bdv\b/i.test(source) ? 'DV' : ''),
             audioChannels: matchOne(source, [[/\b7\.1\b/, '7.1'], [/\b5\.1\b/, '5.1'], [/\b2\.0\b/, '2.0']]),
             voiceType: matchOne(source, [
-                [/\bдубляж\b|\bdub\b/i, 'Дубляж'],
+                [/дубляж|\bdub\b/i, 'Дубляж'],
                 [/\bmvo\b|многоголос/i, 'Многоголосый'],
                 [/\bavo\b|одноголос/i, 'Одноголосый'],
                 [/\borig(inal)?\b|ориг(инал)?/i, 'Оригинал']
@@ -557,8 +557,12 @@
         var state = {
             season: object.season || 0,
             voiceType: 'any',
-            resolution: 'any'
+            resolution: 'any',
+            seasonPool: null,
+            seasonPoolPromise: null,
+            seasonPoolSeason: null
         };
+        var episodeRows = {};
 
         function filterButton(label, value) {
             var el = $(
@@ -628,12 +632,14 @@
                 '</svg></div>' +
                 '<div class="torrent-mod-row__title">' + escapeHtml(title) + '</div>' +
                 (subtitle ? '<div class="torrent-mod-row__subtitle">' + escapeHtml(subtitle) + '</div>' : '') +
+                '<div class="torrent-mod-row__badge"></div>' +
                 '</div>'
             );
         }
 
         function renderEpisodes(episodes) {
             grid.empty();
+            episodeRows = {};
             episodes.forEach(function (episode) {
                 var number = parseInt(episode.episode_number, 10);
                 var view = canonicalTimeline(movie, state.season, number);
@@ -644,8 +650,10 @@
                 if (view && Lampa.Timeline && Lampa.Timeline.render) node.append(Lampa.Timeline.render(view));
                 node.on('hover:enter', function () { selectEpisode(number); });
                 grid.append(node);
+                episodeRows[number] = node;
             });
             refreshGrid();
+            annotateEpisodeRows();
         }
 
         function renderMovieCard() {
@@ -742,6 +750,82 @@
                 if (!episodes.length) { showMessage('Список серий недоступен', loadEpisodes); return; }
                 status.text('');
                 renderEpisodes(episodes);
+                ensureSeasonPool();
+            });
+        }
+
+        // As soon as we know the season (title + season number + TMDB's own runtime/episode-count
+        // data for a correct per-episode bitrate estimate), there's nothing episode-specific left to
+        // wait for — every episode's own torrent search would use the same season-wide query terms
+        // anyway (see buildQueries: no `episode` on the target means season-pack-style queries only).
+        // So search once, in the background, right when the episode list loads, instead of once per
+        // click: the results enrich the episode list (availability badges) and the Перевод/Фильтры
+        // chips (only offer voice/quality options that actually exist in this season) *before* the
+        // user commits to anything, and let a click resolve instantly instead of waiting out another
+        // Jackett round trip when the pool already covers it (see selectEpisode).
+        function ensureSeasonPool() {
+            if (!hasSeasons) return Promise.resolve([]);
+            if (state.seasonPoolPromise && state.seasonPoolSeason === state.season) return state.seasonPoolPromise;
+            state.seasonPoolSeason = state.season;
+            state.seasonPool = null;
+            var target = {
+                movie: object.movie,
+                season: state.season,
+                episode: 0,
+                seasonEpisodeCount: state.seasonEpisodeCount,
+                avgRuntimeMinutes: state.avgRuntimeMinutes
+            };
+            state.seasonPoolPromise = searchTorrentMod(target).then(function (response) {
+                if (state.seasonPoolSeason !== state.season) return []; // season changed mid-flight
+                state.seasonPool = response.failed ? [] : response.results;
+                annotateEpisodeRows();
+                return state.seasonPool;
+            });
+            return state.seasonPoolPromise;
+        }
+
+        // Same gate + scoring pipeline selectEpisode's own fresh search uses (matchesTranslation,
+        // state.resolution filter, passesMatchGate via scoreCandidate), just run against the
+        // already-fetched season pool instead of a new network call — used both for the instant-click
+        // reuse path and for the episode-row availability badges.
+        function candidatesForEpisode(pool, number) {
+            var target = {
+                movie: object.movie,
+                season: state.season,
+                episode: number,
+                seasonEpisodeCount: state.seasonEpisodeCount,
+                avgRuntimeMinutes: state.avgRuntimeMinutes
+            };
+            var filtered = pool.filter(function (item) { return matchesTranslation(item, state.voiceType); });
+            if (!filtered.length) filtered = pool;
+            if (state.resolution !== 'any') {
+                var byQuality = filtered.filter(function (item) { return item.release.resolution === state.resolution; });
+                if (byQuality.length) filtered = byQuality;
+            }
+            var scored = filtered.filter(function (item) {
+                item._score = scoreCandidate(item, target);
+                return item._score.passes;
+            });
+            scored.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
+            return scored;
+        }
+
+        function badgeText(matches) {
+            if (!matches.length) return 'раздачи не найдены';
+            var best = matches[0];
+            var bits = [];
+            if (best.release.resolution) bits.push(best.release.resolution);
+            bits.push(best.seeders + ' сид.');
+            if (matches.length > 1) bits.push('+' + (matches.length - 1));
+            return bits.join(' · ');
+        }
+
+        function annotateEpisodeRows() {
+            if (!state.seasonPool) return;
+            Object.keys(episodeRows).forEach(function (key) {
+                var number = parseInt(key, 10);
+                var matches = candidatesForEpisode(state.seasonPool, number);
+                episodeRows[key].find('.torrent-mod-row__badge').text(badgeText(matches));
             });
         }
 
@@ -751,6 +835,16 @@
         // instead of feeling like an online service. Below this we always show the picker so the
         // user can knowingly pick a thin release instead of getting stuck.
         var MIN_AVAILABILITY_FOR_AUTOPLAY = 3;
+
+        function finishSelection(candidates, target) {
+            var best = candidates[0];
+            var next = candidates[1];
+            var confident = best._score.availabilityScore >= MIN_AVAILABILITY_FOR_AUTOPLAY &&
+                (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2);
+
+            if (confident) startDownload(best, target);
+            else showCandidates(candidates.slice(0, 10), target);
+        }
 
         function selectEpisode(episode) {
             state.lastEpisode = episode;
@@ -763,7 +857,20 @@
                 customQuery: state.customQuery
             };
             searchLabel.setValue(state.customQuery || searchQueryText(target));
+            var hadCustomQuery = !!state.customQuery;
             state.customQuery = null;
+
+            // The season-wide background search (kicked off when the episode list loaded, see
+            // ensureSeasonPool) already covers exactly this query shape for anything without an
+            // explicit episode tag — reuse it instead of a fresh multi-second Jackett round trip when
+            // it already has a gate-passing match for this episode. Skipped for a custom query (an
+            // explicit override always gets its own fresh search) or when the pool has nothing usable
+            // for this specific episode — a targeted SxxExx query can surface single-episode torrents
+            // the season-level query terms missed, so falling through to a real search here is a
+            // recall safety net, not just a loading-state fallback.
+            var reused = !hadCustomQuery && state.seasonPool ? candidatesForEpisode(state.seasonPool, episode) : [];
+            if (reused.length) { finishSelection(reused, target); return; }
+
             status.text('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
             searchTorrentMod(target).then(function (response) {
                 if (response.failed) { notify('Jackett недоступен или не ответил'); status.text(''); return; }
@@ -784,13 +891,7 @@
                 status.text('');
                 if (!candidates.length) { notify('Похожих раздач не нашлось'); return; }
 
-                var best = candidates[0];
-                var next = candidates[1];
-                var confident = best._score.availabilityScore >= MIN_AVAILABILITY_FOR_AUTOPLAY &&
-                    (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2);
-
-                if (confident) startDownload(best, target);
-                else showCandidates(candidates.slice(0, 10), target);
+                finishSelection(candidates, target);
             });
         }
 
@@ -844,35 +945,45 @@
             });
         }
 
+        // Options come from what's actually in the season pool once it's loaded — no point offering
+        // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
+        // list only while the pool is still loading (or for movies, which never populate one).
+        function poolValues(pluck, order) {
+            var pool = state.seasonPool || [];
+            var present = {};
+            pool.forEach(function (item) { var v = pluck(item); if (v) present[v] = true; });
+            return order ? order.filter(function (v) { return present[v]; }) : Object.keys(present);
+        }
+
         voiceControl.el.on('hover:enter', function () {
+            var found = poolValues(function (item) { return item.release.voiceType; });
+            var items = [{ title: 'Любой', value: 'any' }].concat((found.length ? found : [
+                'Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал'
+            ]).map(function (v) { return { title: v, value: v }; }));
             Lampa.Select.show({
                 title: 'Перевод',
-                items: [
-                    { title: 'Любой', value: 'any' },
-                    { title: 'Дубляж', value: 'Дубляж' },
-                    { title: 'Многоголосый', value: 'Многоголосый' },
-                    { title: 'Одноголосый', value: 'Одноголосый' },
-                    { title: 'Оригинал', value: 'Оригинал' }
-                ],
+                items: items,
                 onSelect: function (choice) {
                     state.voiceType = choice.value;
                     voiceControl.setValue(choice.title);
+                    annotateEpisodeRows();
                 }
             });
         });
 
         filtersControl.el.on('hover:enter', function () {
+            var order = ['2160p', '1080p', '720p', '480p'];
+            var found = poolValues(function (item) { return item.release.resolution; }, order);
+            var labels = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
+            var items = [{ title: 'Любое', value: 'any' }].concat((found.length ? found : ['2160p', '1080p', '720p'])
+                .map(function (v) { return { title: labels[v], value: v }; }));
             Lampa.Select.show({
                 title: 'Качество',
-                items: [
-                    { title: 'Любое', value: 'any' },
-                    { title: '4K', value: '2160p' },
-                    { title: '1080p', value: '1080p' },
-                    { title: '720p', value: '720p' }
-                ],
+                items: items,
                 onSelect: function (choice) {
                     state.resolution = choice.value;
                     filtersControl.setValue(choice.value === 'any' ? '' : choice.title);
+                    annotateEpisodeRows();
                 }
             });
         });
@@ -1217,6 +1328,7 @@
             '.torrent-mod-row__icon svg{width:2.4em;height:2.4em}',
             '.torrent-mod-row__title{padding-left:2.1em;font-size:1.1em}',
             '.torrent-mod-row__subtitle{padding-left:2.1em;opacity:.65;font-size:.88em;margin-top:.2em}',
+            '.torrent-mod-row__badge{padding-left:2.1em;opacity:.55;font-size:.82em;margin-top:.2em}',
             '.view--torrent-mod svg{margin-right:.7em}',
             '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:2em}',
             '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',

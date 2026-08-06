@@ -186,6 +186,43 @@ There is no DI container — `MainForm` constructs and owns everything, and disp
     pack sometimes has a data problem a newer one already fixed), plus the already-parsed
     `audioChannels`/`subtitles` (parsed since early on but previously computed and discarded — now shown
     in the picker subtitle alongside tracker/seeders/peers/size/voice type).
+  - **Searches the whole season once, in the background, the moment the episode list loads — not once
+    per episode click.** The insight: everything needed to search is already known the instant Torrent
+    Mod opens for a series (title, season, TMDB's own runtime/episode-count data for a correct
+    per-episode bitrate estimate) — every per-episode search would build the same season-pack-shaped
+    query anyway (`buildQueries` with no `episode` on the target only ever produces season-level query
+    variants). `ensureSeasonPool()` fires this search from `loadEpisodes()`, and the pool it returns
+    does three things: (1) **episode row badges** — `candidatesForEpisode(pool, number)` runs the exact
+    same gate+filter+sort pipeline `selectEpisode`'s fresh search uses, just against the already-fetched
+    pool, and `annotateEpisodeRows()` writes a quality/seed summary (or "раздачи не найдены") onto each
+    row *before* the user commits to anything; (2) **Перевод/Фильтры options are pulled from what's
+    actually in the pool** (`poolValues()`) instead of a fixed list — no point offering a 4K filter for
+    a season nothing 4K was ever found in, falls back to the old static list only while the pool is
+    still loading; (3) **`selectEpisode` reuses the pool instead of a fresh network round trip** when it
+    already has a gate-passing match for the clicked episode — a season pack candidate has no
+    `explicitEpisode`, so it legitimately matches *every* episode in the season, not just the one it was
+    first found under. Falls through to a real, episode-targeted search only when there's a custom query
+    override (explicit intent always gets its own search), the pool hasn't resolved yet, or the pool
+    genuinely has nothing for that specific episode — a targeted `SxxExx` query can surface
+    single-episode torrents a season-level query's terms missed, so the fallback is a recall safety net,
+    not just a loading-state placeholder. Verified with a Node harness extending the `scoreCandidate` one
+    above (a season pack candidate correctly matches multiple distinct episodes; the gate still excludes
+    the wrong show/season per-episode even when read from a shared pool; voice-filtering the pool
+    correctly narrows to just the episode-specific release when the pack's own translation doesn't
+    match, and correctly returns nothing — not a silent fallback to the whole pool — when a requested
+    translation exists somewhere in the pool but not for that specific episode).
+  - **Found a real, pre-existing accuracy bug while building the above**: `matchOne`'s voiceType pattern
+    for Дубляж was `/\bдубляж\b|\bdub\b/i` — the `\b` word-boundary wrapped around the *Cyrillic* word
+    never matches, because JS regex `\b` is defined against `\w` (`[A-Za-z0-9_]` only) and neither side
+    of a Cyrillic word is `\w`, so no boundary transition ever forms there (confirmed:
+    `/\bдубляж\b/i.test('x264 Дубляж')` → `false`; the boundary-free `/дубляж/i` → `true`). Every other
+    voiceType alternative (Многоголосый/Одноголосый/Оригинал) already omitted `\b` around its own
+    Cyrillic form for exactly this reason — Дубляж was the one inconsistent case, so real Дубляж
+    releases have been silently mis-tagged as unlabeled since this regex was written. Fixed by dropping
+    the `\b` pair around the Cyrillic alternative, matching the other three. **General lesson: never wrap
+    `\b` around a Cyrillic (or any non-ASCII-word-character) alternative in a JS regex** — it silently
+    never matches rather than erroring, so nothing flags it short of a side-by-side data check like the
+    one that caught this.
   - **The whole left info panel + toolbar + scrollable list chrome is `Lampa.Explorer`**, not hand-built
     markup — confirmed live by opening this app's own `/app/` in a browser and inspecting the real,
     running Lampa/Online Mod DOM (`new Lampa.Explorer(object)` auto-populates the left card from
