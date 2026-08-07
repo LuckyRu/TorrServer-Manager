@@ -20,6 +20,7 @@ import {
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
+import { fileLoadedBytes } from '../playback/smart-preload.js';
 
 const runner = createRunner();
 
@@ -229,6 +230,27 @@ runner.test('формат: рискованная раздача (XviD AVI) по
     const likelyScore = scoreCandidate(likelyItem, target);
     if (!(riskyScore.value < likelyScore.value)) throw new Error('рискованный не штрафуется: ' + riskyScore.value + ' vs ' + likelyScore.value);
     if (candidateBadgeText(riskyItem).indexOf('Риск: XviD') < 0) throw new Error('нет маркера «Риск:»: ' + candidateBadgeText(riskyItem));
+});
+
+runner.test('fileLoadedBytes: буфер только выбранного файла, не всего торрента', () => {
+    // торрент: файл A занимает куски 0-9 (4MB каждый), файл B — куски 10-19
+    const pieces = {};
+    for (let i = 10; i < 20; i++) pieces[i] = { Completed: true }; // заполнен ТОЛЬКО файл B
+    // файл A (нужная серия) offset 0, length 40MB → куски 0-9: ничего не заполнено
+    const a = fileLoadedBytes(pieces, 4194304, 0, 40 * 1048576);
+    if (a !== 0) throw new Error('буфер файла A должен быть 0, получил ' + a);
+    // файл B offset 40MB, length 40MB → куски 10-19: весь файл
+    const b = fileLoadedBytes(pieces, 4194304, 40 * 1048576, 80 * 1048576);
+    if (b !== 40 * 1048576) throw new Error('буфер файла B должен быть 40MB, получил ' + b);
+    // непрерывность: файл A с заполненным куском 2, но не 1 — буфер 0 (не с начала)
+    const pieces2 = { 2: { Completed: true } };
+    if (fileLoadedBytes(pieces2, 4194304, 0, 40 * 1048576) !== 0) throw new Error('непрерывный буфер с начала нарушен');
+    // частичный кусок на границе файла: файл 5MB, заполнен кусок 0 (4MB) — буфер 4MB;
+    // если заполнен и кусок 1 (последний 1MB файла) — буфер 5MB
+    const pieces3 = { 0: { Completed: true } };
+    if (fileLoadedBytes(pieces3, 4194304, 0, 5 * 1048576) !== 4 * 1048576) throw new Error('частичный кусок посчитан неверно');
+    const pieces4 = { 0: { Completed: true }, 1: { Completed: true } };
+    if (fileLoadedBytes(pieces4, 4194304, 0, 5 * 1048576) !== 5 * 1048576) throw new Error('полный файл с частичным куском посчитан неверно');
 });
 
 await runner.run();

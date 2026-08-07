@@ -27,11 +27,32 @@
 
     var pendingPlayback = null;
 
+    var LEAD_SECONDS = 25;
+
     var PLAYABLE_FORMATS = ['asf', 'wmv', 'divx', 'avi', 'mp4', 'm4v', 'mov', '3gp', '3g2', 'mkv', 'trp', 'tp', 'mts', 'mpg', 'mpeg', 'dat', 'vob', 'rm', 'rmvb', 'm2ts', 'ts'];
 
     function isPlayableFile(file) {
         var exe = String((file && file.path) || '').split('.').pop().toLowerCase();
         return PLAYABLE_FORMATS.indexOf(exe) >= 0;
+    }
+
+    // Bytes of the SELECTED file's buffer actually downloaded, computed from TorrServer /cache's
+    // per-piece bitmap (Pieces: {index → {Completed}}) restricted to the file's own piece range
+    // [fileStart, fileEnd). Counting the whole torrent's preloaded_bytes was the bug: other files
+    // ("левые места") inflated readiness while the needed series had nothing. Continuous-from-start
+    // only — playback starts at the beginning of the file, so a completed piece further into the
+    // file (e.g. preloaded tail for seeking) must not count as buffer.
+    export function fileLoadedBytes(pieces, pieceLength, fileStart, fileEnd) {
+        if (!pieces || !pieceLength || fileStart == null || !fileEnd) return 0;
+        var start = Math.floor(fileStart / pieceLength);
+        var end = Math.ceil(fileEnd / pieceLength);
+        var loaded = 0;
+        for (var p = start; p < end; p++) {
+            var piece = pieces[p];
+            if (!piece || !piece.Completed) break;
+            loaded += Math.min(pieceLength, fileEnd - p * pieceLength);
+        }
+        return loaded;
     }
 
     function torrServerBase() {
@@ -90,6 +111,17 @@
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         pending.bestFile = scored[0].f;
+        // Byte range of the picked file inside the torrent: needed to measure ITS buffer via the
+        // /cache piece bitmap, not the whole torrent's (file_stats order is the torrent's order).
+        var offset = 0;
+        for (var i = 0; i < pending.files.length; i++) {
+            if (pending.files[i] === pending.bestFile) break;
+            offset += parseInt(pending.files[i].length, 10) || 0;
+        }
+        pending.fileStart = offset;
+        pending.fileLength = parseInt(pending.bestFile.length, 10) || 0;
+        pending.fileEnd = offset + pending.fileLength;
+        if (pending.fileLength) pending.targetBytes = Math.min(pending.targetBytes, pending.fileLength);
         initiatePreload(pending);
         probeRealTracks(pending);
         maybeProceed(pending);
@@ -155,6 +187,24 @@
                     bits = bits.filter(Boolean);
                     if (bits.length && pending.html) {
                         pending.html.find('.torrent-mod-preload__title').text('Подтверждено ffprobe: ' + bits.join(' · '));
+                    }
+                    // Real bitrate from the actual file (format.bit_rate, or size/duration) — far
+                    // more accurate than the title-based estimate. Recompute the duration-based
+                    // target from it (capped by the file size); the buffer usually takes seconds,
+                    // ffprobe arrives in milliseconds, so this lands well before readiness.
+                    var formatInfo = probe && probe.format;
+                    var realBitrate = 0;
+                    if (formatInfo) {
+                        if (parseFloat(formatInfo.bit_rate) > 0) realBitrate = parseFloat(formatInfo.bit_rate) / 1000000;
+                        else if (parseFloat(formatInfo.size) > 0 && parseFloat(formatInfo.duration) > 0) {
+                            realBitrate = (parseFloat(formatInfo.size) * 8) / (parseFloat(formatInfo.duration) * 1000000);
+                        }
+                    }
+                    if (realBitrate > 0) {
+                        pending.effectiveBitrateMbps = realBitrate;
+                        var target = (realBitrate * 1000000 / 8) * LEAD_SECONDS;
+                        if (pending.fileLength) target = Math.min(target, pending.fileLength);
+                        pending.targetBytes = target;
                     }
                 }).fail(function () {});
         }).fail(function () {});
@@ -248,12 +298,20 @@
                 timeout: 2500
             }).done(function (response) {
                 if (pending.clicked) return;
-                var data = response && (response.Torrent || response);
+                var root = response || {};
+                var data = root.Torrent || root;
                 if (!data) return;
-                var loaded = parseFloat(data.preloaded_bytes) || 0;
                 var speed = parseFloat(data.download_speed) || 0;
                 var seeds = parseInt(data.connected_seeders, 10) || 0;
                 var peers = parseInt(data.active_peers, 10) || 0;
+                // Buffer of the SELECTED file only, via the /cache piece bitmap (root-level Pieces +
+                // PiecesLength) restricted to the file's own byte range. Fallback to the whole
+                // torrent's preloaded_bytes only when per-file geometry is unavailable. This is the
+                // fix for "левые места качаются": other files used to inflate readiness.
+                var loaded = fileLoadedBytes(root.Pieces, parseFloat(root.PiecesLength) || 0, pending.fileStart, pending.fileEnd);
+                if (!loaded && (pending.fileStart == null || !root.Pieces)) {
+                    loaded = parseFloat(data.preloaded_bytes) || 0;
+                }
                 var percent = pending.targetBytes ? Math.min(100, loaded * 100 / pending.targetBytes) : 0;
                 html.find('.torrent-mod-preload__percent').text(Math.round(percent) + '%');
                 html.find('.torrent-mod-preload__bar > div').css('width', percent + '%');
@@ -428,18 +486,21 @@
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
         var bitrateMbps = item.bitrateMbps || 3;
         var timeoutSeconds = parseInt(field('torrent_mod_preload_timeout', '60'), 10) || 60;
-        var leadSeconds = 25;
-        var targetBytes = (bitrateMbps * 1000000 / 8) * leadSeconds;
+        var targetBytes = (bitrateMbps * 1000000 / 8) * LEAD_SECONDS;
 
         pendingPlayback = {
             hash: '',
             item: item,
             target: target,
             bitrateMbps: bitrateMbps,
+            effectiveBitrateMbps: 0,
             targetBytes: targetBytes,
             timeoutSeconds: timeoutSeconds,
             files: [],
             bestFile: null,
+            fileStart: null,
+            fileLength: 0,
+            fileEnd: 0,
             preloadStarted: false,
             keepUpTicks: 0,
             started: Date.now(),

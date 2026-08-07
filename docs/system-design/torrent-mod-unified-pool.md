@@ -128,4 +128,9 @@ Torrent Mod запускается **из уже найденного в TMDB п
   Timeline.view(Torserver.parse(...).hash)`, `data.playlist` из playable-файлов пака (next-episode).
   Таймаут не закрывает preload раньше выбора файла (metadata `.torrent`-ссылки может качаться
   дольше 60с — даётся двойной бюджет, потом честная ошибка).
+  **Буфер считается ТОЛЬКО для выбранной серии** (`/cache` отдаёт per-piece битмап `Pieces` +
+  `PiecesLength`; по байтовому диапазону выбранного файла `[fileStart, fileEnd)` считаем
+  непрерывный от начала буфер — левые файлы торрента больше не раздувают готовность, найдено
+  живой проверкой API TorrServer). `targetBytes = min(битрейт × 25с, размер файла)`, битрейт
+  берётся из ffprobe (`format.bit_rate`, fallback `size/duration`, fallback оценка по заголовку).
 - Этапы 4–5 — впереди.
