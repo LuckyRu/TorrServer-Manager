@@ -99,10 +99,11 @@
     // latent risk: `item` is a shared pool entry (state.pool), and this function gets called
     // once per episode per candidate (see domain/results-selectors.js candidatesForEpisode),
     // so item.bitrateMbps only ever reflects whatever episode's target this function was *last*
-    // called with for that item, not necessarily the one currently on screen. Nothing reads
-    // item.bitrateMbps back off the pool today (only the freshly-returned score object's own
-    // .bitrateMbps is used), so this is dormant, not an active bug — but don't start trusting
-    // item.bitrateMbps as "this candidate's bitrate" without re-deriving it fresh first.
+    // called with for that item. Since Etap 3 the UI also reads item._score.bitrateMbps for the
+    // candidate card's `~X Mbps` line: for a freshly-picked candidate list that score is correct
+    // (recomputed on every selectEpisode), but don't trust it after OTHER scoring passes ran over
+    // the same pool objects (e.g. row-badge computation for a different season) without
+    // re-deriving it fresh.
     export function scoreCandidate(item, target) {
         var release = item.release;
         var passes = passesMatchGate(item, target);

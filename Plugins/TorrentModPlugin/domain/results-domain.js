@@ -34,7 +34,7 @@
         applyPersistedPreferences(store, movie); // one initial patch, before anyone subscribes
 
         var episodes = createEpisodesInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed });
-        var selection = createSelectionInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery, ensureSeasonLoaded: episodes.ensureSeasonLoaded });
+        var selection = createSelectionInteractor({ store: store, object: object, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery, ensureSeasonLoaded: episodes.ensureSeasonLoaded });
         var filters = createFiltersInteractor({ store: store, movie: movie });
 
         // Film vs series — two genuinely different flows (see docs/system-design/torrent-mod-unified-pool.md,
@@ -43,7 +43,14 @@
         // then run the local pick (auto-play on a confident match, picker otherwise).
         function start() {
             if (hasSeasons) episodes.start();
-            else episodes.loadAllTorrents(function () { selection.selectEpisode(0); });
+            else {
+                // A movie has no per-episode runtime from TMDB season data — use its own runtime so
+                // the estimated bitrate (and the Битрейт filter buckets) is not off by the 42-min
+                // fallback (found in review).
+                var runtime = parseInt(movie.runtime, 10) || 0;
+                if (runtime) store.patch({ avgRuntimeMinutes: runtime });
+                episodes.loadAllTorrents(function () { selection.selectEpisode(0); });
+            }
         }
 
         function destroy() {

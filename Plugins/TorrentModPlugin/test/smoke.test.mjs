@@ -157,9 +157,13 @@ runner.test('ленивая дозагрузка сезона: пустой се
         results: [jackettRaw('Футурама / Futurama S07E01 1080p WEB-DL', 5, 2, 'aaaa')],
         indexers: []
     });
-    // дозагрузка сезона 2 — запросы «Имя S02» и «Имя 2 сезон»
+    // дозагрузка сезона 2 — запросы «Имя S02» и «Имя 2 сезон»; ответ содержит и новую раздачу,
+    // и дубль уже имеющейся (S07E01) — мерж не должен задвоить
     globalThis.__mockReguest((url) => url.includes('torrent-search') && /(S02|сезон)/i.test(decodeURIComponent(url)), {
-        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'bbbb')],
+        results: [
+            jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'bbbb'),
+            jackettRaw('Футурама / Futurama S07E01 1080p WEB-DL', 5, 2, 'aaaa')
+        ],
         indexers: []
     });
 
@@ -188,6 +192,76 @@ runner.test('ленивая дозагрузка сезона: пустой се
     await flushMicrotasks();
     const callsAfter = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
     if (callsAfter !== callsBefore) throw new Error('повторный клик сделал лишний запрос: ' + callsBefore + ' → ' + callsAfter);
+});
+
+runner.test('дозагрузка: последний клик во время loading выигрывает, смена сезона отменяет повтор', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, runtime: 22 }, { episode_number: 8, runtime: 22 }]
+    });
+    // общий пул: только раздача сезона 7 (сезон 2 локально пуст)
+    globalThis.__mockReguest((url) => url.includes('torrent-search') && !/(S02|сезон)/i.test(decodeURIComponent(url)), {
+        results: [jackettRaw('Футурама / Futurama S07E01 1080p WEB-DL', 5, 2, 'aaaa')],
+        indexers: []
+    });
+    // дозагрузка сезона 2 — медленная, с раздачами для серий 7 и 8
+    globalThis.__mockReguest((url) => url.includes('torrent-search') && /(S02|сезон)/i.test(decodeURIComponent(url)), {
+        results: [
+            jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'bbbb'),
+            jackettRaw('Футурама / Futurama S02E08 1080p WEB-DL', 12, 6, 'cccc')
+        ],
+        indexers: []
+    }, 80);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((r) => setTimeout(r, 160));
+
+    // два клика пока дозагрузка in-flight: выиграть должен ПОСЛЕДНИЙ (серия 8)
+    domain.selection.selectEpisode(7, true);
+    domain.selection.selectEpisode(8, true);
+    await new Promise((r) => setTimeout(r, 200));
+    let state = domain.store.get();
+    if (state.stage !== 'candidates') throw new Error('после дозагрузки нет кандидатов, stage=' + state.stage);
+    if (!state.candidates || state.candidates.target.episode !== 8) {
+        throw new Error('повторён не последний выбор: target.episode=' + (state.candidates && state.candidates.target.episode));
+    }
+});
+
+runner.test('дозагрузка: смена сезона до ответа не выбирает эпизод в чужом сезоне', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, runtime: 22 }, { episode_number: 8, runtime: 22 }]
+    });
+    // общий пул пуст — любой клик триггерит дозагрузку
+    globalThis.__mockReguest((url) => url.includes('torrent-search'), {
+        results: [], indexers: []
+    });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((r) => setTimeout(r, 100)); // пул готов (пустой)
+
+    // первый пул готов, клик по серии 7 сезона 2 запускает дозагрузку (пустую)…
+    // сделаем дозагрузку медленной, чтобы успеть сменить сезон до ответа
+    globalThis.__clearReguest();
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, runtime: 22 }, { episode_number: 8, runtime: 22 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('torrent-search'), { results: [], indexers: [] }, 80);
+
+    domain.selection.selectEpisode(7, true);
+    await new Promise((r) => setTimeout(r, 10)); // дозагрузка сезона 2 in-flight
+    domain.episodes.setSeason(3);
+    await new Promise((r) => setTimeout(r, 200)); // ответ пришёл ПОСЛЕ смены сезона
+
+    const state = domain.store.get();
+    if (state.stage === 'candidates') throw new Error('устаревшая дозагрузка показала кандидатов в чужом сезоне');
+    if (state.season !== 3) throw new Error('сезон не сменился');
 });
 
 await runner.run();

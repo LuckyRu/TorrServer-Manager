@@ -19,6 +19,11 @@
         var requery = options.requery;
         var ensureSeasonLoaded = options.ensureSeasonLoaded;
 
+        // The LAST episode the user picked while a season fetch was in flight ('loading'). The
+        // fetch's own onComplete only knows the FIRST pick; replaying that one would ignore a
+        // newer pick made during loading (found in review). Reset once replayed.
+        var pendingEpisode = null;
+
         // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Used for
         // a manual name override on a movie (user re-worded the search, wants to see what's there —
         // like Online Mod re-fetching its balancer's data for a new query instead of starting
@@ -79,10 +84,27 @@
             // season once (merged into the pool, never re-fetched until requery), then retry the
             // local pick — see episodes-interactor.ensureSeasonLoaded.
             var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
-            if (loadStatus === 'loading') { notify('Ищем раздачи для сезона…'); return; }
+            if (loadStatus === 'loading') {
+                // Remember the LATEST pick, not the one that started the fetch: when the response
+                // lands we replay the last one the user actually wanted (found in review).
+                pendingEpisode = { season: state.season, episode: episode, pickerOnly: pickerOnly };
+                notify('Ищем раздачи для сезона…');
+                return;
+            }
             if (loadStatus === 'ready' || loadStatus === 'error') { notify('Раздач не нашлось'); return; }
             if (ensureSeasonLoaded) {
-                ensureSeasonLoaded(state.season, function () { selectEpisode(episode, pickerOnly); });
+                ensureSeasonLoaded(state.season, function () {
+                    var current = store.get();
+                    var pending = pendingEpisode;
+                    pendingEpisode = null;
+                    // Only act if the season the fetch was made for is still on screen — a stale
+                    // response must not pick an episode in a different season (found in review).
+                    if (current.season !== state.season) return;
+                    // Replay the LAST pick made while loading (a newer one supersedes the click that
+                    // started the fetch); if none was made, replay the original one.
+                    var pick = pending || { episode: episode, pickerOnly: pickerOnly };
+                    selectEpisode(pick.episode, pick.pickerOnly);
+                });
             } else {
                 notify('Раздач не нашлось');
             }

@@ -9,7 +9,7 @@
     import { createInitialState } from './results-core.js';
 
     export function createInitialResultsState(object) {
-        var base = createInitialState(object); // season, voiceType, resolution — unchanged shape
+        var base = createInitialState(object); // season, voiceType, resolution, bitrate — unchanged shape
         return Object.assign(base, {
             // Per-resource status — "local" waiting states. Three separate fields, not one combined
             // enum, because each drives a genuinely independent piece of UI (grid content vs. badge

@@ -81,8 +81,12 @@
         }
 
         var voiceFound = poolValues(state, function (item) { return item.release.voiceType; });
+        // Static fallback list only while the pool is still loading (pool === null); once loaded,
+        // offer exactly what's in it — a ready-but-empty pool must not advertise options that
+        // don't exist (found in review).
+        var voiceOptions = state.pool ? (voiceFound.length ? voiceFound : []) : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал'];
         var voiceItems = [{ title: 'Любой', value: 'any', selected: state.voiceType === 'any' }].concat(
-            (voiceFound.length ? voiceFound : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал']).map(function (v) {
+            voiceOptions.map(function (v) {
                 return { title: v, value: v, selected: state.voiceType === v };
             })
         );
@@ -95,8 +99,9 @@
 
         var order = ['2160p', '1080p', '720p', '480p'];
         var qualityFound = poolValues(state, function (item) { return item.release.resolution; }, order);
+        var qualityOptions = state.pool ? (qualityFound.length ? qualityFound : []) : ['2160p', '1080p', '720p'];
         var qualityItems = [{ title: 'Любое', value: 'any', selected: state.resolution === 'any' }].concat(
-            (qualityFound.length ? qualityFound : ['2160p', '1080p', '720p']).map(function (v) {
+            qualityOptions.map(function (v) {
                 return { title: QUALITY_LABELS[v] || v, value: v, selected: state.resolution === v };
             })
         );
@@ -114,8 +119,9 @@
         var bitrateFound = poolValues(state, function (item) {
             return bitrateBucket(estimateBitrateForState(item, state));
         }, bitrateOrder);
+        var bitrateOptions = state.pool ? (bitrateFound.length ? bitrateFound : []) : bitrateOrder;
         var bitrateItems = [{ title: 'Любой', value: 'any', selected: (state.bitrate || 'any') === 'any' }].concat(
-            (bitrateFound.length ? bitrateFound : bitrateOrder).map(function (v) {
+            bitrateOptions.map(function (v) {
                 return { title: BITRATE_LABELS[v] || v, value: v, selected: state.bitrate === v };
             })
         );
