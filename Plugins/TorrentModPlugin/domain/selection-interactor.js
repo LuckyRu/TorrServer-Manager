@@ -1,8 +1,9 @@
     // ---------- domain: selection interactor ----------
     //
-    // selectEpisode/searchWithQuery/playCandidate grouped together: searchWithQuery literally
-    // delegates to selectEpisode today; both terminate in finishSelection -> startDownload; both
-    // populate candidates/stage/searchGeneration.
+    // selectEpisode/searchWithQuery/playCandidate grouped together: all terminate in either
+    // finishSelection (candidate list or auto-play) or a direct startDownload; all populate
+    // candidates/stage/searchGeneration. searchWithQuery is the manual name-override path — it
+    // re-fetches data under the new name instead of starting playback, see its own comment below.
     import { searchTorrentMod } from '../search/search-backend.js';
     import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
     import { startDownload } from '../playback/smart-preload.js';
@@ -16,15 +17,16 @@
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
         var isDestroyed = options.isDestroyed;
+        var requery = options.requery;
 
-        function finishSelection(candidates, target) {
+        // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Used for
+        // a manual name override on a movie (user re-worded the search, wants to see what's there —
+        // like Online Mod re-fetching its balancer's data for a new query instead of starting
+        // playback). Ordinary episode/movie picks keep auto-play.
+        function finishSelection(candidates, target, pickerOnly) {
             var best = candidates[0];
             var next = candidates[1];
-            // A manual query (customQuery) is an explicit "find and pick" act, not "watch the top
-            // match right now" — the user changed the search name to see what's out there, like
-            // Online Mod re-fetching its balancer's sources for a new query instead of starting
-            // playback. Auto-play stays for the ordinary episode/movie pick with no manual query.
-            if (!target.customQuery && isConfidentMatch(best, next)) {
+            if (!pickerOnly && isConfidentMatch(best, next)) {
                 startDownload(best, target);
                 return;
             }
@@ -35,7 +37,7 @@
             });
         }
 
-        function selectEpisode(episode) {
+        function selectEpisode(episode, pickerOnly) {
             var state = store.get();
             var target = {
                 movie: object.movie,
@@ -48,8 +50,7 @@
             var hadCustomQuery = !!state.customQuery;
             store.patch({
                 lastEpisode: episode,
-                searchText: state.customQuery || searchQueryText(target),
-                customQuery: null
+                searchText: state.customQuery || searchQueryText(target)
             });
 
             // The season-wide background search (kicked off when the episode list loaded, see
@@ -61,7 +62,7 @@
             // torrents the season-level query terms missed, so falling through to a real search here
             // is a recall safety net, not just a loading-state fallback.
             var reused = !hadCustomQuery && state.seasonPool ? selectCandidatesForEpisode(object, state, episode) : [];
-            if (reused.length) { finishSelection(reused, target); return; }
+            if (reused.length) { finishSelection(reused, target, pickerOnly); return; }
 
             var generation = store.get().searchGeneration + 1;
             store.patch({
@@ -97,14 +98,30 @@
                 store.patch({ searchStatus: 'ready', statusText: '' });
                 if (!candidates.length) { notify('Похожих раздач не нашлось'); return; }
 
-                finishSelection(candidates, target);
+                finishSelection(candidates, target, pickerOnly);
             });
         }
 
+        // A manual name override (customQuery) is persistent *query context* — the plugin was
+        // launched from an already-found TMDB card, so re-wording the name means "keep this screen,
+        // re-fetch the torrent data for this same season/episode under a better-matched name", like
+        // Online Mod re-fetching its balancer for a re-worded query instead of leaving the screen.
+        // It is NOT a request to switch to a different movie (we'd have no TMDB data for that), and
+        // it is NOT a request to start playback of the top match right now.
         function searchWithQuery(value) {
             if (!value) return;
-            store.patch({ customQuery: value });
-            selectEpisode(store.get().lastEpisode || 0);
+            store.patch({ customQuery: value, searchText: value });
+            if (hasSeasons) {
+                // Stay on the episode list (it's TMDB data, independent of the query) and just
+                // re-fetch the torrent pool under the new name — the row badges then reflect it.
+                var state = store.get();
+                if (state.episodesCache) store.patch({ stage: 'episodes', statusText: '', searchStatus: 'idle' });
+                if (requery) requery();
+            } else {
+                // Movie: no episode list, the candidate list IS the primary content — re-fetch it
+                // under the new name, picker-only (no auto-play while the user is actively searching).
+                selectEpisode(0, true);
+            }
         }
 
         function playCandidate(item, target) {

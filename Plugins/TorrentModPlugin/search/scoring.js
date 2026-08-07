@@ -47,14 +47,12 @@
 
     function passesMatchGate(item, target) {
         var release = item.release;
-        // Explicit manual query (customQuery): the query itself is already the relevance filter —
-        // Jackett searched by exactly this name, so a title-similarity gate against target.movie
-        // (the *current* card, which may be a completely different show the user is searching away
-        // from) and the season/episode checks (the user could be searching for another season/show)
-        // are all meaningless here. Let every result through and let qualityScore+availabilityScore
-        // do the ranking — same as Online Mod showing whatever its balancer returned for the query.
-        if (target.customQuery) return true;
-        if (titleSimilarity(item.title, target.movie) < MIN_TITLE_SIMILARITY) return false;
+        // A manual name override (customQuery) replaces the movie's own titles in the Jackett query,
+        // so a title-similarity check against target.movie (the *original* card name) is meaningless
+        // for those results — the query itself is now the title filter. Season/episode checks still
+        // apply, because customQuery only disambiguates the name, it does not change the target
+        // season/episode the user is searching torrents for.
+        if (!target.customQuery && titleSimilarity(item.title, target.movie) < MIN_TITLE_SIMILARITY) return false;
         if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
         if (target.episode && release.explicitEpisode &&
             !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) return false;

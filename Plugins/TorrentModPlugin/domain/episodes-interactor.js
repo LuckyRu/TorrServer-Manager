@@ -91,7 +91,8 @@
                 season: state.season,
                 episode: 0,
                 seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes
+                avgRuntimeMinutes: state.avgRuntimeMinutes,
+                customQuery: state.customQuery
             };
             store.patch({ seasonPoolStatus: 'loading' });
             searchTorrentMod(target).then(function (response) {
@@ -122,6 +123,18 @@
             store.patch({ stage: 'episodes', statusText: '' });
         }
 
+        // Re-run the season-wide background search under a new query context (e.g. the user typed a
+        // disambiguating name override in the toolbar search). The episode list itself is TMDB data
+        // and stays put — only the torrent pool (and therefore the row badges) is re-fetched, the
+        // same way Online Mod re-fetches its balancer's data for a re-worded query without leaving
+        // its screen. ensureSeasonPool builds its target from current state, so a fresh call here
+        // already picks up state.customQuery.
+        function requery() {
+            var state = store.get();
+            store.patch({ seasonPool: null, seasonPoolStatus: 'idle' });
+            ensureSeasonPool();
+        }
+
         function start() {
             if (!hasSeasons) return;
             loadEpisodes();
@@ -132,6 +145,7 @@
             loadEpisodes: loadEpisodes,
             ensureSeasonPool: ensureSeasonPool,
             setSeason: setSeason,
-            showEpisodeList: showEpisodeList
+            showEpisodeList: showEpisodeList,
+            requery: requery
         };
     }

@@ -34,7 +34,7 @@
         applyPersistedPreferences(store, movie); // one initial patch, before anyone subscribes
 
         var episodes = createEpisodesInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed });
-        var selection = createSelectionInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed });
+        var selection = createSelectionInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery });
         var filters = createFiltersInteractor({ store: store, movie: movie });
 
         function start() {
