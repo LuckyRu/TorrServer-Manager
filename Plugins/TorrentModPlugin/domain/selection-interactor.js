@@ -179,11 +179,12 @@
         }
 
         // Side picker panel: right-arrow on an episode row shows the candidate list for THAT episode
-        // in a slide-in panel. The episode comes from reactive state (activeEpisode), set by the
-        // row's hover:focus before the picker opens.
-        function openPicker() {
+        // in a slide-in panel. The episode normally comes from reactive state (activeEpisode, set by
+        // the row's hover:focus before the picker opens); an explicit `episode` argument is used by
+        // the deferred path (panel requested while the pool was still loading).
+        function openPicker(episode) {
             var state = store.get();
-            var episode = state.activeEpisode || state.lastEpisode || 0;
+            episode = episode || state.activeEpisode || state.lastEpisode || 0;
             var target = {
                 movie: object.movie,
                 season: state.season,
@@ -244,7 +245,11 @@
         }
 
         function closePicker() {
-            var state = store.get();
+            // Cancel any deferred picker intent too — closing the panel must not resurrect it when
+            // the pool finishes loading (found in review).
+            if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
+            pendingRetryTimer = null;
+            pendingSelection = null;
             store.patch({ picker: { open: false, episode: 0, items: [], target: null, status: 'idle', selectedId: null } });
         }
 

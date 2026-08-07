@@ -283,7 +283,8 @@ runner.test('панель: openPicker строит кандидатов, playPic
     domain.start();
     await flushMicrotasks();
 
-    domain.selection.openPicker(7);
+    domain.selection.setActiveEpisode(7);
+    domain.selection.openPicker();
     await flushMicrotasks();
     let state = domain.store.get();
     if (!state.picker.open) throw new Error('панель не открылась');
@@ -299,7 +300,8 @@ runner.test('панель: openPicker строит кандидатов, playPic
     if (!seasonDefault) throw new Error('дефолт сезона не сохранён: ' + JSON.stringify(saved));
     if (seasonDefault.title !== chosen.title) throw new Error('сохранён не тот кандидат');
 
-    // повторное открытие панели — в state.picker.selectedId должен быть сохранённый дефолт
+    // повторное открытие панели для той же серии — в state.picker.selectedId должен быть дефолт
+    domain.selection.setActiveEpisode(7);
     domain.selection.openPicker();
     await flushMicrotasks();
     state = domain.store.get();
