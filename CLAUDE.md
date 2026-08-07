@@ -471,16 +471,14 @@ entry-point/build-config layer above all of them.
     playable files of the pack (Player.play wires Playlist from data.playlist, player.js:1243 — that's
     what keeps next-episode inside a season pack working). Three native side effects of the old
     `Lampa.Torrent.start` path are compensated explicitly: `Favorite.add('history', movie, 100)`
-    (continue-watch card), the timeline above (per-episode watch history), and the playlist. The
-    full-screen `torrent-mod-preload` overlay polls TorrServer's `/cache` for the torrent hash with a
-    **duration-based**, not fixed-size, target —
-    `targetBytes = bitrateMbps(from estimateBitrateMbps) × leadSeconds(25)`, i.e. "enough buffer
-    for ~25 seconds of this specific release's own bitrate", not a flat MB/timeout. Starts early
-    (`keepsUpWithPlayback`) the moment observed download speed already exceeds ~90% of that bitrate, since
-    at that point the buffer can't be outrun even short of the nominal target. Surfaces an explicit
-    stall-risk warning in the overlay (not just silently waiting out the timeout) once speed has held
-    below half the required bitrate for a few seconds — a stall *during* playback is a worse experience
-    than an honest heads-up before it starts. (History: the old path listened to Lampa's `torrent_file`
+    (continue-watch card), the timeline above (per-episode watch history), and the playlist.
+    **No pre-start buffer overlay anymore** — the user rejected it as "лишний моргающий интерфейс":
+    a click goes STRAIGHT to `Player.play`, the player buffers on its own via the TorrServer stream.
+    What stays silent: a fire-and-forget `&preload` nudge (starts the download before the player
+    asks), the ffprobe gate (probeSelectedFile: a CONFIRMED-bad video codec — MPEG-2/MPEG-4 ASP/
+    VC-1/WMV/... — blocks playback with an honest toast instead of a black screen; 'unavailable' is
+    not proof of bad, play anyway), and next-episode preloading near the end of the current file
+    (`torrent_mod_preload_next`). (History: the old path listened to Lampa's `torrent_file`
     events and replayed the file's own `hover:enter` — replaced because the native screen itself was
     the problem.)
   - **Confirms the title-guessed quality/audio/subtitle badges against the real file once one is picked**,

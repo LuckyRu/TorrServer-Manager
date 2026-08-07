@@ -38,23 +38,7 @@
             '.torrent-mod-row__title{padding-left:2.1em;font-size:1.1em}',
             '.torrent-mod-row__subtitle{padding-left:3.4em;font-size:.7em;margin-top:.7em}',
             '.torrent-mod-row__badge{padding-left:3.4em;font-size:.7em;margin-top:.3em}',
-            '.view--torrent-mod svg{margin-right:.7em}',
-            // Semi-transparent, not fully opaque: the native torrent-file screen is NOT opened
-            // anymore (direct playback via Torserver.hash/Player.play, see playback/smart-preload.js),
-            // so there is nothing bright underneath to hide — the old fully-opaque #080c14 existed
-            // only to cover that native screen's rows bleeding through. A touch of see-through reads
-            // as a lighter modal and keeps the app feeling native.
-            '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:2em}',
-            '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',
-            '.torrent-mod-preload__title{font-size:1.2em;font-weight:700;margin-bottom:.6em}',
-            '.torrent-mod-preload__percent{font-size:2.5em;font-weight:700;margin:.4em 0 .15em}',
-            '.torrent-mod-preload__bar{height:.65em;background:#2c394b;border-radius:1em;overflow:hidden}',
-            '.torrent-mod-preload__bar>div{height:100%;width:0;background:#58d68d;transition:width .25s}',
-            '.torrent-mod-preload__stats{margin:1em 0 0;min-height:1.4em;opacity:.85}',
-            '.torrent-mod-preload__risk{margin:.3em 0 1.5em;min-height:1.2em;color:#f2b84b;font-size:.9em}',
-            '.torrent-mod-preload__buttons{display:flex;gap:.8em}',
-            '.torrent-mod-preload .simple-button{padding:.75em 1.2em;background:#2c394b;border-radius:.6em}',
-            '.torrent-mod-preload .simple-button.focus{background:#fff;color:#111}'
+            '.view--torrent-mod svg{margin-right:.7em}'
         ].join('');
         document.head.appendChild(style);
     }
