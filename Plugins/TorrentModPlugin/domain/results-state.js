@@ -51,16 +51,24 @@
             statusText: '',           // head status line ("Ищем S03E03…", "Загрузка списка серий…")
             searchText: '',           // toolbar search box text
             lastEpisode: 0,
+            // The episode currently under focus / most recently active — REACTIVE state, dispatched
+            // by the view on row focus and read back on picker close to restore the cursor exactly
+            // where the user was (no view-closure bookkeeping). Persisted via
+            // torrent_mod_last_episode for reopen (selection-interactor).
+            activeEpisode: 0,
             customQuery: null,
 
             // Side picker panel (right-arrow on an episode row): candidates for one episode, shown
             // in a slide-in panel instead of the full-screen candidates stage. Plain data only.
+            // selectedId = identity (magnet/link/title+size) of the persisted season default, if any
+            // — the panel marks it so the user sees what a plain click will start.
             picker: {
                 open: false,
                 episode: 0,
                 items: [],
                 target: null,
-                status: 'idle'        // 'idle' | 'loading' | 'ready' | 'error'
+                status: 'idle',        // 'idle' | 'loading' | 'ready' | 'error'
+                selectedId: null
             }
         });
     }

@@ -168,10 +168,22 @@
             }
         }
 
-        // Side picker panel: right-arrow on an episode row shows the candidate list for THAT episode
-        // in a slide-in panel. Builds candidates (same local pipeline as the click) into state.picker.
-        function openPicker(episode) {
+        // The episode currently under focus — dispatched by the view on row focus. This is the
+        // reactive source of truth for "where the user is": the picker opens for it, and the picker
+        // close restores the cursor to it (no view-closure bookkeeping). Persisted for reopen.
+        function setActiveEpisode(episode) {
             var state = store.get();
+            if (!episode || episode === state.activeEpisode) return;
+            store.patch({ activeEpisode: episode });
+            saveLastEpisode(object.movie, state.season, episode);
+        }
+
+        // Side picker panel: right-arrow on an episode row shows the candidate list for THAT episode
+        // in a slide-in panel. The episode comes from reactive state (activeEpisode), set by the
+        // row's hover:focus before the picker opens.
+        function openPicker() {
+            var state = store.get();
+            var episode = state.activeEpisode || state.lastEpisode || 0;
             var target = {
                 movie: object.movie,
                 season: state.season,
@@ -179,7 +191,7 @@
                 seasonEpisodeCount: state.seasonEpisodeCount,
                 avgRuntimeMinutes: state.avgRuntimeMinutes
             };
-            store.patch({ picker: { open: true, episode: episode, items: [], target: target, status: 'loading' } });
+            store.patch({ picker: { open: true, episode: episode, items: [], target: target, status: 'loading', selectedId: null } });
             if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
                 // Pool not ready yet — replay the picker once it is.
                 pendingSelection = { season: state.season, episode: episode, picker: true };
@@ -192,19 +204,25 @@
         function fillPicker(episode) {
             var state = store.get();
             var candidates = selectCandidatesForEpisode(object, state, episode);
+            // The manually-chosen season default (persisted, if any) — the panel marks it so the
+            // user sees exactly which torrent a plain click will start.
+            var saved = readSeasonDefault(object.movie, state.season);
+            var selectedId = saved ? saved.id : null;
             if (candidates.length) {
-                store.patch({ picker: { open: true, episode: episode, items: candidates, target: buildPickerTarget(episode), status: 'ready' } });
+                store.patch({
+                    picker: { open: true, episode: episode, items: candidates, target: buildPickerTarget(episode), status: 'ready', selectedId: selectedId }
+                });
                 return;
             }
             var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
             if (loadStatus === 'ready' || loadStatus === 'error') {
-                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error' } });
+                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
                 return;
             }
             if (ensureSeasonLoaded) {
                 ensureSeasonLoaded(state.season, function () { fillPicker(episode); });
             } else {
-                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error' } });
+                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
             }
         }
 
@@ -221,13 +239,13 @@
 
         function playPickerCandidate(item, target) {
             saveSeasonDefault(object.movie, target.season, item);
-            store.patch({ picker: { open: false, episode: target.episode, items: [], target: null, status: 'idle' } });
+            store.patch({ picker: { open: false, episode: target.episode, items: [], target: null, status: 'idle', selectedId: null } });
             startDownload(item, target);
         }
 
         function closePicker() {
             var state = store.get();
-            store.patch({ picker: { open: false, episode: 0, items: [], target: null, status: 'idle' } });
+            store.patch({ picker: { open: false, episode: 0, items: [], target: null, status: 'idle', selectedId: null } });
         }
 
         function freshSearch(target, pickerOnly) {
@@ -320,6 +338,7 @@
             selectEpisode: selectEpisode,
             searchWithQuery: searchWithQuery,
             playCandidate: playCandidate,
+            setActiveEpisode: setActiveEpisode,
             openPicker: openPicker,
             closePicker: closePicker,
             playPickerCandidate: playPickerCandidate,

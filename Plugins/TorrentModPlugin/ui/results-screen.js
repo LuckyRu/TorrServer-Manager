@@ -20,7 +20,7 @@
     import { baseTitles } from '../search/query-building.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
-    import { candidateBadgeText, candidateSubtitleText, searchQueryText, isSeriesWithSeasons } from '../domain/results-core.js';
+    import { candidateBadgeText, candidateSubtitleText, searchQueryText, isSeriesWithSeasons, candidateIdentity } from '../domain/results-core.js';
     import { selectFilterChipData, selectFilterItems, selectEpisodeBadges } from '../domain/results-selectors.js';
     import { createResultsDomain } from '../domain/results-domain.js';
 
@@ -57,7 +57,7 @@
         var pickerBody = $('<div class="torrent-mod-picker__body"></div>');
         pickerScroll.append(pickerBody);
         picker.append(pickerScroll.render());
-        var focusedEpisodeNode = null;
+        var focusedEpisodeNumber = null;
         var viewDestroyed = false;
 
         function openPickerPanel() {
@@ -71,9 +71,10 @@
                 pickerBody.append($('<div class="torrent-mod-picker__empty">Раздач не найдено</div>'));
             } else {
                 var target = st.target;
+                var selectedId = st.selectedId;
                 st.items.forEach(function (item) {
-                    var node = row(item.title, candidateSubtitleText(item), pickerScroll);
-                    node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
+                    var selected = !!(selectedId && candidateIdentity(item) === selectedId);
+                    var node = torrentRow(item, selected);
                     node.on('hover:enter', function () { domain.selection.playPickerCandidate(item, target); });
                     pickerBody.append(node);
                 });
@@ -96,25 +97,47 @@
             } catch (e) {}
         }
 
+        // Torrent row for the side picker — its OWN markup about torrents (title + quality badge +
+        // tracker/seeds/size/date details), not the episode-row shape, modelled on Lampa's native
+        // .torrent-item. Marks the currently-active (persisted season default) release.
+        function torrentRow(item, selected) {
+            var el = $(
+                '<div class="torrent-mod-picker-item selector' + (selected ? ' torrent-mod-picker-item--selected' : '') + '">' +
+                '<div class="torrent-mod-picker-item__title">' + escapeHtml(item.title) + '</div>' +
+                '<div class="torrent-mod-picker-item__badge">' + escapeHtml(candidateBadgeText(item)) + '</div>' +
+                '<div class="torrent-mod-picker-item__details">' + escapeHtml(candidateSubtitleText(item)) + '</div>' +
+                (selected ? '<div class="torrent-mod-picker-item__mark">Выбрано</div>' : '') +
+                '</div>'
+            );
+            el.on('hover:focus', function (e) { pickerScroll.update($(e.target), true); });
+            return el;
+        }
+
         // DOM/controller cleanup ONLY — never touches domain state. Called from render when
         // picker.open flips to false (which was itself produced by domain.closePicker), so no
-        // second store.patch → no recursive render (found by the architect).
+        // second store.patch → no recursive render (found by the architect). The cursor is restored
+        // from REACTIVE state (activeEpisode), not a view-closure node: the row under focus when the
+        // picker opened was dispatched into the store, so this survives re-renders and there is
+        // exactly one place the "where was I" truth lives.
         function hidePickerDom() {
             picker.removeClass('torrent-mod-picker--open');
             picker.hide();
             try { Lampa.Controller.toggle('content'); } catch (e) {}
-            if (focusedEpisodeNode && focusedEpisodeNode[0] && focusedEpisodeNode[0].offsetParent) {
-                try { Lampa.Controller.collectionFocus(focusedEpisodeNode[0], scroll.render(true)); } catch (e2) {}
+            var activeEpisode = domain.store.get().activeEpisode;
+            var node = activeEpisode ? episodeRows[activeEpisode] : null;
+            if (node && node[0] && node[0].offsetParent) {
+                try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e2) {}
             }
-            focusedEpisodeNode = null;
         }
 
-        // User-initiated close (left/back in the panel): flip domain state (render will hide the
-        // DOM via hidePickerDom) and hide immediately as a belt-and-suspenders.
+        // User-initiated close (left/back in the panel): flip domain state ONLY. The synchronous
+        // store.patch triggers render → hidePickerDom exactly once — calling hidePickerDom again
+        // here would re-toggle 'content' with the saved focus already cleared and land focus on the
+        // FIRST row instead of the one the panel was opened from (deterministic double-call bug,
+        // found by the architect).
         function requestClosePicker() {
             if (viewDestroyed) return;
             try { domain.selection.closePicker(); } catch (e) {}
-            hidePickerDom();
         }
 
         var initialSeason = object.season || 0;
@@ -282,6 +305,9 @@
                 node.addClass('torrent-mod-episode').attr('data-episode', number);
                 if (view && Lampa.Timeline && Lampa.Timeline.render) node.append(Lampa.Timeline.render(view));
                 node.on('hover:enter', function () { domain.selection.selectEpisode(number); });
+                // Reactive "active episode": every focus move dispatches it into the store (and
+                // persists it) — the picker opens for it and its close restores the cursor to it.
+                node.on('hover:focus', function () { domain.selection.setActiveEpisode(number); });
                 grid.append(node);
                 episodeRows[number] = node;
             });
@@ -384,7 +410,10 @@
                 var card = explorer.render(true);
                 var poster = card.querySelector('.explorer-card__head-img');
                 if (poster) {
-                    poster.classList.remove('selector');
+                    // Drop .focus too: Navigator.remove() unfocuses via the collection, but the DOM
+                    // .focus class survives and keeps the poster visibly outlined (the "обводка"
+                    // symptom) — found in review.
+                    poster.classList.remove('selector', 'focus');
                     Navigator.remove(poster);
                 }
             } catch (e) {}
@@ -402,18 +431,24 @@
                 right: function () {
                     // Right-arrow on an EPISODE row opens the side picker instead of moving focus
                     // (scoped to our own grid — a global .focus query could hit a foreign overlay).
+                    // The episode is dispatched into reactive state (setActiveEpisode) so the picker
+                    // and its close both read the same "where was I" truth from the store.
                     var focused = grid.find('.torrent-mod-episode.focus')[0];
                     if (focused) {
-                        focusedEpisodeNode = $(focused);
-                        var number = parseInt(focusedEpisodeNode.attr('data-episode'), 10);
-                        domain.selection.openPicker(number);
+                        var number = parseInt($(focused).attr('data-episode'), 10);
+                        domain.selection.setActiveEpisode(number);
+                        domain.selection.openPicker();
                         return;
                     }
                     Navigator.move('right');
                 },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('explorer'); },
                 down: function () { Navigator.move('down'); },
-                back: function () { Lampa.Controller.toggle('explorer'); }
+                // One press exits the screen (native torrents.js and Online Mod both close the
+                // Activity from the content controller directly) — routing through
+                // toggle('explorer') first made Back require two presses and left the Explorer
+                // (whose only .selector was the now-removed poster) as a dead stop (found in review).
+                back: function () { Lampa.Activity.backward(); }
             });
         }
 
@@ -471,6 +506,15 @@
                 grid.append(node);
             });
             refreshGrid();
+            // Movies have no episode list: the candidate list IS the primary content, so give it the
+            // same initial focus treatment as the episode list (refreshGrid skips collectionSet when
+            // 'content' isn't active yet, and 'explorer' now has no navigable poster — found in
+            // review: a movie could otherwise start with no focusable collection at all).
+            if (!initialFocusDone) {
+                initialFocusDone = true;
+                try { Lampa.Controller.toggle('content'); } catch (e) {}
+                try { Lampa.Controller.collectionFocus(false, scroll.render(true)); } catch (e2) {}
+            }
         }
 
         // The one `store.subscribe` for this whole screen. Diffs the new state against the previous

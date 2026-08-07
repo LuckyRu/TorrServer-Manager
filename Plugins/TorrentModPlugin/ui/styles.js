@@ -43,7 +43,14 @@
             '.torrent-mod-picker{position:fixed;z-index:9000;top:0;right:0;bottom:0;width:min(34em,45vw);background:#141a26;border-left:1px solid rgba(255,255,255,.12);transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column;padding-top:1em}',
             '.torrent-mod-picker--open{transform:translateX(0)}',
             '.torrent-mod-picker__body{flex:1;overflow:hidden;padding:0 1.4em 1em}',
-            '.torrent-mod-picker__empty{opacity:.7;padding:1.5em;text-align:center}'
+            '.torrent-mod-picker__empty{opacity:.7;padding:1.5em;text-align:center}',
+            '.torrent-mod-picker-item{position:relative;padding:.7em;margin:.15em -.75em;border-radius:.3em;background:rgba(0,0,0,.25)}',
+            '.torrent-mod-picker-item.focus{box-shadow:0 0 0 2px #fff}',
+            '.torrent-mod-picker-item--selected{outline:1px solid rgba(88,214,141,.8);outline-offset:-1px}',
+            '.torrent-mod-picker-item__title{font-size:1em;padding-right:4.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.torrent-mod-picker-item__badge{font-size:.72em;opacity:.85;margin-top:.35em}',
+            '.torrent-mod-picker-item__details{font-size:.72em;opacity:.6;margin-top:.2em}',
+            '.torrent-mod-picker-item__mark{position:absolute;top:.5em;right:.6em;color:#58d68d;font-size:.8em}'
         ].join('');
         document.head.appendChild(style);
     }
