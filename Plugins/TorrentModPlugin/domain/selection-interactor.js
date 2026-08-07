@@ -20,7 +20,11 @@
         function finishSelection(candidates, target) {
             var best = candidates[0];
             var next = candidates[1];
-            if (isConfidentMatch(best, next)) {
+            // A manual query (customQuery) is an explicit "find and pick" act, not "watch the top
+            // match right now" — the user changed the search name to see what's out there, like
+            // Online Mod re-fetching its balancer's sources for a new query instead of starting
+            // playback. Auto-play stays for the ordinary episode/movie pick with no manual query.
+            if (!target.customQuery && isConfidentMatch(best, next)) {
                 startDownload(best, target);
                 return;
             }
@@ -60,7 +64,11 @@
             if (reused.length) { finishSelection(reused, target); return; }
 
             var generation = store.get().searchGeneration + 1;
-            store.patch({ searchGeneration: generation, searchStatus: 'loading', statusText: 'Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…' });
+            store.patch({
+                searchGeneration: generation,
+                searchStatus: 'loading',
+                statusText: target.customQuery ? 'Ищем по названию…' : ('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…')
+            });
 
             searchTorrentMod(target).then(function (response) {
                 // Screen closed, or a newer selectEpisode()/season switch has since taken over —
