@@ -117,4 +117,10 @@ Torrent Mod запускается **из уже найденного в TMDB п
   пула. Добавлено измерение **Битрейт** (расчётный `estimateBitrateMbps`, бакеты до 2 / 2–5 /
   5–12 / 12+ Мбит/с) — опции только из реально присутствующих в пуле бакетов; битрейт показывается
   и в карточке кандидата (`~X Mbps`). Персистентность как у перевода/качества (global + per-movie).
+- **Прямой путь воспроизведения (без нативного экрана торрентов)** — выполнен (см. план
+  «прямой путь» в обсуждении): `Lampa.Torrent.start()` больше НЕ вызывается. Вместо него:
+  `Lampa.Torserver.hash({link})` → поллинг `Torserver.files(hash)` → `pickBestFile()` по
+  `file_stats` → `Torserver.stream(path, hash, id)` → `Lampa.Player.play({url, timeline, playlist})`.
+  Три native-сайд-эффекта компенсируются явно: `Favorite.add('history')`, `timeline:
+  Timeline.view(Torserver.parse(...).hash)`, `data.playlist` из playable-файлов пака (next-episode).
 - Этапы 4–5 — впереди.

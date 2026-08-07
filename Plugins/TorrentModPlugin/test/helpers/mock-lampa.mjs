@@ -47,7 +47,21 @@ export function setupMockLampa() {
             field: (name) => undefined // settings: no field set → code defaults apply
         },
         TMDB: { key: () => 'mock-key', api: (path) => 'https://api.tmdb.org/3/' + path },
-        Timeline: { watchedEpisode: () => null, update: () => {} },
+        Timeline: {
+            watchedEpisode: () => null,
+            view: () => ({ hash: 'mock', percent: 0, time: 0, duration: 0, handler: () => {} }),
+            update: () => {}
+        },
+        Torserver: {
+            ip: () => 'http://127.0.0.1:8090',
+            hash: (object, cb, fail) => cb({ hash: 'mock-torrent-hash' }),
+            files: (hash, cb, fail) => cb({ file_stats: [] }),
+            stream: (path, hash, id) => 'http://127.0.0.1:8090/stream/x?link=' + hash + '&index=' + id,
+            parse: (data) => ({ hash: 'mock-timeline-hash' }),
+            clearFileName: (files) => files
+        },
+        Favorite: { add: () => {} },
+        Player: { play: () => {}, playlist: () => {}, callback: () => {} },
         Utils: {
             bytesToSize: (bytes) => Math.round(bytes / 1048576) + ' MB',
             secondsToTimeHuman: (sec) => '00:' + String(Math.floor(sec % 60)).padStart(2, '0')

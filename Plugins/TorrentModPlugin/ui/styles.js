@@ -39,11 +39,12 @@
             '.torrent-mod-row__subtitle{padding-left:3.4em;font-size:.7em;margin-top:.7em}',
             '.torrent-mod-row__badge{padding-left:3.4em;font-size:.7em;margin-top:.3em}',
             '.view--torrent-mod svg{margin-right:.7em}',
-            // Fully opaque, not translucent — this sits over Lampa's own native torrent-file
-            // screen (Lampa.Torrent.start() opens it as an unavoidable side effect, see
-            // startDownload() in playback/smart-preload.js), and even a small amount of
-            // see-through (this used to be rgba(...,.92)) was enough for that native screen's own
-            // bright rows to visibly bleed through at the edges — confirmed live, reported as
+            // Fully opaque, not translucent — this is the full-screen buffering overlay shown while
+            // TorrServer warms the torrent up to the duration-based target (the native torrent-file
+            // screen is NOT opened anymore — playback is direct via Torserver.hash/Player.play, see
+            // playback/smart-preload.js). It used to sit on top of Lampa's native file screen, and
+            // even a small amount of see-through (this used to be rgba(...,.92)) was enough for that
+            // screen's own bright rows to bleed through at the edges — confirmed live, reported as
             // still-visible "мусор" behind our own overlay despite it technically being on top.
             '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:#080c14;display:flex;align-items:center;justify-content:center;padding:2em}',
             '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',

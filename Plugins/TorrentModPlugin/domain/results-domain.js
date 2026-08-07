@@ -9,8 +9,9 @@
     // store — its overlay is appended directly to `$('body')` and its own `Lampa.Controller.add`
     // entry, entirely outside the Lampa.Explorer/Scroll/Filter/`content`-controller tree the results
     // View owns, and its lifetime is deliberately *decoupled* from this screen's (startDownload
-    // pushes straight into Lampa.Torrent.start and keeps polling after the results Activity is
-    // gone, by design — see playback/smart-preload.js's own header comment). Folding it in would
+    // registers the torrent with TorrServer directly and starts playback via Lampa.Player.play,
+    // keeping its own timers polling after the results Activity is gone, by design — see
+    // playback/smart-preload.js's own header comment). Folding it in would
     // mean either the Store carrying state nothing in this domain's own render loop ever reads, or
     // special-casing domain.destroy() to *not* cancel it. It stays a plain function call across a
     // module boundary (selection-interactor.js's playCandidate/finishSelection call startDownload

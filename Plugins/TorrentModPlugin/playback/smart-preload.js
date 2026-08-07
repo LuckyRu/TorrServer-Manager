@@ -1,25 +1,37 @@
-    // ---------- download + duration-aware smart preload ----------
+    // ---------- download + duration-aware smart preload (direct playback, no native torrent UI) ----------
     //
-    // No global patching of Lampa.Player.play/Lampa.Torserver.stream — that would affect every
-    // torrent screen in Lampa, not just this one, and is a reliable source of hard-to-debug
-    // ordering bugs the moment more than one thing wants to react to playback start. Instead: we
-    // already know the torrent's infohash from its own magnet (we picked it ourselves via search,
-    // no need to intercept anything to learn it), so we can poll TorrServer's /cache for it
-    // directly and independently of whatever the native file-list UI does. We listen to Lampa's
-    // own 'torrent_file' event (listening is safe/composable — it's *patching a shared function*
-    // that isn't), scoped to only react while `pendingPlayback` is set (i.e. only for downloads
-    // *we* just started), auto-pick the right file by scoring season/episode signals in its path,
-    // and just call the file's own native `hover:enter` once our duration-based buffer target is
-    // ready — that's the real Lampa file click, so playback starts through the exact same path it
-    // always would.
+    // Plays through the SAME public Lampa APIs the native torrent screen uses, but WITHOUT opening
+    // that screen at all (the user already picked a series — being dumped into Lampa's native
+    // "choose a file" list is exactly what this module exists to prevent). Pipeline, as designed
+    // by the architect (see docs/system-design/torrent-mod-unified-pool.md, «прямой путь»):
+    //
+    //   Lampa.Torserver.hash(...)          register the torrent (magnet or .torrent link)
+    //     → Torserver.files(hash)          poll until TorrServer resolves metadata → file_stats
+    //     → pickBestFile()                 score season/episode signals in file paths (ours)
+    //     → Torserver.stream(path,hash,id) official stream URL (never invent our own)
+    //     → Lampa.Player.play({url, timeline, playlist})
+    //
+    // Three native side effects of the old Lampa.Torrent.start path are compensated here explicitly
+    // (native torrent.js used to do them on hover:enter — torrent.js:437/333/446):
+    //   1. Favorite.add('history', movie)   — continue-watch card
+    //   2. timeline: Timeline.view(parsed.hash) — per-episode watch history (parsed via
+    //      Torserver.parse, which produces the SAME hash Timeline.watchedEpisode reads; this is NOT
+    //      the torrent infohash)
+    //   3. data.playlist from all playable files of the pack — next-episode inside a season pack
+    //      (Player.play sets Playlist from data.playlist, player.js:1243)
+    //
+    // Still no global patching of Lampa.Player.play / Lampa.Torserver.stream (ADR-0003): we call
+    // the public APIs with explicit arguments, we don't wrap them.
     import { parseSignals } from '../search/release-parsing.js';
     import { field, notify, previousController, formatSize } from '../shared/utils.js';
 
     var pendingPlayback = null;
 
-    function extractInfoHash(magnet) {
-        var match = String(magnet || '').match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
-        return match ? match[1].toLowerCase() : '';
+    var PLAYABLE_FORMATS = ['asf', 'wmv', 'divx', 'avi', 'mp4', 'm4v', 'mov', '3gp', '3g2', 'mkv', 'trp', 'tp', 'mts', 'mpg', 'mpeg', 'dat', 'vob', 'rm', 'rmvb', 'm2ts', 'ts'];
+
+    function isPlayableFile(file) {
+        var exe = String((file && file.path) || '').split('.').pop().toLowerCase();
+        return PLAYABLE_FORMATS.indexOf(exe) >= 0;
     }
 
     function torrServerBase() {
@@ -45,40 +57,37 @@
         pending.clicked = true;
         cleanupSmartPreload(pending);
         if (pending.bestFile) {
-            try { pending.bestFile.item.trigger('hover:enter'); } catch (e) {}
+            startDirectPlayback(pending);
         } else {
-            // Timed out or force-played ("Смотреть сейчас"), but no file ever rendered in the
-            // native list — pickBestFile() never ran at all (a dead/stalled magnet, or a torrent
-            // with genuinely zero usable peers). Found live: the old check order bailed on
-            // `!pending.bestFile` *before* even looking at ready/timedOut, so both escape hatches
-            // silently did nothing in this case — Отмена was the only button that actually worked.
-            // Clean up our overlay regardless and say so explicitly instead of leaving the user
-            // stuck on a permanent "0%" with two dead buttons; the native Files screen is still
-            // there underneath (never destroyed, only visually covered by our overlay), so closing
-            // ours lets them pick a file manually.
-            notify('Не удалось определить файл автоматически — выберите вручную');
+            // Timed out or force-played, but no file ever got picked (metadata never resolved —
+            // dead/stalled magnet or genuinely zero peers). There is deliberately no native file
+            // screen to fall back to; say so explicitly and leave the user with Отмена (the
+            // overlay is gone by now, they are back on the results screen).
+            notify(pending.error || 'Не удалось определить файл автоматически');
         }
         if (pendingPlayback === pending) pendingPlayback = null;
     }
 
+    // Picks the best playable file from the metadata TorrServer has resolved (file_stats), scoring
+    // season/episode signals in the file path like before — just from the API response instead of
+    // the native screen's torrent_file events.
     function pickBestFile(pending) {
-        if (!pending || pending.clicked || !pending.fileItems.length) return;
+        if (!pending || pending.clicked || !pending.files || !pending.files.length) return;
         var scored = [];
-        for (var i = 0; i < pending.fileItems.length; i++) {
-            scored.push({ f: pending.fileItems[i], score: preloadFileScore(pending.fileItems[i].element, pending.target) });
+        for (var i = 0; i < pending.files.length; i++) {
+            scored.push({ f: pending.files[i], score: preloadFileScore(pending.files[i], pending.target) });
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         pending.bestFile = scored[0].f;
-        maybeProceed(pending);
         probeRealTracks(pending);
+        maybeProceed(pending);
     }
 
     // Confirms our title-guessed badges (resolution/codec/audio/subs, all regexed out of the
     // raздача name in parseRelease) against the *actual* file, the same way the MediaInfo plugin
     // does: TorrServer bundles ffprobe for its own transcoding support and exposes it at
     // /ffp/{hash}/{fileId} (confirmed by reading that plugin's own source — this is its whole job).
-    // fileId comes from TorrServer's own /torrents listing, not DOM/array position — same lookup
-    // MediaInfo itself does (its pickIndex() reads `.id` off that same list). Deliberately skips
+    // fileId comes from TorrServer's own file_stats, not DOM/array position. Deliberately skips
     // that plugin's public "Tracks Inspector" fallback for when ffprobe isn't available locally —
     // it's a third-party service outside this project's own infrastructure, inconsistent with
     // keeping everything (Jackett, TorrServer) local/loopback-only; if /ffp/ 400s (no ffprobe on
@@ -88,7 +97,7 @@
         var base = torrServerBase();
         if (!base) return;
         pending.probed = true;
-        var wantPath = String((pending.bestFile.element && (pending.bestFile.element.path || pending.bestFile.element.title)) || '');
+        var wantPath = String((pending.bestFile.path || pending.bestFile.path_human || pending.bestFile.title) || '');
         if (!wantPath) return;
         $.ajax({
             url: base + '/torrents', method: 'POST',
@@ -117,22 +126,10 @@
         }).fail(function () {});
     }
 
-    export function onTorrentFile(event) {
-        if (!event || !pendingPlayback) return;
-        var pending = pendingPlayback;
-        if (event.type === 'list_open') {
-            pending.fileItems = [];
-        } else if (event.type === 'render' && pending.fileItems) {
-            pending.fileItems.push({ element: event.element, item: event.item });
-            clearTimeout(pending.renderDebounce);
-            pending.renderDebounce = setTimeout(function () { pickBestFile(pending); }, 150);
-        }
-    }
-
     function cleanupSmartPreload(pending) {
         clearInterval(pending.pollTimer);
         clearInterval(pending.clockTimer);
-        clearTimeout(pending.renderDebounce);
+        clearInterval(pending.filesTimer);
         if (pending.html) pending.html.remove();
         try { Lampa.Controller.toggle(pending.previousController || 'content'); } catch (e) {}
     }
@@ -194,7 +191,9 @@
 
         var base = torrServerBase();
         pending.pollTimer = setInterval(function () {
-            if (!base || pending.clicked) return;
+            // /cache is meaningless until the hash is known (registration can take a moment for
+            // .torrent links); skip ticks until then.
+            if (!base || !pending.hash || pending.clicked) return;
             $.ajax({
                 url: base + '/cache',
                 method: 'POST',
@@ -238,94 +237,163 @@
         }, 1000);
     }
 
-    // Some Torznab indexers (confirmed live: NoNaMe Club) don't return a magnet URI at all in their
-    // results, only an HTTP link to download the raw .torrent file — extractInfoHash has nothing to
-    // parse in that case, item.magnet is just ''. This used to mean bailing out of the whole smart-
-    // preload flow entirely ("let native flow run unassisted"), leaving the raw native Files screen
-    // fully exposed with nothing covering it — a real, repeatedly-reported bug, not a hypothetical.
-    // Fix: don't try to parse the hash ourselves (would mean implementing bencode parsing just to
-    // read a .torrent file's info-hash) — ask TorrServer instead. Once Lampa.Torrent.start() below
-    // hands it that Link, TorrServer downloads and parses the .torrent on its own, and the resolved
-    // hash shows up in its own /torrents {action:'list'} shortly after, under a title match (Lampa's
-    // own Torrent.start prefixes whatever title we pass with "[LAMPA] ", confirmed live) — same
-    // /torrents endpoint probeRealTracks already calls, just a different action. Poll briefly for it.
-    function resolveHashByTitle(title, pending) {
-        var base = torrServerBase();
-        if (!base) return;
-        var attempts = 0;
-        var maxAttempts = 8;
-        var timer = setInterval(function () {
-            if (pending.clicked || pending.hash) { clearInterval(timer); return; }
-            attempts++;
-            $.ajax({
-                url: base + '/torrents', method: 'POST',
-                data: JSON.stringify({ action: 'list' }),
-                dataType: 'json', timeout: 3000
-            }).done(function (list) {
-                if (pending.clicked || pending.hash) { clearInterval(timer); return; }
-                var found = (list || [])
-                    .filter(function (t) { return t.title && t.hash && t.title.indexOf(title) >= 0; })
-                    .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); })[0];
-                // pending.hash is read fresh on every /cache poll tick inside showSmartPreload's own
-                // pollTimer (it's a plain property read inside that interval's own callback, not a
-                // value captured at pending's construction time), so just setting it here is enough —
-                // no need to restart or otherwise touch that already-running poll loop.
-                if (found) { pending.hash = found.hash; clearInterval(timer); return; }
-                if (attempts >= maxAttempts) clearInterval(timer);
-            }).fail(function () {
-                if (attempts >= maxAttempts) clearInterval(timer);
+    // Registers the torrent with TorrServer directly (POST /torrents action:add, same payload the
+    // native screen sends — Torserver.hash). Accepts a magnet OR an HTTP .torrent link: TorrServer
+    // downloads and parses the .torrent itself, so a hash arrives in both cases (no bencode parsing
+    // on our side, and no need for the old resolveHashByTitle polling).
+    function registerTorrent(pending) {
+        var item = pending.item;
+        var target = pending.target;
+        function fail(message) {
+            if (pending.clicked) return;
+            pending.error = message;
+            if (pending.html) pending.html.find('.torrent-mod-preload__title').text(message);
+        }
+        try {
+            Lampa.Torserver.hash({
+                title: item.title,
+                link: item.magnet || item.link,
+                poster: (target.movie && (target.movie.img || target.movie.poster_path)) || ''
+            }, function (json) {
+                if (pending.clicked) return;
+                pending.hash = json && json.hash;
+                if (pending.hash) pollFiles(pending);
+                else fail('Не удалось получить hash раздачи');
+            }, function () {
+                fail('Не удалось зарегистрировать раздачу в TorrServer');
             });
-        }, 700);
+        } catch (e) {
+            fail('TorrServer недоступен');
+        }
+    }
+
+    // Polls Torserver.files(hash) until metadata resolves (file_stats), then filters playable
+    // files, enriches them with path_human (Torserver.clearFileName, required by Torserver.parse)
+    // and picks the best one. Mirrors the native files() polling (torrent.js:149-169, 2s interval).
+    function pollFiles(pending) {
+        var attempts = 0;
+        var maxAttempts = 45;
+        pending.filesTimer = setInterval(function () {
+            if (pending.clicked || pending.bestFile) { clearInterval(pending.filesTimer); return; }
+            attempts++;
+            try {
+                Lampa.Torserver.files(pending.hash, function (json) {
+                    if (pending.clicked || pending.bestFile) return;
+                    var stats = (json && json.file_stats) || [];
+                    var plays = stats.filter(isPlayableFile);
+                    if (!plays.length) {
+                        if (attempts >= maxAttempts) {
+                            clearInterval(pending.filesTimer);
+                            pending.error = 'Не удалось получить файлы раздачи';
+                            maybeProceed(pending);
+                        }
+                        return;
+                    }
+                    clearInterval(pending.filesTimer);
+                    try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
+                    pending.files = plays;
+                    pickBestFile(pending);
+                });
+            } catch (e) {}
+            if (attempts >= maxAttempts) clearInterval(pending.filesTimer);
+        }, 2000);
+    }
+
+    // Builds the player playlist from ALL playable files of the pack — the native torrent screen
+    // used to do this (torrent.js:415-429) and handed it to Player.playlist, which is what made
+    // "next episode" inside a season pack work via Video.ended → Playlist.next(). We reproduce it
+    // so that behaviour doesn't regress.
+    function buildPlaylist(pending) {
+        var hash = pending.hash;
+        var movie = (pending.target && pending.target.movie) || {};
+        var files = pending.files || [];
+        var playlist = [];
+        files.forEach(function (file) {
+            var info = {};
+            try { info = Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }); } catch (e) {}
+            playlist.push({
+                title: file.path_human || file.path,
+                first_title: movie.name || movie.title,
+                card: movie,
+                url: Lampa.Torserver.stream(file.path, hash, file.id),
+                season: info.season,
+                episode: info.episode,
+                path: file.path,
+                timeline: Lampa.Timeline.view(info.hash)
+            });
+        });
+        return playlist;
+    }
+
+    // Starts playback through the exact data shape the native screen builds for a file element
+    // (torrent.js:336-350): url from Torserver.stream, timeline from Torserver.parse, plus the
+    // playlist. Player.play itself wires Playlist from data.playlist (player.js:1243).
+    function startDirectPlayback(pending) {
+        var file = pending.bestFile;
+        var target = pending.target;
+        var movie = (target && target.movie) || {};
+        var hash = pending.hash;
+        if (!hash || !file) return;
+
+        var files = pending.files || [];
+        var info = {};
+        try { info = Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }); } catch (e) {}
+
+        // Compensated native side effect #1: continue-watch card (torrent.js:437).
+        try { if (movie.id) Lampa.Favorite.add('history', movie, 100); } catch (e) {}
+
+        var data = {
+            url: Lampa.Torserver.stream(file.path, hash, file.id),
+            torrent_hash: hash,
+            title: file.path_human || file.path,
+            first_title: movie.name || movie.title,
+            card: movie,
+            season: info.season,
+            episode: info.episode,
+            path: file.path,
+            timeline: Lampa.Timeline.view(info.hash),
+            playlist: buildPlaylist(pending)
+        };
+
+        try { Lampa.Player.play(data); } catch (e) {}
+        // Native torrent.js also routes back from the player to the modal/previous screen
+        // (Player.callback + Controller.toggle('modal'), torrent.js:442-445).
+        try { Lampa.Player.callback(function () { Lampa.Controller.toggle('modal'); }); } catch (e) {}
     }
 
     export function startDownload(item, target) {
         // Found live during an independent review pass: nothing prevented a second startDownload()
         // call while an earlier one was still pending (not yet clicked) — an impatient double-pick
-        // during the several-second Jackett search window is enough. The second call used to
-        // unconditionally overwrite the module-level pendingPlayback singleton, orphaning the first
-        // pending's pollTimer/clockTimer (setInterval, 1s each — see showSmartPreload) running
-        // forever: onTorrentFile() only ever looks at the *current* pendingPlayback, so the
-        // first pending's fileItems never populate and its own maybeProceed() gate never opens.
-        // Its overlay div stayed in the DOM too, invisibly stacked behind the second one at the
-        // same z-index. Treat starting a new download as implicitly cancelling whichever one was
-        // still pending, same as pressing Отмена would have — tears its timers/overlay down before
-        // the new one starts fresh.
+        // during the several-second Jackett search window is enough. Treat starting a new download
+        // as implicitly cancelling whichever one was still pending, same as pressing Отмена would
+        // have — tears its timers/overlay down before the new one starts fresh.
         if (pendingPlayback && !pendingPlayback.clicked) {
             pendingPlayback.clicked = true;
             cleanupSmartPreload(pendingPlayback);
         }
 
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
-        var hash = extractInfoHash(item.magnet);
         var bitrateMbps = item.bitrateMbps || 3;
         var timeoutSeconds = parseInt(field('torrent_mod_preload_timeout', '60'), 10) || 60;
         var leadSeconds = 25;
         var targetBytes = (bitrateMbps * 1000000 / 8) * leadSeconds;
 
-        Lampa.Torrent.start({
-            Title: item.title,
-            title: item.title,
-            MagnetUri: item.magnet,
-            Link: item.link,
-            poster: (target.movie && (target.movie.img || target.movie.poster_path)) || ''
-        }, target.movie);
-
-        // Shown immediately regardless of whether hash is known yet — covering the native Files
-        // screen right away in both cases, no window where the raw native UI is visibly exposed.
         pendingPlayback = {
-            hash: hash,
+            hash: '',
             item: item,
             target: target,
             bitrateMbps: bitrateMbps,
             targetBytes: targetBytes,
             timeoutSeconds: timeoutSeconds,
-            fileItems: [],
+            files: [],
+            bestFile: null,
             started: Date.now(),
             clicked: false,
             ready: false,
             timedOut: false,
-            probed: false
+            probed: false,
+            error: ''
         };
         showSmartPreload(pendingPlayback);
-        if (!hash) resolveHashByTitle(item.title, pendingPlayback);
+        registerTorrent(pendingPlayback);
     }

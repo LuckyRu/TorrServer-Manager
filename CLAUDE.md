@@ -459,17 +459,30 @@ entry-point/build-config layer above all of them.
     `escapeHtml()` for any HTML interpolation instead of assuming Lampa provides one.
   - Deliberately does **not** globally patch `Lampa.Player.play`/`Lampa.Torserver.stream` — that would
     affect every torrent screen in Lampa, not just this one, a reliable source of hard-to-debug ordering
-    bugs. `Lampa.Torrent.start(...)` is still called (it's what actually registers the magnet with
-    TorrServer and drives the native file-list UI our own file-picking listens to via the `torrent_file`
-    event), but playback readiness is our own: a full-screen `torrent-mod-preload` overlay polls
-    TorrServer's `/cache` for the picked file's infohash, with a **duration-based**, not fixed-size,
-    target — `targetBytes = bitrateMbps(from estimateBitrateMbps) × leadSeconds(25)`, i.e. "enough buffer
+    bugs. **`Lampa.Torrent.start(...)` is NOT called anymore** (it used to force Lampa's native
+    torrent-file screen open — «сиди и выбирай» — which is exactly what we got rid of; see the direct
+    playback pipeline below). Instead: `Lampa.Torserver.hash({link: magnet||.torrent-link})` registers
+    the torrent directly, `Torserver.files(hash)` is polled until metadata resolves, `pickBestFile()`
+    scores season/episode signals in the file paths (from `file_stats`, not native events), and once
+    our **duration-based** buffer target is met we call `Lampa.Player.play({url, timeline, playlist})`
+    where `url = Torserver.stream(path, hash, id)` (the official Lampa stream URL, never invented),
+    `timeline = Timeline.view(Torserver.parse({movie, files, filename, path}).hash)` (the same hash
+    `Timeline.watchedEpisode` reads — NOT the torrent infohash), and `playlist` built from all
+    playable files of the pack (Player.play wires Playlist from data.playlist, player.js:1243 — that's
+    what keeps next-episode inside a season pack working). Three native side effects of the old
+    `Lampa.Torrent.start` path are compensated explicitly: `Favorite.add('history', movie, 100)`
+    (continue-watch card), the timeline above (per-episode watch history), and the playlist. The
+    full-screen `torrent-mod-preload` overlay polls TorrServer's `/cache` for the torrent hash with a
+    **duration-based**, not fixed-size, target —
+    `targetBytes = bitrateMbps(from estimateBitrateMbps) × leadSeconds(25)`, i.e. "enough buffer
     for ~25 seconds of this specific release's own bitrate", not a flat MB/timeout. Starts early
     (`keepsUpWithPlayback`) the moment observed download speed already exceeds ~90% of that bitrate, since
     at that point the buffer can't be outrun even short of the nominal target. Surfaces an explicit
     stall-risk warning in the overlay (not just silently waiting out the timeout) once speed has held
     below half the required bitrate for a few seconds — a stall *during* playback is a worse experience
-    than an honest heads-up before it starts.
+    than an honest heads-up before it starts. (History: the old path listened to Lampa's `torrent_file`
+    events and replayed the file's own `hover:enter` — replaced because the native screen itself was
+    the problem.)
   - **Confirms the title-guessed quality/audio/subtitle badges against the real file once one is picked**,
     via TorrServer's own `/ffp/{hash}/{fileId}` — TorrServer bundles `ffprobe` for its transcoding support
     and exposes it at that path. Found by reading a third-party plugin, **MediaInfo** (`iptvgeek_mediainfo`,

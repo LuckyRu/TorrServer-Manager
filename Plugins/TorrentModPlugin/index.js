@@ -7,7 +7,6 @@
     import { addCardButton } from './ui/card-button.js';
     import { addSettings } from './ui/settings.js';
     import { addStyles } from './ui/styles.js';
-    import { onTorrentFile } from './playback/smart-preload.js';
     import { TorrentModComponent } from './ui/results-screen.js';
 
     function main() {
@@ -19,7 +18,6 @@
         Lampa.Template.add('torrent_mod', '<div></div>');
         Lampa.Component.add('torrent_mod', TorrentModComponent);
         Lampa.Listener.follow('full', addCardButton);
-        Lampa.Listener.follow('torrent_file', onTorrentFile);
         console.log('Torrent Mod ' + VERSION + ': ready');
     }
 
