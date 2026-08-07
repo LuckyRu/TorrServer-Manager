@@ -51,6 +51,16 @@
             statusText: '',           // head status line ("Ищем S03E03…", "Загрузка списка серий…")
             searchText: '',           // toolbar search box text
             lastEpisode: 0,
-            customQuery: null
+            customQuery: null,
+
+            // Side picker panel (right-arrow on an episode row): candidates for one episode, shown
+            // in a slide-in panel instead of the full-screen candidates stage. Plain data only.
+            picker: {
+                open: false,
+                episode: 0,
+                items: [],
+                target: null,
+                status: 'idle'        // 'idle' | 'loading' | 'ready' | 'error'
+            }
         });
     }

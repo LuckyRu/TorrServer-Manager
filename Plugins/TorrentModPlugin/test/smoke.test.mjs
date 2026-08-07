@@ -69,16 +69,14 @@ runner.test('сериал: start → пул → смена сезона → фи
     domain.filters.setVoiceFilter('Дубляж');
     if (domain.store.get().voiceType !== 'Дубляж') throw new Error('фильтр не применился');
 
-    // клик по серии — локальная фильтрация (pickerOnly, чтобы не автоплей)
+    // клик по серии — СРАЗУ воспроизведение (без полноэкранного списка кандидатов)
     domain.episodes.setSeason(2);
     await flushMicrotasks();
-    domain.selection.selectEpisode(7, true);
+    domain.selection.selectEpisode(7);
     await flushMicrotasks();
     const picked = domain.store.get();
-    if (picked.stage !== 'candidates') throw new Error('ожидал экран кандидатов, stage=' + picked.stage);
-    if (!picked.candidates || picked.candidates.items.length !== 2) {
-        throw new Error('ожидал 2 кандидата (сингл S02E07 + пак S1-5E1-62), получил ' + (picked.candidates && picked.candidates.items.length));
-    }
+    if (picked.stage === 'candidates') throw new Error('клик не должен показывать список кандидатов, stage=' + picked.stage);
+    if (picked.lastEpisode !== 7) throw new Error('lastEpisode не обновился');
 
     // ручной запрос — единственный сетевой поиск; сериал остаётся на сериях
     domain.selection.searchWithQuery('Futurama');
@@ -174,21 +172,21 @@ runner.test('ленивая дозагрузка сезона: пустой се
     let state = domain.store.get();
     if (state.pool.length !== 1) throw new Error('ожидал 1 раздачу в пуле по имени, получил ' + state.pool.length);
 
-    // клик серии 7 сезона 2: локально пусто → дозагрузка сезона → мерж → кандидаты
-    domain.selection.selectEpisode(7, true);
+    // клик серии 7 сезона 2: локально пусто → дозагрузка сезона → мерж → сразу воспроизведение
+    domain.selection.selectEpisode(7);
     await flushMicrotasks();
     state = domain.store.get();
-    if (state.stage !== 'candidates') {
-        throw new Error('дозагрузка не привела к кандидатам, stage=' + state.stage +
+    if (state.stage === 'candidates') {
+        throw new Error('дозагрузка не должна приводить к списку кандидатов, stage=' + state.stage +
             ' loads=' + JSON.stringify(state.seasonLoads) +
             ' log=' + JSON.stringify(globalThis.__requestLog.filter((u) => u.includes('torrent-search'))));
     }
     if (state.pool.length !== 2) throw new Error('ожидал мерж: 2 раздачи в пуле, получил ' + state.pool.length);
     if (state.seasonLoads[2] !== 'ready') throw new Error('сезон 2 не помечен ready');
 
-    // повторный клик по той же серии/другой серии сезона — БЕЗ нового запроса
+    // повторный клик по другой серии сезона — БЕЗ нового запроса
     const callsBefore = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
-    domain.selection.selectEpisode(8, true);
+    domain.selection.selectEpisode(8);
     await flushMicrotasks();
     const callsAfter = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
     if (callsAfter !== callsBefore) throw new Error('повторный клик сделал лишний запрос: ' + callsBefore + ' → ' + callsAfter);
@@ -220,14 +218,12 @@ runner.test('дозагрузка: последний клик во время l
     await new Promise((r) => setTimeout(r, 160));
 
     // два клика пока дозагрузка in-flight: выиграть должен ПОСЛЕДНИЙ (серия 8)
-    domain.selection.selectEpisode(7, true);
-    domain.selection.selectEpisode(8, true);
+    domain.selection.selectEpisode(7);
+    domain.selection.selectEpisode(8);
     await new Promise((r) => setTimeout(r, 200));
     let state = domain.store.get();
-    if (state.stage !== 'candidates') throw new Error('после дозагрузки нет кандидатов, stage=' + state.stage);
-    if (!state.candidates || state.candidates.target.episode !== 8) {
-        throw new Error('повторён не последний выбор: target.episode=' + (state.candidates && state.candidates.target.episode));
-    }
+    if (state.stage === 'candidates') throw new Error('после дозагрузки не должно быть списка кандидатов, stage=' + state.stage);
+    if (state.lastEpisode !== 8) throw new Error('повторён не последний выбор: lastEpisode=' + state.lastEpisode);
 });
 
 runner.test('дозагрузка: смена сезона до ответа не выбирает эпизод в чужом сезоне', async () => {
@@ -262,6 +258,48 @@ runner.test('дозагрузка: смена сезона до ответа н�
     const state = domain.store.get();
     if (state.stage === 'candidates') throw new Error('устаревшая дозагрузка показала кандидатов в чужом сезоне');
     if (state.season !== 3) throw new Error('сезон не сменился');
+});
+
+runner.test('панель: openPicker строит кандидатов, playPickerCandidate сохраняет дефолт сезона', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, runtime: 22 }, { episode_number: 8, runtime: 22 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [
+            jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa'),
+            jackettRaw('Футурама / Futurama S02E07 720p WEBRip', 3, 1, 'bbbb')
+        ],
+        indexers: []
+    });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    domain.selection.openPicker(7);
+    await flushMicrotasks();
+    let state = domain.store.get();
+    if (!state.picker.open) throw new Error('панель не открылась');
+    if (state.picker.items.length !== 2) throw new Error('ожидал 2 кандидата в панели, получил ' + state.picker.items.length);
+
+    const chosen = state.picker.items[1]; // второй — выберем его вручную
+    domain.selection.playPickerCandidate(chosen, state.picker.target);
+    state = domain.store.get();
+    if (state.picker.open) throw new Error('панель не закрылась после выбора');
+
+    const saved = Lampa.Storage.get('torrent_mod_default_torrent');
+    const seasonDefault = saved && saved[tvMovie.id] && saved[tvMovie.id][2];
+    if (!seasonDefault) throw new Error('дефолт сезона не сохранён: ' + JSON.stringify(saved));
+    if (seasonDefault.title !== chosen.title) throw new Error('сохранён не тот кандидат');
+
+    // следующий клик по серии этого сезона использует сохранённый дефолт (его id — из пула)
+    domain.selection.selectEpisode(8);
+    await flushMicrotasks();
+    state = domain.store.get();
+    if (state.stage === 'candidates') throw new Error('клик не должен показывать список');
 });
 
 await runner.run();

@@ -47,6 +47,60 @@
         var status = $('<div class="torrent-mod__status"></div>');
         var episodeRows = {};
 
+        // Side picker panel (right-arrow on an episode row): a slide-in overlay listing torrents
+        // for that episode. Own Scroll + Controller, surface-fixed like the old preload overlay.
+        var picker = $('<div class="torrent-mod-picker"></div>');
+        var pickerScroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
+        var pickerBody = $('<div class="torrent-mod-picker__body"></div>');
+        pickerScroll.append(pickerBody);
+        picker.append(pickerScroll.render());
+        var focusedEpisodeNode = null;
+
+        function openPickerPanel() {
+            var st = domain.store.get().picker || {};
+            pickerBody.empty();
+            if (st.status === 'loading') {
+                pickerBody.append($('<div class="torrent-mod-picker__empty">Ищем раздачи…</div>'));
+            } else if (!st.items || !st.items.length) {
+                pickerBody.append($('<div class="torrent-mod-picker__empty">Раздач не найдено</div>'));
+            } else {
+                var target = st.target;
+                st.items.forEach(function (item) {
+                    var node = row(item.title, candidateSubtitleText(item), pickerScroll);
+                    node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
+                    node.on('hover:enter', function () { domain.selection.playPickerCandidate(item, target); });
+                    pickerBody.append(node);
+                });
+            }
+            picker.addClass('torrent-mod-picker--open');
+            try {
+                Lampa.Controller.add('torrent_mod_picker', {
+                    toggle: function () {
+                        Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
+                        Lampa.Controller.collectionFocus(false, pickerScroll.render(true));
+                    },
+                    left: closePickerPanel,
+                    back: closePickerPanel,
+                    right: function () { Navigator.move('right'); },
+                    up: function () { Navigator.move('up'); },
+                    down: function () { Navigator.move('down'); }
+                });
+                Lampa.Controller.toggle('torrent_mod_picker');
+            } catch (e) {}
+        }
+
+        function closePickerPanel() {
+            domain.selection.closePicker();
+            picker.removeClass('torrent-mod-picker--open');
+            try { Lampa.Controller.toggle('content'); } catch (e) {}
+            // Restore focus to the episode row the panel was opened from — explicit, both close
+            // paths (left/back and a pick) go through here (the Select.show two-path lesson).
+            if (focusedEpisodeNode && focusedEpisodeNode[0] && focusedEpisodeNode[0].offsetParent) {
+                try { Lampa.Controller.collectionFocus(focusedEpisodeNode[0], scroll.render(true)); } catch (e2) {}
+            }
+            focusedEpisodeNode = null;
+        }
+
         var initialSeason = object.season || 0;
         var initialTitles = baseTitles(movie);
         // Keep a reference to the params object: Lampa.Filter reads `params.search` live when
@@ -179,7 +233,7 @@
         // per item, same shape as the collectionSet/collectionFocus/onBack contract elsewhere in this
         // file). Centralized here in row() so every list in this component (episodes, candidates,
         // messages) gets it automatically instead of needing it wired at each call site.
-        function row(title, subtitle) {
+        function row(title, subtitle, targetScroll) {
             var el = $(
                 '<div class="torrent-mod-row selector">' +
                 '<div class="torrent-mod-row__icon">' +
@@ -192,7 +246,8 @@
                 '<div class="torrent-mod-row__badge"></div>' +
                 '</div>'
             );
-            el.on('hover:focus', function (e) { scroll.update($(e.target), true); });
+            var rowScroll = targetScroll || scroll;
+            el.on('hover:focus', function (e) { rowScroll.update($(e.target), true); });
             return el;
         }
 
@@ -206,6 +261,7 @@
                     'Сезон ' + season + ' / Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
                     [episode.air_date, progressText(view)].filter(Boolean).join(' · ')
                 );
+                node.addClass('torrent-mod-episode').attr('data-episode', number);
                 if (view && Lampa.Timeline && Lampa.Timeline.render) node.append(Lampa.Timeline.render(view));
                 node.on('hover:enter', function () { domain.selection.selectEpisode(number); });
                 grid.append(node);
@@ -291,7 +347,18 @@
                     Lampa.Controller.collectionFocus(false, scroll.render(true));
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },
-                right: function () { Navigator.move('right'); },
+                right: function () {
+                    // Right-arrow on an EPISODE row opens the side picker instead of moving focus
+                    // (scoped to our own grid — a global .focus query could hit a foreign overlay).
+                    var focused = grid.find('.torrent-mod-episode.focus')[0];
+                    if (focused) {
+                        focusedEpisodeNode = $(focused);
+                        var number = parseInt(focusedEpisodeNode.attr('data-episode'), 10);
+                        domain.selection.openPicker(number);
+                        return;
+                    }
+                    Navigator.move('right');
+                },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('explorer'); },
                 down: function () { Navigator.move('down'); },
                 back: function () { Lampa.Controller.toggle('explorer'); }
@@ -383,6 +450,13 @@
             }
             if (state.searchText !== previous.searchText) setSearchText(state.searchText);
             if (state.statusText !== previous.statusText) setStatus(state.statusText);
+            // Side picker panel: open/close on the flag, re-render its list when it fills or errors.
+            if (state.picker.open !== previous.picker.open) {
+                if (state.picker.open) openPickerPanel();
+                else closePickerPanel();
+            } else if (state.picker.open && state.picker.status !== previous.picker.status) {
+                openPickerPanel();
+            }
         }
 
         domain.store.subscribe(render);
@@ -391,11 +465,17 @@
             return explorer.render(js);
         }
 
+        // Panel lives surface-fixed over the app (like the old preload overlay did), independent of
+        // Explorer's own layout.
+        try { $('body').append(picker); } catch (e) {}
+
         return {
             create: function () { return renderComponent(true); },
             render: renderComponent,
             start: function () { explorer.toggle(); registerContentController(); },
             destroy: function () {
+                try { closePickerPanel(); } catch (e) {}
+                try { picker.remove(); } catch (e) {}
                 try { scroll.destroy(); } catch (e) {}
                 try { explorer.destroy(); } catch (e) {}
             }

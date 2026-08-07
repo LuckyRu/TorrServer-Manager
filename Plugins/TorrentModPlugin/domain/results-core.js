@@ -7,7 +7,7 @@
     // are data-layer, not UI-layer, dependencies. See domain/results-domain.js for the composition
     // root that owns mutable state and calls these, and ui/results-screen.js for the Lampa-facing view.
     import { defaultSearchName } from '../search/query-building.js';
-    import { formatSize } from '../shared/utils.js';
+    import { formatSize, compact } from '../shared/utils.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { applyStateFilters, scoreCandidate, bitrateBucket, estimateBitrateForState } from '../search/scoring.js';
 
@@ -220,6 +220,25 @@
             bits.push('Риск: ' + (item.release.compatibilityReason || item.release.videoCodec || item.release.container || 'формат'));
         }
         return bits.join(' · ');
+    }
+
+    // The stable identity of a torrent candidate — same rule search-backend uses for dedup
+    // (magnet infoHash → link → title+size). Shared so the saved season default can be matched
+    // against current pool entries with the exact same notion of "same release".
+    export function candidateIdentity(item) {
+        return compact(item.magnet || item.link || (item.title + '|' + item.size));
+    }
+
+    // Looks a saved season default (as stored by selection-interactor: {id, title, size}) up in the
+    // candidate list for the current episode. Returns the pool item if the release is still there
+    // (and has survived the current voice/quality/bitrate filters + gate, since it came from
+    // candidates), otherwise null → caller falls back to candidates[0].
+    export function findSavedDefault(candidates, savedDefault) {
+        if (!savedDefault || !savedDefault.id || !candidates.length) return null;
+        for (var i = 0; i < candidates.length; i++) {
+            if (candidateIdentity(candidates[i]) === savedDefault.id) return candidates[i];
+        }
+        return null;
     }
 
     export function candidateSubtitleText(item) {

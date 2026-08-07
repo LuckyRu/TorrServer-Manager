@@ -8,8 +8,11 @@
     import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
     import { startDownload } from '../playback/smart-preload.js';
     import { enabled, notify, debugLogCandidates } from '../shared/utils.js';
-    import { searchQueryText, isConfidentMatch } from './results-core.js';
+    import { searchQueryText, isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
     import { selectCandidatesForEpisode } from './results-selectors.js';
+
+    var DEFAULT_KEY = 'torrent_mod_default_torrent';
+    var PER_MOVIE_CACHE_MAX = 200;
 
     export function createSelectionInteractor(options) {
         var store = options.store;
@@ -24,10 +27,28 @@
         // newer pick made during loading (found in review). Reset once replayed.
         var pendingEpisode = null;
 
-        // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Used for
-        // a manual name override on a movie (user re-worded the search, wants to see what's there —
-        // like Online Mod re-fetching its balancer's data for a new query instead of starting
-        // playback). Ordinary episode/movie picks keep auto-play.
+        // Pending click while the whole-work pool is still loading: replay it once ready.
+        var pendingSelection = null;
+        var pendingRetryTimer = null;
+
+        function schedulePendingRetry() {
+            if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
+            pendingRetryTimer = setTimeout(function () {
+                if (isDestroyed()) { pendingSelection = null; return; }
+                var state = store.get();
+                if (pendingSelection && (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
+                    var pending = pendingSelection;
+                    pendingSelection = null;
+                    if (pending.picker) openPicker(pending.episode);
+                    else selectEpisode(pending.episode, pending.pickerOnly);
+                } else if (pendingSelection) {
+                    schedulePendingRetry();
+                }
+            }, 400);
+        }
+
+        // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Only the
+        // movie/customQuery flows still use it; a series click now plays immediately (see below).
         function finishSelection(candidates, target, pickerOnly) {
             var best = candidates[0];
             var next = candidates[1];
@@ -40,6 +61,26 @@
                 stage: 'candidates',
                 candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: hasSeasons && !!state.episodesCache }
             });
+        }
+
+        // Saved per-season default torrent, keyed movie.id → season. Only set by an explicit pick in
+        // the side picker — NOT by an auto-click (the user asked for it to be "remembered").
+        function readSeasonDefault(movie, season) {
+            try {
+                var all = Lampa.Storage.cache(DEFAULT_KEY, PER_MOVIE_CACHE_MAX, {});
+                var byMovie = all && all[movie.id];
+                return (byMovie && byMovie[season]) || null;
+            } catch (e) { return null; }
+        }
+
+        function saveSeasonDefault(movie, season, item) {
+            try {
+                var all = Lampa.Storage.cache(DEFAULT_KEY, PER_MOVIE_CACHE_MAX, {});
+                all = all || {};
+                all[movie.id] = all[movie.id] || {};
+                all[movie.id][season] = { id: candidateIdentity(item), title: item.title, size: item.size, savedAt: Date.now() };
+                Lampa.Storage.set(DEFAULT_KEY, all);
+            } catch (e) {}
         }
 
         function selectEpisode(episode, pickerOnly) {
@@ -57,36 +98,36 @@
                 searchText: state.customQuery || searchQueryText(target)
             });
 
-            // Explicit manual query — the ONLY network search left: the whole-work pool is filtered
-            // locally below, but a user-typed name override can't be answered from it, so it gets
-            // its own fresh Jackett round trip (and only then is filtered/gated as usual).
+            // Explicit manual query — the ONLY network search left.
             if (state.customQuery) { freshSearch(target, pickerOnly); return; }
 
-            // Normal pick: filter the already-loaded whole-work pool locally (gate + score), zero
-            // network. The pool is loaded once for the whole work at screen start (see
-            // episodes-interactor.js loadAllTorrents) — season packs like "S1-5E1-62 of 62" match
-            // every season they cover, single episodes match exactly one.
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                notify('Раздачи ещё загружаются…');
-                return;
-            }
-            var candidates = selectCandidatesForEpisode(object, state, episode);
-            if (candidates.length) { finishSelection(candidates, target, pickerOnly); return; }
+            // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
             if (!hasSeasons) {
-                // Movie: no episode list to fall back to — an empty pool would leave the grid
-                // blank (stage was 'episodes' with no content). Say so on screen instead of just
-                // a toast (found in review).
+                if (state.poolStatus === 'loading' || state.poolStatus === 'idle') { notify('Раздачи ещё загружаются…'); return; }
+                var movieCandidates = selectCandidatesForEpisode(object, state, 0);
+                if (movieCandidates.length) { finishSelection(movieCandidates, target, pickerOnly); return; }
                 store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
                 return;
             }
-            // Series, zero candidates for this episode: the whole-work pool may simply have missed
-            // this season's releases (Jackett's per-query limit, no pagination). Lazily fetch the
-            // season once (merged into the pool, never re-fetched until requery), then retry the
-            // local pick — see episodes-interactor.ensureSeasonLoaded.
+
+            // Series click = PLAY NOW: the saved season default if it's still a valid candidate,
+            // otherwise the top-ranked one. No full-screen candidate list anymore.
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                pendingSelection = { season: state.season, episode: episode, pickerOnly: pickerOnly };
+                notify('Раздачи ещё загружаются…');
+                schedulePendingRetry();
+                return;
+            }
+            var candidates = selectCandidatesForEpisode(object, state, episode);
+            if (candidates.length) {
+                var saved = readSeasonDefault(object.movie, state.season);
+                var chosen = findSavedDefault(candidates, saved) || candidates[0];
+                startDownload(chosen, target);
+                return;
+            }
+            // Zero candidates → lazy season fetch → retry the click.
             var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
             if (loadStatus === 'loading') {
-                // Remember the LATEST pick, not the one that started the fetch: when the response
-                // lands we replay the last one the user actually wanted (found in review).
                 pendingEpisode = { season: state.season, episode: episode, pickerOnly: pickerOnly };
                 notify('Ищем раздачи для сезона…');
                 return;
@@ -97,17 +138,75 @@
                     var current = store.get();
                     var pending = pendingEpisode;
                     pendingEpisode = null;
-                    // Only act if the season the fetch was made for is still on screen — a stale
-                    // response must not pick an episode in a different season (found in review).
                     if (current.season !== state.season) return;
-                    // Replay the LAST pick made while loading (a newer one supersedes the click that
-                    // started the fetch); if none was made, replay the original one.
                     var pick = pending || { episode: episode, pickerOnly: pickerOnly };
                     selectEpisode(pick.episode, pick.pickerOnly);
                 });
             } else {
                 notify('Раздач не нашлось');
             }
+        }
+
+        // Side picker panel: right-arrow on an episode row shows the candidate list for THAT episode
+        // in a slide-in panel. Builds candidates (same local pipeline as the click) into state.picker.
+        function openPicker(episode) {
+            var state = store.get();
+            var target = {
+                movie: object.movie,
+                season: state.season,
+                episode: episode,
+                seasonEpisodeCount: state.seasonEpisodeCount,
+                avgRuntimeMinutes: state.avgRuntimeMinutes
+            };
+            store.patch({ picker: { open: true, episode: episode, items: [], target: target, status: 'loading' } });
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                // Pool not ready yet — replay the picker once it is.
+                pendingSelection = { season: state.season, episode: episode, picker: true };
+                schedulePendingRetry();
+                return;
+            }
+            fillPicker(episode);
+        }
+
+        function fillPicker(episode) {
+            var state = store.get();
+            var candidates = selectCandidatesForEpisode(object, state, episode);
+            if (candidates.length) {
+                store.patch({ picker: { open: true, episode: episode, items: candidates, target: buildPickerTarget(episode), status: 'ready' } });
+                return;
+            }
+            var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
+            if (loadStatus === 'ready' || loadStatus === 'error') {
+                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error' } });
+                return;
+            }
+            if (ensureSeasonLoaded) {
+                ensureSeasonLoaded(state.season, function () { fillPicker(episode); });
+            } else {
+                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error' } });
+            }
+        }
+
+        function buildPickerTarget(episode) {
+            var state = store.get();
+            return {
+                movie: object.movie,
+                season: state.season,
+                episode: episode,
+                seasonEpisodeCount: state.seasonEpisodeCount,
+                avgRuntimeMinutes: state.avgRuntimeMinutes
+            };
+        }
+
+        function playPickerCandidate(item, target) {
+            saveSeasonDefault(object.movie, target.season, item);
+            store.patch({ picker: { open: false, episode: target.episode, items: [], target: null, status: 'idle' } });
+            startDownload(item, target);
+        }
+
+        function closePicker() {
+            var state = store.get();
+            store.patch({ picker: { open: false, episode: 0, items: [], target: null, status: 'idle' } });
         }
 
         function freshSearch(target, pickerOnly) {
@@ -190,6 +289,9 @@
         return {
             selectEpisode: selectEpisode,
             searchWithQuery: searchWithQuery,
-            playCandidate: playCandidate
+            playCandidate: playCandidate,
+            openPicker: openPicker,
+            closePicker: closePicker,
+            playPickerCandidate: playPickerCandidate
         };
     }
