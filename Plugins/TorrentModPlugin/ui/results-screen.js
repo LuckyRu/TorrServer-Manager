@@ -5,13 +5,23 @@
     // section. create()/render() are effectively required (an absent one throws inside
     // ActivitySlide's try/catch and silently swaps in the built-in nocomponent fallback);
     // start()/pause()/stop()/resize()/destroy()/back() are all optional, called only if present.
+    //
+    // Split three ways: results-core.js (pure state shape + pure formatting/decision functions, no
+    // DOM/Lampa UI awareness), results-viewmodel.js (owns mutable state, orchestrates Core plus the
+    // search/metadata/playback data-layer modules, talks to this file only through a small `view`
+    // port), and this file — everything that actually touches
+    // Lampa.Explorer/Scroll/Filter/Controller/DOM/jQuery, plus the Lampa.Component contract itself.
+    // Lampa has no reactivity of any kind (confirmed against its real source) so the View↔ViewModel
+    // binding below is entirely our own convention, not framework-provided: synchronous UI events
+    // (a Filter pick) pull fresh data right after calling a ViewModel action; ViewModel pushes
+    // through the `view` port only for async completions nobody is synchronously waiting on (a
+    // TMDB/Jackett fetch resolving).
+    import { escapeHtml, cancelSearch } from '../shared/utils.js';
     import { baseTitles } from '../search/query-building.js';
-    import { scoreCandidate, applyStateFilters } from '../search/scoring.js';
-    import { searchTorrentMod } from '../search/search-backend.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
-    import { startDownload } from '../playback/smart-preload.js';
-    import { canonicalTimeline, progressText, episodeCounts, fetchSeason } from '../metadata/tmdb.js';
-    import { enabled, pad, escapeHtml, notify, debugLogCandidates, formatSize, cancelSearch } from '../shared/utils.js';
+    import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
+    import { candidateBadgeText, candidateSubtitleText, searchQueryText, isSeriesWithSeasons } from './results-core.js';
+    import { createResultsViewModel } from './results-viewmodel.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -24,125 +34,23 @@
     // that part needed at all). Toolbar controls use Lampa's own real
     // `.simple-button.simple-button--filter` markup (also confirmed live) instead of custom
     // CSS, so they inherit native styling for free.
-    export function TorrentModComponent(object) {
-        var movie = object.movie || {};
+    function createResultsView(options) {
+        var object = options.object;
+        var movie = options.movie;
+        var hasSeasons = options.hasSeasons;
+        var viewModel = options.viewModel;
+
         var explorer = new Lampa.Explorer(object);
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var grid = $('<div class="torrent-mod__list"></div>');
         var status = $('<div class="torrent-mod__status"></div>');
-        var hasSeasons = !!(movie.number_of_seasons);
-        var state = {
-            season: object.season || 0,
-            voiceType: 'any',
-            resolution: 'any',
-            seasonPool: null,
-            seasonPoolPromise: null,
-            seasonPoolSeason: null
-        };
         var episodeRows = {};
 
-        function searchQueryText(target) {
-            var titles = baseTitles(target.movie);
-            var base = titles[0] || '';
-            if (target.episode) return base + ' S' + pad(target.season) + 'E' + pad(target.episode);
-            if (target.season) return base + ' S' + pad(target.season);
-            return base;
-        }
-
-        // Options come from what's actually in the season pool once it's loaded — no point offering
-        // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
-        // list only while the pool is still loading (or for movies, which never populate one).
-        function poolValues(pluck, order) {
-            var pool = state.seasonPool || [];
-            var present = {};
-            pool.forEach(function (item) { var v = pluck(item); if (v) present[v] = true; });
-            return order ? order.filter(function (v) { return present[v]; }) : Object.keys(present);
-        }
-
-        var QUALITY_LABELS = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
-
-        function currentSeasonLabel() {
-            if (!hasSeasons) return '';
-            var found = buildSeasonItems(movie, state.season).filter(function (item) { return item.season === state.season; })[0];
-            return found ? found.title : ('Сезон ' + state.season);
-        }
-
-        // Two of Lampa.Filter's three built-in chips ('sort'/'filter'), repurposed — confirmed live
-        // this is exactly the native pattern, not a shortcut: Online Mod's own results screen does the
-        // same thing (new Lampa.Filter(object), then filter.set('sort', its balancer list) and
-        // filter.set('filter', its quality list)) rather than appending extra hand-built chips of its
-        // own. 'sort' here is season (not literal sort order — Online Mod repurposes it too, for an
-        // unrelated balancer picker, so the label/semantics aren't locked to the chip's own name).
-        //
-        // The 'filter' panel's shape (reset row first, then one row per dimension showing its current
-        // value as a subtitle, each opening a nested Select on pick) is copied from Online Mod's own
-        // `this.filter()` method, read directly rather than guessed — its `add(type, title)` helper
-        // builds exactly this: `{title, subtitle: currentValue, items: subitems, stype: type}`, plus
-        // a `{title: 'Сбросить фильтр', reset: true}` leaf with no `.items` (so Filter.show() calls
-        // onSelect(type, a) directly, no nested submenu, on pick). Online Mod also repeats its 'sort'
-        // dimension (balancer) inside this same panel for a one-stop view — we do the same with season.
-        function buildFilterItems() {
-            var select = [{ title: 'Сбросить фильтр', reset: true }];
-
-            if (hasSeasons) {
-                select.push({
-                    title: 'Сезон',
-                    subtitle: currentSeasonLabel(),
-                    kind: 'season',
-                    items: buildSeasonItems(movie, state.season)
-                });
-            }
-
-            var voiceFound = poolValues(function (item) { return item.release.voiceType; });
-            var voiceItems = [{ title: 'Любой', value: 'any', selected: state.voiceType === 'any' }].concat(
-                (voiceFound.length ? voiceFound : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал']).map(function (v) {
-                    return { title: v, value: v, selected: state.voiceType === v };
-                })
-            );
-            select.push({
-                title: 'Перевод',
-                subtitle: state.voiceType === 'any' ? 'Любой' : state.voiceType,
-                kind: 'voice',
-                items: voiceItems
-            });
-
-            var order = ['2160p', '1080p', '720p', '480p'];
-            var qualityFound = poolValues(function (item) { return item.release.resolution; }, order);
-            var qualityItems = [{ title: 'Любое', value: 'any', selected: state.resolution === 'any' }].concat(
-                (qualityFound.length ? qualityFound : ['2160p', '1080p', '720p']).map(function (v) {
-                    return { title: QUALITY_LABELS[v] || v, value: v, selected: state.resolution === v };
-                })
-            );
-            select.push({
-                title: 'Качество',
-                subtitle: state.resolution === 'any' ? 'Любое' : (QUALITY_LABELS[state.resolution] || state.resolution),
-                kind: 'quality',
-                items: qualityItems
-            });
-
-            return select;
-        }
-
-        // Season already has its own fast-access chip ('sort'), so the 'filter' chip's own summary
-        // (shown on the collapsed toolbar chip itself, via filter.chosen) only needs voice+quality —
-        // repeating the season label there too would just duplicate what's already visible next to it.
-        function activeFilterLabels() {
-            var labels = [];
-            if (state.voiceType !== 'any') labels.push(state.voiceType);
-            if (state.resolution !== 'any') labels.push(QUALITY_LABELS[state.resolution] || state.resolution);
-            return labels;
-        }
-
-        function syncFilterChips() {
-            if (hasSeasons) filter.chosen('sort', [currentSeasonLabel()]);
-            filter.chosen('filter', activeFilterLabels());
-            filter.set('filter', buildFilterItems());
-        }
-
+        var initialSeason = object.season || 0;
         var initialTitles = baseTitles(movie);
         var filter = new Lampa.Filter({
             movie: movie,
-            search: searchQueryText({ movie: movie, season: state.season }),
+            search: searchQueryText({ movie: movie, season: initialSeason }),
             search_one: initialTitles[0],
             search_two: initialTitles[1]
         });
@@ -171,42 +79,38 @@
 
         filter.onSearch = function (value) {
             if (!value) return;
-            state.customQuery = value;
             toolbar.find('.filter--search > div').text(value).removeClass('hide');
             restoreContentFocus();
-            selectEpisode(state.lastEpisode || 0);
+            viewModel.searchWithQuery(value);
         };
         filter.onSelect = function (type, a, b) {
             if (a && a.reset) {
-                state.voiceType = 'any';
-                state.resolution = 'any';
-                syncFilterChips();
+                viewModel.resetFilters();
+                syncFilterChips(viewModel.getFilterChipData());
                 restoreContentFocus();
-                annotateEpisodeRows();
+                updateEpisodeBadges(viewModel.getEpisodeBadges());
                 return;
             }
             if (type === 'sort') {
                 restoreContentFocus();
-                if (a.season === state.season) return;
-                state.season = a.season;
-                syncFilterChips();
-                loadEpisodes();
+                if (!viewModel.setSeason(a.season)) return;
+                syncFilterChips(viewModel.getFilterChipData());
+                viewModel.loadEpisodes();
                 return;
             }
             if (type !== 'filter' || !b) return;
             if (a.kind === 'season') {
                 restoreContentFocus();
-                if (b.season === state.season) return;
-                state.season = b.season;
-                syncFilterChips();
-                loadEpisodes();
+                if (!viewModel.setSeason(b.season)) return;
+                syncFilterChips(viewModel.getFilterChipData());
+                viewModel.loadEpisodes();
                 return;
             }
-            if (a.kind === 'voice') state.voiceType = b.value;
-            else if (a.kind === 'quality') state.resolution = b.value;
-            syncFilterChips();
+            if (a.kind === 'voice') viewModel.setVoiceFilter(b.value);
+            else if (a.kind === 'quality') viewModel.setResolutionFilter(b.value);
+            syncFilterChips(viewModel.getFilterChipData());
             restoreContentFocus();
-            annotateEpisodeRows();
+            updateEpisodeBadges(viewModel.getEpisodeBadges());
         };
         // Select.show()'s own native close() (confirmed by reading it in app.min.js) never restores
         // the previously-active controller itself — it only hides the overlay and calls whatever
@@ -219,14 +123,14 @@
         filter.onBack = function () { Lampa.Controller.toggle('content'); };
 
         if (hasSeasons) {
-            filter.set('sort', buildSeasonItems(movie, state.season));
+            filter.set('sort', buildSeasonItems(movie, initialSeason));
             // The chip's own label text ("Сортировать") is baked into Filter's template and not
             // renameable via public API — Online Mod does the exact same direct-DOM-text override for
             // its own repurposed 'sort' chip (confirmed live: its rendered label reads "Балансер", not
             // "Сортировать"), so this is the established technique, not a workaround.
             toolbar.find('.filter--sort span').text('Сезон');
         }
-        syncFilterChips();
+        syncFilterChips(viewModel.getFilterChipData());
 
         scroll.append(grid);
         explorer.appendHead(toolbar);
@@ -289,23 +193,22 @@
             return el;
         }
 
-        function renderEpisodes(episodes) {
+        function renderEpisodes(episodes, season) {
             grid.empty();
             episodeRows = {};
             episodes.forEach(function (episode) {
                 var number = parseInt(episode.episode_number, 10);
-                var view = canonicalTimeline(movie, state.season, number);
+                var view = canonicalTimeline(movie, season, number);
                 var node = row(
-                    'Сезон ' + state.season + ' / Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
+                    'Сезон ' + season + ' / Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
                     [episode.air_date, progressText(view)].filter(Boolean).join(' · ')
                 );
                 if (view && Lampa.Timeline && Lampa.Timeline.render) node.append(Lampa.Timeline.render(view));
-                node.on('hover:enter', function () { selectEpisode(number); });
+                node.on('hover:enter', function () { viewModel.selectEpisode(number); });
                 grid.append(node);
                 episodeRows[number] = node;
             });
             refreshGrid();
-            annotateEpisodeRows();
         }
 
         function showMessage(message, retry) {
@@ -392,197 +295,28 @@
             });
         }
 
-        function loadEpisodes() {
-            status.text('Загрузка списка серий…');
-            fetchSeason(movie, state.season).catch(function (error) {
-                console.warn('Torrent Mod: TMDB season fetch failed', error);
-                return [];
-            }).then(function (episodes) {
-                episodes = episodes || [];
-                var runtimes = episodes.map(function (e) { return parseInt(e.runtime, 10) || 0; }).filter(Boolean);
-                state.seasonEpisodeCount = episodes.length || (episodeCounts(movie)[state.season] || 0);
-                state.avgRuntimeMinutes = runtimes.length ? runtimes.reduce(function (a, b) { return a + b; }, 0) / runtimes.length : 0;
-
-                if (!episodes.length) {
-                    var fallbackCount = episodeCounts(movie)[state.season] || 0;
-                    for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
-                }
-                if (!episodes.length) { showMessage('Список серий недоступен', loadEpisodes); return; }
-                status.text('');
-                state.episodesCache = episodes;
-                renderEpisodes(episodes);
-                ensureSeasonPool();
-            });
-        }
-
-        // As soon as we know the season (title + season number + TMDB's own runtime/episode-count
-        // data for a correct per-episode bitrate estimate), there's nothing episode-specific left to
-        // wait for — every episode's own torrent search would use the same season-wide query terms
-        // anyway (see buildQueries: no `episode` on the target means season-pack-style queries only).
-        // So search once, in the background, right when the episode list loads, instead of once per
-        // click: the results enrich the episode list (availability badges) and the Перевод/Фильтры
-        // chips (only offer voice/quality options that actually exist in this season) *before* the
-        // user commits to anything, and let a click resolve instantly instead of waiting out another
-        // Jackett round trip when the pool already covers it (see selectEpisode).
-        function ensureSeasonPool() {
-            if (!hasSeasons) return Promise.resolve([]);
-            if (state.seasonPoolPromise && state.seasonPoolSeason === state.season) return state.seasonPoolPromise;
-            state.seasonPoolSeason = state.season;
-            state.seasonPool = null;
-            var target = {
-                movie: object.movie,
-                season: state.season,
-                episode: 0,
-                seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes
-            };
-            state.seasonPoolPromise = searchTorrentMod(target).then(function (response) {
-                if (state.seasonPoolSeason !== state.season) return []; // season changed mid-flight
-                state.seasonPool = response.failed ? [] : response.results;
-                filter.set('filter', buildFilterItems());
-                annotateEpisodeRows();
-                return state.seasonPool;
-            });
-            return state.seasonPoolPromise;
-        }
-
-        // Same gate + scoring pipeline selectEpisode's own fresh search uses (matchesTranslation,
-        // state.resolution filter, passesMatchGate via scoreCandidate), just run against the
-        // already-fetched season pool instead of a new network call — used both for the instant-click
-        // reuse path and for the episode-row availability badges.
-        function candidatesForEpisode(pool, number) {
-            var target = {
-                movie: object.movie,
-                season: state.season,
-                episode: number,
-                seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes
-            };
-            var filtered = applyStateFilters(pool, state);
-            var scored = filtered.filter(function (item) {
-                item._score = scoreCandidate(item, target);
-                return item._score.passes;
-            });
-            scored.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
-            return scored;
-        }
-
-        function badgeText(matches) {
-            if (!matches.length) return 'раздачи не найдены';
-            var best = matches[0];
-            var bits = [];
-            if (best.release.resolution) bits.push(best.release.resolution);
-            if (best.release.translator || best.release.voiceType) bits.push(best.release.translator || best.release.voiceType);
-            bits.push(best.seeders + ' сид.');
-            if (matches.length > 1) bits.push('+' + (matches.length - 1));
-            return bits.join(' · ');
-        }
-
-        function annotateEpisodeRows() {
-            if (!state.seasonPool) return;
+        function updateEpisodeBadges(badgeMap) {
             Object.keys(episodeRows).forEach(function (key) {
-                var number = parseInt(key, 10);
-                var matches = candidatesForEpisode(state.seasonPool, number);
-                episodeRows[key].find('.torrent-mod-row__badge').text(badgeText(matches));
+                episodeRows[key].find('.torrent-mod-row__badge').text(badgeMap[key] || '');
             });
         }
 
-        // Availability floor on auto-play, checked against the *score* (seeders+peers combined,
-        // log-scaled — see scoreCandidate), not raw seeders: a "confident" title/season/episode
-        // match with an empty swarm would still auto-play without this — which stalls forever
-        // instead of feeling like an online service. Below this we always show the picker so the
-        // user can knowingly pick a thin release instead of getting stuck.
-        var MIN_AVAILABILITY_FOR_AUTOPLAY = 3;
-
-        function finishSelection(candidates, target) {
-            var best = candidates[0];
-            var next = candidates[1];
-            var confident = best._score.availabilityScore >= MIN_AVAILABILITY_FOR_AUTOPLAY &&
-                (!next || best._score.value - next._score.value >= 6 || best.seeders > next.seeders * 2);
-
-            if (confident) startDownload(best, target);
-            else renderCandidateList(candidates.slice(0, 15), target);
+        function syncFilterChips(data) {
+            if (hasSeasons) filter.chosen('sort', [data.seasonLabel]);
+            filter.chosen('filter', data.activeLabels);
+            filter.set('filter', data.filterItems);
         }
 
-        function selectEpisode(episode) {
-            state.lastEpisode = episode;
-            var target = {
-                movie: object.movie,
-                season: state.season,
-                episode: episode,
-                seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery
-            };
-            toolbar.find('.filter--search > div').text(state.customQuery || searchQueryText(target));
-            var hadCustomQuery = !!state.customQuery;
-            state.customQuery = null;
-
-            // The season-wide background search (kicked off when the episode list loaded, see
-            // ensureSeasonPool) already covers exactly this query shape for anything without an
-            // explicit episode tag — reuse it instead of a fresh multi-second Jackett round trip when
-            // it already has a gate-passing match for this episode. Skipped for a custom query (an
-            // explicit override always gets its own fresh search) or when the pool has nothing usable
-            // for this specific episode — a targeted SxxExx query can surface single-episode torrents
-            // the season-level query terms missed, so falling through to a real search here is a
-            // recall safety net, not just a loading-state fallback.
-            var reused = !hadCustomQuery && state.seasonPool ? candidatesForEpisode(state.seasonPool, episode) : [];
-            if (reused.length) { finishSelection(reused, target); return; }
-
-            status.text('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
-            searchTorrentMod(target).then(function (response) {
-                if (response.failed) { notify('Jackett недоступен или не ответил'); status.text(''); return; }
-                var pool = applyStateFilters(response.results, state);
-                if (!pool.length) { notify('Ничего не найдено'); status.text(''); return; }
-
-                // matchScore is a hard gate here, not a ranking input (see scoreCandidate): wrong
-                // title/season/episode candidates are dropped entirely, never just ranked lower.
-                pool.forEach(function (item) { item._score = scoreCandidate(item, target); });
-                if (enabled('torrent_mod_debug', false)) debugLogCandidates(pool, target);
-                var candidates = pool.filter(function (item) { return item._score.passes; });
-                candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
-                status.text('');
-                if (!candidates.length) { notify('Похожих раздач не нашлось'); return; }
-
-                finishSelection(candidates, target);
-            });
+        function refreshFilterOptions(filterItems) {
+            filter.set('filter', filterItems);
         }
 
-        function publishedText(item) {
-            if (!item.publishedAt) return '';
-            var days = Math.floor((Date.now() - item.publishedAt) / 86400000);
-            if (days <= 0) return 'сегодня';
-            if (days === 1) return 'вчера';
-            if (days < 30) return days + ' дн. назад';
-            return new Date(item.publishedAt).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' });
+        function setSearchText(text) {
+            toolbar.find('.filter--search > div').text(text);
         }
 
-        // Quality/source/translator/tracks line — everything parseRelease() can pull out of the raw
-        // title, distinct from the tracker/seeds/size/date line below it. Two lines instead of one
-        // because a torrent row has meaningfully more to say than an episode row.
-        function candidateBadgeText(item) {
-            var bits = [];
-            if (item.release.resolution) bits.push(item.release.resolution);
-            if (item.release.sourceType) bits.push(item.release.sourceType);
-            if (item.release.hdr) bits.push(item.release.hdr);
-            if (item.release.codec) bits.push(item.release.codec);
-            if (item.release.translator) bits.push(item.release.translator);
-            else if (item.release.voiceType) bits.push(item.release.voiceType);
-            if (item.release.audioTracks > 1) bits.push(item.release.audioTracks + ' ауд. дор.');
-            else if (item.release.audioChannels) bits.push(item.release.audioChannels);
-            if (item.release.subtitles) bits.push('субтитры');
-            return bits.join(' · ');
-        }
-
-        function candidateSubtitleText(item) {
-            var bits = [];
-            if (item.tracker) bits.push(item.tracker);
-            bits.push(item.seeders + ' сид. · ' + item.peers + ' пир.');
-            var size = formatSize(item.size);
-            if (size) bits.push(size);
-            var published = publishedText(item);
-            if (published) bits.push(published);
-            return bits.join(' · ');
+        function setStatus(text) {
+            status.text(text);
         }
 
         // Renders torrent candidates as the screen's own primary content instead of a Select overlay —
@@ -590,36 +324,60 @@
         // For series this replaces the episode list temporarily (a "К списку серий" row returns to it,
         // via the already-loaded state.episodesCache — no refetch); for movies it *is* the primary
         // content, there being no episode list to return to.
-        function renderCandidateList(candidates, target) {
+        function renderCandidateList(candidates, target, canReturnToEpisodeList) {
             grid.empty();
             episodeRows = {};
-            if (hasSeasons && state.episodesCache) {
+            if (canReturnToEpisodeList) {
                 var backNode = row('← К списку серий', '');
-                backNode.on('hover:enter', function () { status.text(''); renderEpisodes(state.episodesCache); });
+                backNode.on('hover:enter', function () { viewModel.showEpisodeList(); });
                 grid.append(backNode);
             }
             candidates.forEach(function (item) {
                 var node = row(item.title, candidateSubtitleText(item));
                 node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
-                node.on('hover:enter', function () { startDownload(item, target); });
+                node.on('hover:enter', function () { viewModel.playCandidate(item, target); });
                 grid.append(node);
             });
             refreshGrid();
         }
 
-        function start() {
-            if (!hasSeasons) { status.text(''); selectEpisode(0); return; }
-            loadEpisodes();
+        function render(js) {
+            return explorer.render(js);
         }
 
-        this.create = function () { return this.render(true); };
-        this.render = function (js) { return explorer.render(js); };
-        this.start = function () { explorer.toggle(); registerContentController(); start(); };
+        return {
+            create: function () { return render(true); },
+            render: render,
+            start: function () { explorer.toggle(); registerContentController(); },
+            destroy: function () {
+                try { scroll.destroy(); } catch (e) {}
+                try { explorer.destroy(); } catch (e) {}
+            },
+            renderEpisodes: renderEpisodes,
+            showMessage: showMessage,
+            updateEpisodeBadges: updateEpisodeBadges,
+            syncFilterChips: syncFilterChips,
+            refreshFilterOptions: refreshFilterOptions,
+            setSearchText: setSearchText,
+            setStatus: setStatus,
+            renderCandidateList: renderCandidateList
+        };
+    }
+
+    export function TorrentModComponent(object) {
+        var movie = object.movie || {};
+        var hasSeasons = isSeriesWithSeasons(movie);
+        var view = {};
+        var viewModel = createResultsViewModel({ object: object, movie: movie, hasSeasons: hasSeasons, view: view });
+        Object.assign(view, createResultsView({ object: object, movie: movie, hasSeasons: hasSeasons, viewModel: viewModel }));
+
+        this.create = function () { return view.create(); };
+        this.render = function (js) { return view.render(js); };
+        this.start = function () { view.start(); viewModel.start(); };
         this.pause = function () {};
         this.stop = function () {};
         this.destroy = function () {
             cancelSearch();
-            try { scroll.destroy(); } catch (e) {}
-            try { explorer.destroy(); } catch (e) {}
+            view.destroy();
         };
     }

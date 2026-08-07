@@ -225,6 +225,46 @@
         }, 1000);
     }
 
+    // Some Torznab indexers (confirmed live: NoNaMe Club) don't return a magnet URI at all in their
+    // results, only an HTTP link to download the raw .torrent file — extractInfoHash has nothing to
+    // parse in that case, item.magnet is just ''. This used to mean bailing out of the whole smart-
+    // preload flow entirely ("let native flow run unassisted"), leaving the raw native Files screen
+    // fully exposed with nothing covering it — a real, repeatedly-reported bug, not a hypothetical.
+    // Fix: don't try to parse the hash ourselves (would mean implementing bencode parsing just to
+    // read a .torrent file's info-hash) — ask TorrServer instead. Once Lampa.Torrent.start() below
+    // hands it that Link, TorrServer downloads and parses the .torrent on its own, and the resolved
+    // hash shows up in its own /torrents {action:'list'} shortly after, under a title match (Lampa's
+    // own Torrent.start prefixes whatever title we pass with "[LAMPA] ", confirmed live) — same
+    // /torrents endpoint probeRealTracks already calls, just a different action. Poll briefly for it.
+    function resolveHashByTitle(title, pending) {
+        var base = torrServerBase();
+        if (!base) return;
+        var attempts = 0;
+        var maxAttempts = 8;
+        var timer = setInterval(function () {
+            if (pending.clicked || pending.hash) { clearInterval(timer); return; }
+            attempts++;
+            $.ajax({
+                url: base + '/torrents', method: 'POST',
+                data: JSON.stringify({ action: 'list' }),
+                dataType: 'json', timeout: 3000
+            }).done(function (list) {
+                if (pending.clicked || pending.hash) { clearInterval(timer); return; }
+                var found = (list || [])
+                    .filter(function (t) { return t.title && t.hash && t.title.indexOf(title) >= 0; })
+                    .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); })[0];
+                // pending.hash is read fresh on every /cache poll tick inside showSmartPreload's own
+                // pollTimer (it's a plain property read inside that interval's own callback, not a
+                // value captured at pending's construction time), so just setting it here is enough —
+                // no need to restart or otherwise touch that already-running poll loop.
+                if (found) { pending.hash = found.hash; clearInterval(timer); return; }
+                if (attempts >= maxAttempts) clearInterval(timer);
+            }).fail(function () {
+                if (attempts >= maxAttempts) clearInterval(timer);
+            });
+        }, 700);
+    }
+
     export function startDownload(item, target) {
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
         var hash = extractInfoHash(item.magnet);
@@ -241,8 +281,8 @@
             poster: (target.movie && (target.movie.img || target.movie.poster_path)) || ''
         }, target.movie);
 
-        if (!hash) return; // can't poll /cache without a hash — let native flow run unassisted
-
+        // Shown immediately regardless of whether hash is known yet — covering the native Files
+        // screen right away in both cases, no window where the raw native UI is visibly exposed.
         pendingPlayback = {
             hash: hash,
             item: item,
@@ -258,4 +298,5 @@
             probed: false
         };
         showSmartPreload(pendingPlayback);
+        if (!hash) resolveHashByTitle(item.title, pendingPlayback);
     }

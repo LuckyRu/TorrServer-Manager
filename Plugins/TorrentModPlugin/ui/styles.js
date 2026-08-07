@@ -39,7 +39,13 @@
             '.torrent-mod-row__subtitle{padding-left:3.4em;font-size:.7em;margin-top:.7em}',
             '.torrent-mod-row__badge{padding-left:3.4em;font-size:.7em;margin-top:.3em}',
             '.view--torrent-mod svg{margin-right:.7em}',
-            '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:2em}',
+            // Fully opaque, not translucent — this sits over Lampa's own native torrent-file
+            // screen (Lampa.Torrent.start() opens it as an unavoidable side effect, see
+            // startDownload() in playback/smart-preload.js), and even a small amount of
+            // see-through (this used to be rgba(...,.92)) was enough for that native screen's own
+            // bright rows to visibly bleed through at the edges — confirmed live, reported as
+            // still-visible "мусор" behind our own overlay despite it technically being on top.
+            '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:#080c14;display:flex;align-items:center;justify-content:center;padding:2em}',
             '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',
             '.torrent-mod-preload__title{font-size:1.2em;font-weight:700;margin-bottom:.6em}',
             '.torrent-mod-preload__percent{font-size:2.5em;font-weight:700;margin:.4em 0 .15em}',

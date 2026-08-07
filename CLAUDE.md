@@ -184,9 +184,10 @@ entry-point/build-config layer above all of them.
   confirming these are genuinely separate concerns and not one pipeline), `playback/`
   (`smart-preload.js` alone — a deliberately single-file folder, since it's a named headline feature
   orthogonal to both search and screen rendering, not because every folder needs >1 file), `ui/`
-  (`results-screen.js` + the three Lampa-registration files `card-button.js`/`settings.js`/
-  `styles.js`), and `index.js` at the folder root as the entry point (mirrors `Program.cs` staying at
-  the C# project root). `npm run build:plugin` (esbuild, `package.json`) bundles it into
+  (the three Lampa-registration files `card-button.js`/`settings.js`/`styles.js`, plus the results
+  screen itself split three ways — see below), and `index.js` at the folder root as the entry point
+  (mirrors `Program.cs` staying at the C# project root). `npm run build:plugin` (esbuild,
+  `package.json`) bundles it into
   `Plugins/TorrentModPlugin.bundle.js` — a single classic script, `--format=iife` — which is what
   actually gets embedded as `TorrServerManager.TorrentModPlugin.js`; the bundle is generated and
   gitignored, never edited directly. `TorrServerManager.csproj`'s `BuildTorrentModPluginBundle`
@@ -482,6 +483,32 @@ entry-point/build-config layer above all of them.
     shown elsewhere. Deliberately skips MediaInfo's own public-service fallback — a third-party dependency
     outside this project's infrastructure, inconsistent with keeping everything (Jackett, TorrServer)
     local/loopback-only.
+  - **Two real, repeatedly-reported bugs in the smart-preload overlay, both found live while
+    re-verifying an unrelated View/ViewModel/Core split of `results-screen.js` (see below) — neither
+    was caused by that split, `smart-preload.js` itself was untouched by it (confirmed via `git diff`
+    before investigating).** (1) Some Torznab indexers (confirmed live: NoNaMe Club) don't return a
+    magnet URI at all, only an HTTP link to download the raw `.torrent` file — `item.magnet` is `''`,
+    so `extractInfoHash()` has nothing to parse and `hash` comes back empty. The old code treated this
+    as "can't poll `/cache` without a hash — let native flow run unassisted" and bailed out of the
+    whole smart-preload flow entirely, leaving `Lampa.Torrent.start()`'s own native torrent-file
+    screen (an unavoidable side effect of that call) fully exposed with nothing covering it — this is
+    the actual bug behind repeated user reports of "Lampa's ugly native torrent interface" appearing.
+    Fixed without implementing bencode parsing ourselves: `Lampa.Torrent.start()` still downloads and
+    parses the `.torrent` on TorrServer's own side, and the resolved hash shows up shortly after in
+    `POST /torrents {action:'list'}` under a title match — confirmed live, `Lampa.Torrent.start` itself
+    prefixes whatever title we pass with `"[LAMPA] "` before TorrServer sees it, so a substring match
+    against the plain title survives that prefix without needing to know its exact format.
+    `resolveHashByTitle()` polls that same `list` action (already used elsewhere by `probeRealTracks`,
+    just a different action) every 700ms up to 8 times, filtering by title+hash-present and picking the
+    most recent match by `timestamp` (in case of duplicate historical entries), and mutates
+    `pending.hash` in place once found — no need to restart the already-running `/cache` poll loop
+    inside `showSmartPreload`, since it reads `pending.hash` fresh on every tick already. (2) Even once
+    the overlay does show, its background was `rgba(8,12,20,.92)` (92% opaque, not fully) — confirmed
+    live this was enough for the native torrent-file screen's own bright rows to visibly bleed through
+    at the edges, reported directly as "тоже самое говно" (same crap) still showing behind our own
+    overlay despite it technically being on top and z-indexed correctly. Changed to a fully opaque
+    `#080c14` — no CSS-transparency category of bug can recur here regardless of what's rendered
+    underneath, a stronger guarantee than tuning the alpha value closer to 1 would have been.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to
