@@ -29,6 +29,16 @@ export function setupMockLampa() {
         length: 0,
         is: () => false
     });
+    // smart-preload's ffprobe gate uses $.ajax — resolve with an empty payload immediately so the
+    // probe path falls through to playback and no timer is left running.
+    globalThis.$.ajax = (opts) => {
+        const req = {
+            done(fn) { this._done = fn; return this; },
+            fail(fn) { this._fail = fn; return this; }
+        };
+        setTimeout(() => { if (req._done) req._done({}); }, 0);
+        return req;
+    };
 
     const reguestHandlers = [];
     globalThis.__requestLog = [];
@@ -55,7 +65,10 @@ export function setupMockLampa() {
         Torserver: {
             ip: () => 'http://127.0.0.1:8090',
             hash: (object, cb, fail) => cb({ hash: 'mock-torrent-hash' }),
-            files: (hash, cb, fail) => cb({ file_stats: [] }),
+            // Return a playable file so smart-preload's pollFiles settles on its first 2s tick
+            // (an empty file_stats made the interval spin for the full 45×2s and kept the Node
+            // process alive long after the tests finished).
+            files: (hash, cb, fail) => cb({ file_stats: [{ id: 1, path: 'video.mp4', length: 1000000, path_human: 'video.mp4' }] }),
             stream: (path, hash, id) => 'http://127.0.0.1:8090/stream/x?link=' + hash + '&index=' + id,
             parse: (data) => ({ hash: 'mock-timeline-hash' }),
             clearFileName: (files) => files
