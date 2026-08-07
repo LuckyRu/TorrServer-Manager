@@ -40,11 +40,24 @@
     }
 
     function maybeProceed(pending) {
-        if (!pending || pending.clicked || !pending.bestFile) return;
+        if (!pending || pending.clicked) return;
         if (!pending.ready && !pending.timedOut) return;
         pending.clicked = true;
         cleanupSmartPreload(pending);
-        try { pending.bestFile.item.trigger('hover:enter'); } catch (e) {}
+        if (pending.bestFile) {
+            try { pending.bestFile.item.trigger('hover:enter'); } catch (e) {}
+        } else {
+            // Timed out or force-played ("Смотреть сейчас"), but no file ever rendered in the
+            // native list — pickBestFile() never ran at all (a dead/stalled magnet, or a torrent
+            // with genuinely zero usable peers). Found live: the old check order bailed on
+            // `!pending.bestFile` *before* even looking at ready/timedOut, so both escape hatches
+            // silently did nothing in this case — Отмена was the only button that actually worked.
+            // Clean up our overlay regardless and say so explicitly instead of leaving the user
+            // stuck on a permanent "0%" with two dead buttons; the native Files screen is still
+            // there underneath (never destroyed, only visually covered by our overlay), so closing
+            // ours lets them pick a file manually.
+            notify('Не удалось определить файл автоматически — выберите вручную');
+        }
         if (pendingPlayback === pending) pendingPlayback = null;
     }
 
@@ -266,6 +279,22 @@
     }
 
     export function startDownload(item, target) {
+        // Found live during an independent review pass: nothing prevented a second startDownload()
+        // call while an earlier one was still pending (not yet clicked) — an impatient double-pick
+        // during the several-second Jackett search window is enough. The second call used to
+        // unconditionally overwrite the module-level pendingPlayback singleton, orphaning the first
+        // pending's pollTimer/clockTimer (setInterval, 1s each — see showSmartPreload) running
+        // forever: onTorrentFile() only ever looks at the *current* pendingPlayback, so the
+        // first pending's fileItems never populate and its own maybeProceed() gate never opens.
+        // Its overlay div stayed in the DOM too, invisibly stacked behind the second one at the
+        // same z-index. Treat starting a new download as implicitly cancelling whichever one was
+        // still pending, same as pressing Отмена would have — tears its timers/overlay down before
+        // the new one starts fresh.
+        if (pendingPlayback && !pendingPlayback.clicked) {
+            pendingPlayback.clicked = true;
+            cleanupSmartPreload(pendingPlayback);
+        }
+
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
         var hash = extractInfoHash(item.magnet);
         var bitrateMbps = item.bitrateMbps || 3;

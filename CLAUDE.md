@@ -533,6 +533,74 @@ entry-point/build-config layer above all of them.
     for a movie, closed the screen, reopened fresh for the same `movie.id` — both restored
     automatically with no re-selection, confirmed via `Lampa.Storage.cache(...)`/`.get(...)` reads
     showing the correct persisted values immediately after each pick, not just after reopening.
+  - **Independent architecture + code review pass** (two separate agents — one evaluating module
+    boundaries/state-management/cascading-update risk, one doing a skeptical "what breaks and when"
+    code-level pass, both reading the actual source rather than a summary) turned up several real,
+    fixed issues plus a calibrated set of things explicitly *not* worth doing for a codebase this
+    size (~1,600 lines, no test suite, no linter, no TypeScript — see the project's own stated
+    conventions). Fixed:
+    - **`loadEpisodes()` and `selectEpisode()`'s fresh-search branch had no staleness guard**, unlike
+      `ensureSeasonPool()` two functions away in the same file, which already checked
+      `state.seasonPoolSeason !== state.season` before trusting its own async response. Switching
+      season twice quickly (trivial via the toolbar chip) could resolve two TMDB/Jackett requests
+      out of order over real HTTP (no FIFO guarantee) and silently mislabel one season's episodes
+      as another, or paint a stale search result over a newer one — wrong content, not a crash,
+      worse than a visible error. Both functions now capture the season/episode they were called
+      for and re-check it against current state before acting on their own response, mirroring
+      `ensureSeasonPool`'s existing pattern exactly rather than inventing a new one.
+    - **No "has this screen been destroyed" check anywhere** — backing out of Torrent Mod while a
+      search was still in flight let the stale `.then()` fire `notify('Jackett недоступен или не
+      ответил')` after the fact — a false, confusing message, since the request wasn't rejected by
+      Jackett, it was cancelled by `cancelSearch()` on `destroy()`. Added a `destroyed` flag to
+      `results-viewmodel.js`, set by a new `destroy()` on its returned API, checked first thing in
+      every async continuation (`loadEpisodes`, `ensureSeasonPool`, `selectEpisode`'s fresh-search
+      branch) — `TorrentModComponent.destroy()` now calls `viewModel.destroy()` before `view.destroy()`.
+      Verified live: clicked an episode, backed out immediately, watched the console — no spurious
+      toast, no error, once the in-flight search actually resolved seconds later.
+    - **`maybeProceed()` (playback/smart-preload.js) checked `!pending.bestFile` *before* checking
+      `ready`/`timedOut`**, so if TorrServer never rendered any file for the torrent at all (a
+      dead/stalled magnet, or genuinely zero usable peers) — exactly the population most likely for
+      a manually-picked, lower-availability candidate, since auto-play already filters those out —
+      **both** intended escape hatches (the 60s timeout and the "Смотреть сейчас" button) silently
+      did nothing. "Отмена" was the only button that actually worked; the user was otherwise stuck
+      on a permanent "0%" with two dead buttons. Reordered so `ready`/`timedOut` always triggers
+      cleanup regardless of whether a file was found, notifying explicitly ("Не удалось определить
+      файл автоматически — выберите вручную") instead of hanging when it wasn't.
+    - **Nothing prevented a second `startDownload()` call while an earlier one was still pending**
+      — an impatient double-click on an episode row during the several-second Jackett search window
+      is enough. The second call overwrote the module-level `pendingPlayback` singleton outright,
+      orphaning the first pending's `pollTimer`/`clockTimer` (`setInterval`, 1s cadence each)
+      running forever: `onTorrentFile()` only ever looks at the *current* `pendingPlayback`, so the
+      first pending's `fileItems` never populate and its own `maybeProceed()` gate never opens — a
+      real, permanent-for-the-session leak (two `setInterval`s plus a hidden, still-`$('body')`-attached
+      overlay div stacked behind the second one at the same z-index). `startDownload()` now tears
+      down any still-pending (`!clicked`) `pendingPlayback` first, same effect as pressing "Отмена"
+      on it, before starting the new one.
+    - **`mapTorrent()` (search/search-backend.js) had no null-entry guard** — a single malformed
+      `raw` entry (`null`/`undefined`) in a merged Jackett response threw inside `allResults.map()`,
+      and since nothing wraps that specific call, the exception propagated to `searchTorrentMod`'s
+      *outer* `.catch()` — discarding **every** query's results, not just the one bad entry, and
+      reporting the same generic "Jackett недоступен" even when most or all of the data was fine.
+      Fixed with a one-line `if (!raw) return null;`, matching the existing null-return convention
+      the function already uses for entries with no usable magnet/link.
+    - **`scoreCandidate()` mutates its `item` argument** (`item.bitrateMbps = bitrateMbps`) — `item`
+      is a long-lived, shared `state.seasonPool` entry, called once per episode per candidate
+      (`results-viewmodel.js`'s `getEpisodeBadges`/`candidatesFor`), so `item.bitrateMbps` only ever
+      reflects whichever episode this function was *last* called with for that item. Confirmed
+      dormant — nothing reads it back off the pool today, only the freshly-returned score object's
+      own `.bitrateMbps` is used — documented in place rather than refactored away, since fixing it
+      properly means changing scoring to return a score object instead of mutating the candidate,
+      a larger change than the actual current risk (zero, today) justifies.
+    - **Explicitly not done, and why**: a full type system (TypeScript or `// @ts-check` + `tsc`),
+      a committed/CI-gated test suite, a runtime schema-validation library (zod/ajv-style) at module
+      boundaries, and blanket `Object.freeze()` on data crossing a module boundary. All would need
+      either a new build-tooling dependency this project hasn't needed before (Node + esbuild exist
+      *only* because ES modules need bundling for an IIFE target, not as a general precedent) or
+      conflict with the working mutate-in-place scoring pattern above without a larger refactor
+      first. `search/scoring.js`/`search/release-parsing.js`'s pure functions are already
+      hand-verified with a throwaway Node harness exactly when the gating math is touched (see this
+      file's own earlier note on that) — the right level of investment for ~1,600 lines with one
+      deliberate author and no stated ambition to grow this into a general-purpose framework.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

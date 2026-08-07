@@ -378,6 +378,7 @@
         this.stop = function () {};
         this.destroy = function () {
             cancelSearch();
+            viewModel.destroy();
             view.destroy();
         };
     }

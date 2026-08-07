@@ -63,6 +63,15 @@
     // alone can be idle. Auto-play additionally requires availabilityScore above a floor (see
     // MIN_AVAILABILITY_FOR_AUTOPLAY below) — a perfect title/season/episode match with an empty swarm
     // must never auto-play, that's a hang, not "feels like an online service".
+    //
+    // Mutates `item` (writes item.bitrateMbps) — flagged during an independent review pass as a
+    // latent risk: `item` is a shared pool entry (state.seasonPool), and this function gets called
+    // once per episode per candidate (see results-viewmodel.js's candidatesFor/getEpisodeBadges),
+    // so item.bitrateMbps only ever reflects whatever episode's target this function was *last*
+    // called with for that item, not necessarily the one currently on screen. Nothing reads
+    // item.bitrateMbps back off the pool today (only the freshly-returned score object's own
+    // .bitrateMbps is used), so this is dormant, not an active bug — but don't start trusting
+    // item.bitrateMbps as "this candidate's bitrate" without re-deriving it fresh first.
     export function scoreCandidate(item, target) {
         var release = item.release;
         var passes = passesMatchGate(item, target);

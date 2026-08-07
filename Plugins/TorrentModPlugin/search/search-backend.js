@@ -8,6 +8,15 @@
     import { compact, unique, request } from '../shared/utils.js';
 
     function mapTorrent(raw) {
+        // A single malformed entry (raw is null/undefined) used to throw here, and since this runs
+        // inside allResults.map() with no per-item try/catch, that exception propagated all the way
+        // out to searchTorrentMod's own outer .catch() — silently discarding *every* query's
+        // results, not just the one bad entry, and reporting the generic "Jackett недоступен" even
+        // though most or all of the merged data was actually fine. Found during an independent
+        // review pass; matches the existing null-return convention two lines below (no magnet and
+        // no link → null, filtered out downstream by .filter(Boolean)) rather than introducing a
+        // new failure mode.
+        if (!raw) return null;
         var magnet = raw.MagnetUri || raw.Magnet || '';
         var link = raw.Link || raw.downloadUrl || '';
         if (!magnet && /^magnet:/i.test(link)) magnet = link;

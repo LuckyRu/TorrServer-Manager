@@ -48,7 +48,23 @@
         var hasSeasons = options.hasSeasons;
         var view = options.view;
         var state = createInitialState(object);
+        var destroyed = false;
         applyPersistedPreferences();
+
+        // Found live during an independent architecture/code review pass: loadEpisodes() and
+        // selectEpisode()'s fresh-search branch had no staleness guard at all — unlike
+        // ensureSeasonPool() below, which already checked `state.seasonPoolSeason !== state.season`
+        // before trusting its own async response. Two season switches in quick succession (trivial
+        // via the toolbar chip) could resolve out of order over real HTTP, silently mislabeling one
+        // season's episodes as another with no error; backing out of the screen mid-search left a
+        // stale .then() free to fire notify()/view.* calls against an already-torn-down screen (a
+        // spurious "Jackett недоступен" toast on exit that had nothing to do with Jackett — the
+        // request was just cancelled by cancelSearch() on destroy). destroyed() below is checked in
+        // every async continuation for exactly the second case; the season/episode identity checks
+        // next to each call site handle the first.
+        function destroy() {
+            destroyed = true;
+        }
 
         // Unconditional override, same as Online Mod's own `if (last_bls[movie.id]) balanser =
         // last_bls[movie.id]` — the per-movie memory always wins over both the just-computed
@@ -144,18 +160,23 @@
         }
 
         function loadEpisodes() {
+            var requestedSeason = state.season;
             view.setStatus('Загрузка списка серий…');
-            fetchSeason(movie, state.season).catch(function (error) {
+            fetchSeason(movie, requestedSeason).catch(function (error) {
                 console.warn('Torrent Mod: TMDB season fetch failed', error);
                 return [];
             }).then(function (episodes) {
+                // Same shape as ensureSeasonPool's own guard: the user can switch season again
+                // before this resolves (real HTTP round trip, no ordering guarantee), and a second,
+                // newer loadEpisodes() call already owns state.season by the time this fires.
+                if (destroyed || state.season !== requestedSeason) return;
                 episodes = episodes || [];
                 var runtimes = episodes.map(function (e) { return parseInt(e.runtime, 10) || 0; }).filter(Boolean);
-                state.seasonEpisodeCount = episodes.length || (episodeCounts(movie)[state.season] || 0);
+                state.seasonEpisodeCount = episodes.length || (episodeCounts(movie)[requestedSeason] || 0);
                 state.avgRuntimeMinutes = runtimes.length ? runtimes.reduce(function (a, b) { return a + b; }, 0) / runtimes.length : 0;
 
                 if (!episodes.length) {
-                    var fallbackCount = episodeCounts(movie)[state.season] || 0;
+                    var fallbackCount = episodeCounts(movie)[requestedSeason] || 0;
                     for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
                 }
                 if (!episodes.length) { view.showMessage('Список серий недоступен', loadEpisodes); return; }
@@ -192,7 +213,7 @@
                 avgRuntimeMinutes: state.avgRuntimeMinutes
             };
             state.seasonPoolPromise = searchTorrentMod(target).then(function (response) {
-                if (state.seasonPoolSeason !== state.season) return []; // season changed mid-flight
+                if (destroyed || state.seasonPoolSeason !== state.season) return []; // season changed mid-flight, or screen closed
                 state.seasonPool = response.failed ? [] : response.results;
                 view.refreshFilterOptions(getFilterItems());
                 view.updateEpisodeBadges(getEpisodeBadges());
@@ -235,6 +256,11 @@
 
             view.setStatus('Ищем' + (episode ? ' S' + pad(state.season) + 'E' + pad(episode) : '') + '…');
             searchTorrentMod(target).then(function (response) {
+                // Screen closed, or a newer selectEpisode()/season switch has since taken over —
+                // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
+                // this exact request being the one cancelSearch() just cancelled on destroy, not by
+                // an actual Jackett problem) over whatever the user is looking at now.
+                if (destroyed || state.season !== target.season || state.lastEpisode !== episode) return;
                 if (response.failed) { notify('Jackett недоступен или не ответил'); view.setStatus(''); return; }
                 var pool = applyStateFilters(response.results, state);
                 if (!pool.length) { notify('Ничего не найдено'); view.setStatus(''); return; }
@@ -300,6 +326,7 @@
 
         return {
             start: start,
+            destroy: destroy,
             loadEpisodes: loadEpisodes,
             selectEpisode: selectEpisode,
             searchWithQuery: searchWithQuery,
