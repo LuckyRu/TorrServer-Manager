@@ -251,6 +251,12 @@ runner.test('fileLoadedBytes: буфер только выбранного фа�
     if (fileLoadedBytes(pieces3, 4194304, 0, 5 * 1048576) !== 4 * 1048576) throw new Error('частичный кусок посчитан неверно');
     const pieces4 = { 0: { Completed: true }, 1: { Completed: true } };
     if (fileLoadedBytes(pieces4, 4194304, 0, 5 * 1048576) !== 5 * 1048576) throw new Error('полный файл с частичным куском посчитан неверно');
+    // файл начинается НЕ с границы куска (start=2MB): заполнен кусок 0 (0-4MB) → только 2MB в файле
+    const pieces5 = { 0: { Completed: true } };
+    if (fileLoadedBytes(pieces5, 4194304, 2 * 1048576, 6 * 1048576) !== 2 * 1048576) throw new Error('пересечение куска с невыровненным стартом неверно');
+    // нулевые/невалидные входные данные — безопасный 0
+    if (fileLoadedBytes(null, 4194304, 0, 10) !== 0) throw new Error('null pieces должен дать 0');
+    if (fileLoadedBytes({}, 0, 0, 10) !== 0) throw new Error('pieceLength 0 должен дать 0');
 });
 
 await runner.run();

@@ -41,16 +41,20 @@
     // [fileStart, fileEnd). Counting the whole torrent's preloaded_bytes was the bug: other files
     // ("левые места") inflated readiness while the needed series had nothing. Continuous-from-start
     // only — playback starts at the beginning of the file, so a completed piece further into the
-    // file (e.g. preloaded tail for seeking) must not count as buffer.
+    // file (e.g. preloaded tail for seeking) must not count as buffer. Each piece contributes only
+    // its INTERSECTION with [fileStart, fileEnd) — a piece straddling the file's start boundary is
+    // not counted whole (found by the architect).
     export function fileLoadedBytes(pieces, pieceLength, fileStart, fileEnd) {
-        if (!pieces || !pieceLength || fileStart == null || !fileEnd) return 0;
+        if (!pieces || !(pieceLength > 0) || fileStart == null || !(fileEnd > fileStart)) return 0;
         var start = Math.floor(fileStart / pieceLength);
         var end = Math.ceil(fileEnd / pieceLength);
         var loaded = 0;
         for (var p = start; p < end; p++) {
             var piece = pieces[p];
             if (!piece || !piece.Completed) break;
-            loaded += Math.min(pieceLength, fileEnd - p * pieceLength);
+            var pieceStart = p * pieceLength;
+            var pieceEnd = pieceStart + pieceLength;
+            loaded += Math.min(pieceEnd, fileEnd) - Math.max(pieceStart, fileStart);
         }
         return loaded;
     }
@@ -111,17 +115,20 @@
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         pending.bestFile = scored[0].f;
-        // Byte range of the picked file inside the torrent: needed to measure ITS buffer via the
-        // /cache piece bitmap, not the whole torrent's (file_stats order is the torrent's order).
+        // Byte range of the picked file inside the torrent — computed over the FULL file_stats
+        // (subtitles, samples, junk included!), matched by file id. Summing only playable files
+        // shifted the range and made readiness wrong (found by the architect).
+        var allFiles = pending.allFiles || [];
         var offset = 0;
-        for (var i = 0; i < pending.files.length; i++) {
-            if (pending.files[i] === pending.bestFile) break;
-            offset += parseInt(pending.files[i].length, 10) || 0;
+        var foundId = String(pending.bestFile.id);
+        for (var j = 0; j < allFiles.length; j++) {
+            if (String(allFiles[j].id) === foundId) break;
+            offset += parseInt(allFiles[j].length, 10) || 0;
         }
         pending.fileStart = offset;
         pending.fileLength = parseInt(pending.bestFile.length, 10) || 0;
         pending.fileEnd = offset + pending.fileLength;
-        if (pending.fileLength) pending.targetBytes = Math.min(pending.targetBytes, pending.fileLength);
+        if (pending.fileLength > 0) pending.targetBytes = Math.min(pending.targetBytes, pending.fileLength);
         initiatePreload(pending);
         probeRealTracks(pending);
         maybeProceed(pending);
@@ -130,20 +137,29 @@
     // The stream URL built by Lampa.Torserver.stream() ends with `&play` (or `&preload` when the
     // torrserver_preload setting is on). The `&preload` variant is the actual "start filling the
     // cache" command for TorrServer — the native screen fired it first, then polled `&stat`
-    // (torrent.js preload(), 258-309). We fire it once when the file is picked; our existing /cache
-    // polling then reports real progress. Deliberately only swaps the play→preload parameter of the
-    // OFFICIAL URL (no invented endpoints).
+    // (torrent.js preload(), 258-309). We fire it on pick and re-fire it (throttled) while the
+    // selected file's buffer stays empty, because TorrServer may download other files in its own
+    // order. Fire-and-forget: the response body is a long-lived stream, so we resolve on headers
+    // (fetch) and never read/abort it (a short $.ajax timeout used to kill the request).
+    // Deliberately only swaps the play→preload parameter of the OFFICIAL URL (no invented endpoints).
     function initiatePreload(pending) {
-        if (!pending || !pending.bestFile || !pending.hash || pending.preloadStarted) return;
+        if (!pending || !pending.bestFile || !pending.hash || pending.clicked) return;
+        var now = Date.now();
+        if (now - (pending.lastPreloadAt || 0) < 8000) return; // throttled
+        if ((pending.preloadAttempts || 0) >= 5) return;
         var base = torrServerBase();
         if (!base) return;
-        pending.preloadStarted = true;
+        pending.lastPreloadAt = now;
+        pending.preloadAttempts = (pending.preloadAttempts || 0) + 1;
         var file = pending.bestFile;
         var url;
         try { url = Lampa.Torserver.stream(file.path, pending.hash, file.id); } catch (e) { return; }
         var preloadUrl = url.replace(/([?&])play$/, '$1preload');
         if (preloadUrl === url && url.indexOf('preload') < 0) preloadUrl = url + '&preload';
-        try { $.ajax({ url: preloadUrl, timeout: 6000 }).done(function () {}).fail(function () {}); } catch (e) {}
+        try {
+            if (window.fetch) fetch(preloadUrl, { cache: 'no-store' }).catch(function () {});
+            else $.ajax({ url: preloadUrl, timeout: 15000 }).done(function () {}).fail(function () {});
+        } catch (e) {}
     }
 
     // Confirms our title-guessed badges (resolution/codec/audio/subs, all regexed out of the
@@ -160,15 +176,15 @@
         var base = torrServerBase();
         if (!base) return;
         pending.probed = true;
-        var wantPath = String((pending.bestFile.path || pending.bestFile.path_human || pending.bestFile.title) || '');
-        if (!wantPath) return;
         $.ajax({
             url: base + '/torrents', method: 'POST',
             data: JSON.stringify({ action: 'get', hash: pending.hash }),
             dataType: 'json', timeout: 4000
         }).done(function (json) {
             var files = (json && json.file_stats) || [];
-            var match = files.filter(function (f) { return f.path && wantPath.indexOf(f.path) >= 0; })[0];
+            // Match by exact file id, not a path substring (substring matching could grab the wrong
+            // file) — found by the architect.
+            var match = files.filter(function (f) { return String(f.id) === String(pending.bestFile.id); })[0];
             if (!match || match.id == null) return;
             $.ajax({ url: base + '/ffp/' + pending.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
                 .done(function (probe) {
@@ -202,6 +218,10 @@
                     }
                     if (realBitrate > 0) {
                         pending.effectiveBitrateMbps = realBitrate;
+                        // Also update the keepUp comparison base — it compares download speed to
+                        // pending.bitrateMbps, which stayed the title-based estimate otherwise
+                        // (found by the architect).
+                        pending.bitrateMbps = realBitrate;
                         var target = (realBitrate * 1000000 / 8) * LEAD_SECONDS;
                         if (pending.fileLength) target = Math.min(target, pending.fileLength);
                         pending.targetBytes = target;
@@ -319,6 +339,10 @@
                     formatSize(loaded) + ' / ' + formatSize(pending.targetBytes) +
                     ' · ' + formatSize(speed) + '/с · сиды ' + seeds + ' · пиры ' + peers
                 );
+                // TorrServer may download other files in its own order — if the picked file's buffer
+                // is still empty, nudge it again (throttled inside initiatePreload) instead of
+                // waiting out the timeout.
+                if (loaded === 0 && pending.hash && pending.bestFile && !pending.clicked) initiatePreload(pending);
                 // Already downloading faster than real-time playback needs — safe to start EARLY.
                 // The user reported the overlay vanishing instantly and the player buffering itself,
                 // so this is no longer a single-tick check: "fast enough" must be BOTH a stable
@@ -387,25 +411,28 @@
         pending.filesTimer = setInterval(function () {
             if (pending.clicked || pending.bestFile) { clearInterval(pending.filesTimer); return; }
             attempts++;
-            try {
-                Lampa.Torserver.files(pending.hash, function (json) {
-                    if (pending.clicked || pending.bestFile) return;
-                    var stats = (json && json.file_stats) || [];
-                    var plays = stats.filter(isPlayableFile);
-                    if (!plays.length) {
-                        if (attempts >= maxAttempts) {
-                            clearInterval(pending.filesTimer);
-                            pending.error = 'Не удалось получить файлы раздачи';
-                            maybeProceed(pending);
+                try {
+                    Lampa.Torserver.files(pending.hash, function (json) {
+                        if (pending.clicked || pending.bestFile) return;
+                        var stats = (json && json.file_stats) || [];
+                        var plays = stats.filter(isPlayableFile);
+                        if (!plays.length) {
+                            if (attempts >= maxAttempts) {
+                                clearInterval(pending.filesTimer);
+                                pending.error = 'Не удалось получить файлы раздачи';
+                                maybeProceed(pending);
+                            }
+                            return;
                         }
-                        return;
-                    }
-                    clearInterval(pending.filesTimer);
-                    try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
-                    pending.files = plays;
-                    pickBestFile(pending);
-                });
-            } catch (e) {}
+                        clearInterval(pending.filesTimer);
+                        // Full file_stats (all files, not just playable) — the byte ranges of the
+                        // picked file are computed over this (see pickBestFile).
+                        pending.allFiles = stats;
+                        try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
+                        pending.files = plays;
+                        pickBestFile(pending);
+                    });
+                } catch (e) {}
             if (attempts >= maxAttempts) clearInterval(pending.filesTimer);
         }, 2000);
     }
@@ -497,11 +524,13 @@
             targetBytes: targetBytes,
             timeoutSeconds: timeoutSeconds,
             files: [],
+            allFiles: [],
             bestFile: null,
             fileStart: null,
             fileLength: 0,
             fileEnd: 0,
-            preloadStarted: false,
+            preloadAttempts: 0,
+            lastPreloadAt: 0,
             keepUpTicks: 0,
             started: Date.now(),
             clicked: false,
