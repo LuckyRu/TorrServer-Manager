@@ -256,7 +256,7 @@ internal sealed class PluginHub : IDisposable
                 var query = context.Request.QueryString["query"]?.Trim() ?? "";
                 if (query.Length is < 2 or > 200)
                     throw new InvalidDataException("Поисковый запрос должен содержать от 2 до 200 символов.");
-                await WriteTorrentSearchAsync(context.Response, query);
+                await WriteTorrentSearchAsync(context.Response, query, context.Request.Url?.GetLeftPart(UriPartial.Authority) ?? "");
                 return;
             }
 
@@ -373,7 +373,7 @@ internal sealed class PluginHub : IDisposable
         });
     }
 
-    private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query)
+    private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query, string requestAuthority)
     {
         string apiKey;
         try
@@ -421,6 +421,24 @@ internal sealed class PluginHub : IDisposable
             var indexersText = root.TryGetProperty("Indexers", out var indexers) && indexers.ValueKind == JsonValueKind.Array
                 ? indexers.GetRawText()
                 : "[]";
+
+            // Jackett fills each result's Link (and anything else HTTP) with its own loopback
+            // download endpoint (http://127.0.0.1:9117/dl/...) — unreachable from LAN devices (a TV
+            // loading the plugin would try to hit 127.0.0.1 on itself and fail). Rewrite those to
+            // our own /jackett reverse-proxy (ProxyToJackettAsync below serves the same Jackett
+            // path), built on the exact host the client used to reach us — so a TV querying over
+            // http://192.168.10.108:8095 gets back http://192.168.10.108:8095/jackett/... links.
+            if (!string.IsNullOrEmpty(requestAuthority))
+            {
+                var proxyBase = requestAuthority.TrimEnd('/') + "/jackett";
+                var port = AppPaths.JackettPort.ToString();
+                resultsText = resultsText
+                    .Replace($"http://127.0.0.1:{port}", proxyBase)
+                    .Replace($"https://127.0.0.1:{port}", proxyBase)
+                    .Replace($"http://localhost:{port}", proxyBase)
+                    .Replace($"https://localhost:{port}", proxyBase);
+            }
+
             await WriteTextAsync(
                 response,
                 $"{{\"results\":{resultsText},\"indexers\":{indexersText}}}",
