@@ -371,12 +371,32 @@
         // browser's native one — confirmed live (`typeof window.Navigator.move === 'function'`).
         // Every other Lampa API in this file goes through the `Lampa.` namespace; this one doesn't
         // because Lampa itself doesn't put it there.
+        //
+        // The Explorer card's poster is a stock `.selector` (templates/explorer/main.js), so
+        // Explorer.toggle() → collectionFocus(false) would land focus on it — the "poster is an
+        // active button" bug. Online Mod avoids it by not using Explorer at all (Files + one content
+        // controller focused on the list); with Explorer we must make the poster non-navigable
+        // explicitly: drop its `.selector` class (so no collection ever includes it) AND remove it
+        // from the active Navigator collection as a belt-and-suspenders (the native torrent screen
+        // does the latter — components/torrents.js). Run on start and on content activation.
+        function removePosterFromNavigation() {
+            try {
+                var card = explorer.render(true);
+                var poster = card.querySelector('.explorer-card__head-img');
+                if (poster) {
+                    poster.classList.remove('selector');
+                    Navigator.remove(poster);
+                }
+            } catch (e) {}
+        }
+
         function registerContentController() {
             Lampa.Controller.add('content', {
                 link: this,
                 toggle: function () {
                     Lampa.Controller.collectionSet(scroll.render(true), toolbar);
                     Lampa.Controller.collectionFocus(false, scroll.render(true));
+                    removePosterFromNavigation();
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },
                 right: function () {
@@ -506,7 +526,11 @@
         return {
             create: function () { return renderComponent(true); },
             render: renderComponent,
-            start: function () { explorer.toggle(); registerContentController(); },
+            start: function () {
+                explorer.toggle();
+                registerContentController();
+                removePosterFromNavigation();
+            },
             destroy: function () {
                 // Tear the panel down WITHOUT touching domain/store (no closePicker → no store.patch
                 // → no render): the screen is going away, render must not fight the removal. Also

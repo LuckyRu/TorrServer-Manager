@@ -275,11 +275,21 @@
         // because ITS caller is a modal; ours is the screen, found by the architect).
         var backController = previousController() || 'content';
 
-        try { Lampa.Player.play(data); } catch (e) { console.warn('Torrent Mod: Player.play failed', e); }
+        var started = false;
+        try { Lampa.Player.play(data); started = true; } catch (e) { console.warn('Torrent Mod: Player.play failed', e); }
+        if (!started) { session.dispose(); return; }
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle(backController); }); } catch (e) {}
         // Warm the NEXT episode's cache while this one plays — the fix for stalls on episode switch.
+        // The session must STAY ALIVE for these listeners to work: disposing here would strip them
+        // immediately and silently kill next-episode preloading (found in review).
         try { startNextEpisodePreload(session); } catch (e) {}
-        session.dispose();
+        // Release the session when the player itself goes away (or on a newer startDownload, which
+        // disposes the current session). This listener is also removed by dispose via nextCleanup.
+        try {
+            var onPlaybackEnd = function () { session.dispose(); };
+            Lampa.Player.listener.follow('destroy', onPlaybackEnd);
+            session.nextCleanup.push(function () { try { Lampa.Player.listener.remove('destroy', onPlaybackEnd); } catch (err) {} });
+        } catch (e) {}
     }
 
     // Pre-load the NEXT file of the pack while the current one is still playing (the actual fix for
