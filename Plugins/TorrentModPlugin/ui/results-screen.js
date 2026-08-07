@@ -59,6 +59,7 @@
         picker.append(pickerScroll.render());
         var focusedEpisodeNumber = null;
         var viewDestroyed = false;
+        var focusedCandidateNode = null;
 
         function openPickerPanel() {
             if (viewDestroyed) return;
@@ -116,15 +117,18 @@
         // DOM/controller cleanup ONLY — never touches domain state. Called from render when
         // picker.open flips to false (which was itself produced by domain.closePicker), so no
         // second store.patch → no recursive render (found by the architect). The cursor is restored
-        // from REACTIVE state (activeEpisode), not a view-closure node: the row under focus when the
-        // picker opened was dispatched into the store, so this survives re-renders and there is
-        // exactly one place the "where was I" truth lives.
+        // from REACTIVE state for series (activeEpisode) and from the candidate row the movie picker
+        // was opened from (movies have no episodeRows — found in review).
         function hidePickerDom() {
             picker.removeClass('torrent-mod-picker--open');
             picker.hide();
             try { Lampa.Controller.toggle('content'); } catch (e) {}
             var activeEpisode = domain.store.get().activeEpisode;
             var node = activeEpisode ? episodeRows[activeEpisode] : null;
+            if (!node && focusedCandidateNode && focusedCandidateNode[0] && focusedCandidateNode[0].offsetParent) {
+                node = focusedCandidateNode;
+            }
+            focusedCandidateNode = null;
             if (node && node[0] && node[0].offsetParent) {
                 try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e2) {}
             }
@@ -441,6 +445,7 @@
                         return;
                     }
                     if (grid.find('.torrent-mod-candidate.focus')[0]) {
+                        focusedCandidateNode = grid.find('.torrent-mod-candidate.focus');
                         domain.selection.openPicker(0);
                         return;
                     }

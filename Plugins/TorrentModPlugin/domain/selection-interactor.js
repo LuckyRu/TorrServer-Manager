@@ -222,7 +222,7 @@
         // the deferred path (panel requested while the pool was still loading).
         function openPicker(episode) {
             var state = store.get();
-            episode = episode || state.activeEpisode || state.lastEpisode || 0;
+            if (episode === undefined) episode = state.activeEpisode || state.lastEpisode || 0;
             var target = {
                 movie: object.movie,
                 season: state.season,
