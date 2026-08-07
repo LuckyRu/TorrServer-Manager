@@ -4,10 +4,10 @@
     // here takes its inputs as plain parameters and returns plain data, so it's the one layer of
     // the results screen that could in principle be exercised without a browser at all. Calling
     // into the already-separated search/metadata modules (scoring, season data) is fine — those
-    // are data-layer, not UI-layer, dependencies. See ui/results-viewmodel.js for the orchestration
-    // that owns mutable state and calls these, and ui/results-screen.js for the Lampa-facing view.
-    import { baseTitles } from '../search/query-building.js';
-    import { pad, formatSize } from '../shared/utils.js';
+    // are data-layer, not UI-layer, dependencies. See domain/results-domain.js for the composition
+    // root that owns mutable state and calls these, and ui/results-screen.js for the Lampa-facing view.
+    import { defaultSearchName } from '../search/query-building.js';
+    import { formatSize } from '../shared/utils.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
 
@@ -15,10 +15,7 @@
         return {
             season: object.season || 0,
             voiceType: 'any',
-            resolution: 'any',
-            seasonPool: null,
-            seasonPoolPromise: null,
-            seasonPoolSeason: null
+            resolution: 'any'
         };
     }
 
@@ -26,19 +23,20 @@
         return !!(movie.number_of_seasons);
     }
 
+    // The search chip text: Lampa's own parse_lang search name — the exact thing the pool is
+    // actually queried with (see query-building.js defaultSearchName). Deliberately NO season/
+    // episode suffix: the whole-work pool is a plain title query, so showing "Футурама S02" in the
+    // chip while searching just "Футурама" was a lie (and with the local pool model, clicking an
+    // episode doesn't change the underlying query either).
     export function searchQueryText(target) {
-        var titles = baseTitles(target.movie);
-        var base = titles[0] || '';
-        if (target.episode) return base + ' S' + pad(target.season) + 'E' + pad(target.episode);
-        if (target.season) return base + ' S' + pad(target.season);
-        return base;
+        return defaultSearchName(target.movie);
     }
 
     // Options come from what's actually in the season pool once it's loaded — no point offering
     // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
     // list only while the pool is still loading (or for movies, which never populate one).
     export function poolValues(state, pluck, order) {
-        var pool = state.seasonPool || [];
+        var pool = state.pool || [];
         var present = {};
         pool.forEach(function (item) { var v = pluck(item); if (v) present[v] = true; });
         return order ? order.filter(function (v) { return present[v]; }) : Object.keys(present);

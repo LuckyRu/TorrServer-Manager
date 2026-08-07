@@ -70,8 +70,8 @@
     // must never auto-play, that's a hang, not "feels like an online service".
     //
     // Mutates `item` (writes item.bitrateMbps) — flagged during an independent review pass as a
-    // latent risk: `item` is a shared pool entry (state.seasonPool), and this function gets called
-    // once per episode per candidate (see results-viewmodel.js's candidatesFor/getEpisodeBadges),
+    // latent risk: `item` is a shared pool entry (state.pool), and this function gets called
+    // once per episode per candidate (see domain/results-selectors.js candidatesForEpisode),
     // so item.bitrateMbps only ever reflects whatever episode's target this function was *last*
     // called with for that item, not necessarily the one currently on screen. Nothing reads
     // item.bitrateMbps back off the pool today (only the freshly-returned score object's own

@@ -37,9 +37,13 @@
         var selection = createSelectionInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery });
         var filters = createFiltersInteractor({ store: store, movie: movie });
 
+        // Film vs series — two genuinely different flows (see docs/system-design/torrent-mod-unified-pool.md,
+        // Этап 2): a series shows the TMDB episode list + whole-work pool behind it; a movie has no
+        // episode list, the candidate list IS the primary content, so we load the pool first and
+        // then run the local pick (auto-play on a confident match, picker otherwise).
         function start() {
             if (hasSeasons) episodes.start();
-            else selection.selectEpisode(0);
+            else episodes.loadAllTorrents(function () { selection.selectEpisode(0); });
         }
 
         function destroy() {

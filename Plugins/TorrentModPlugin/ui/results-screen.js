@@ -49,12 +49,18 @@
 
         var initialSeason = object.season || 0;
         var initialTitles = baseTitles(movie);
-        var filter = new Lampa.Filter({
+        // Keep a reference to the params object: Lampa.Filter reads `params.search` live when
+        // building its search-suggestion list (selectSearch marks the item whose query equals
+        // params.search as selected), so updating this object keeps the "which query is active"
+        // marker in the widget in sync with the real search — otherwise, after a search change,
+        // reopening the search chip still highlighted the old query (confirmed by the user).
+        var filterParams = {
             movie: movie,
             search: searchQueryText({ movie: movie, season: initialSeason }),
             search_one: initialTitles[0],
             search_two: initialTitles[1]
-        });
+        };
+        var filter = new Lampa.Filter(filterParams);
         var toolbar = filter.render();
 
         // onSearch/onSelect aren't optional defaults — Filter.prototype.show() and the SearchInput
@@ -298,7 +304,14 @@
         }
 
         function syncFilterChips(data) {
-            if (hasSeasons) filter.chosen('sort', [data.seasonLabel]);
+            if (hasSeasons) {
+                filter.chosen('sort', [data.seasonLabel]);
+                // Must re-set the season picker items, not just the chip label: Lampa.Filter renders
+                // the active marker off the item objects it holds (Filter.prototype.selected mutates
+                // them in place), so a stale array keeps showing the previously picked season as
+                // active on every reopen of the season chip (confirmed by the user).
+                filter.set('sort', data.seasonItems);
+            }
             filter.chosen('filter', data.activeLabels);
             filter.set('filter', data.filterItems);
         }
@@ -309,6 +322,9 @@
 
         function setSearchText(text) {
             toolbar.find('.filter--search > div').text(text);
+            // Keep Lampa.Filter's own params.search live (see filterParams above): the widget uses
+            // it to mark the active query in its suggestion list and as SearchInput's initial text.
+            if (filterParams) filterParams.search = text;
         }
 
         function setStatus(text) {
@@ -351,7 +367,7 @@
                 else if (state.stage === 'candidates') renderCandidateList(state.candidates.items, state.candidates.target, state.candidates.canReturnToEpisodeList);
                 else if (state.stage === 'message') showMessage(state.message.text, state.message.retry ? domain.episodes.loadEpisodes : null);
             }
-            if (state.seasonPool !== previous.seasonPool || state.episodesCache !== previous.episodesCache) {
+            if (state.pool !== previous.pool || state.episodesCache !== previous.episodesCache) {
                 updateEpisodeBadges(selectEpisodeBadges(object, state));
             }
             // Same distinction the old code's own comment called out: touching filter.chosen() (the
@@ -360,7 +376,7 @@
             // user actually picked changed.
             if (state.voiceType !== previous.voiceType || state.resolution !== previous.resolution || state.season !== previous.season) {
                 syncFilterChips(selectFilterChipData(state, movie, hasSeasons));
-            } else if (state.seasonPool !== previous.seasonPool) {
+            } else if (state.pool !== previous.pool) {
                 refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));
             }
             if (state.searchText !== previous.searchText) setSearchText(state.searchText);

@@ -1,14 +1,15 @@
     // ---------- domain: episodes interactor ----------
     //
-    // loadEpisodes/ensureSeasonPool/setSeason/showEpisodeList grouped together because
-    // ensureSeasonPool is *called from inside* loadEpisodes (a direct call edge, not just "both are
-    // about seasons"), and both share the same season-scoped resource set
-    // (episodesCache/seasonPool/seasonEpisodeCount/avgRuntimeMinutes/seasonGeneration).
+    // loadEpisodes/loadAllTorrents/setSeason/showEpisodeList grouped together: both loaders live
+    // here because they share the same season-scoped resource set
+    // (episodesCache/pool/seasonEpisodeCount/avgRuntimeMinutes/seasonGeneration/poolGeneration).
     //
-    // setSeason() now triggers the reload itself instead of the caller (the View, in the old code)
-    // having to remember to call loadEpisodes() right after — the actual "UI shouldn't orchestrate
-    // async sequencing" requirement made concrete: the View calls one method and reacts to whatever
-    // state results, it doesn't decide what happens next.
+    // The torrent pool is WHOLE-WORK, not season-scoped: loadAllTorrents() searches the title once
+    // (buildQueries with season=0 → plain title + year variants) and gets releases of *all*
+    // seasons back — season packs, single episodes, everything. Everything downstream (row badges,
+    // filters, episode clicks) filters this one pool locally via selectors; changing season is
+    // purely a state.season flip with zero network traffic. See
+    // docs/system-design/torrent-mod-unified-pool.md (Этап 1).
     import { fetchSeason, episodeCounts } from '../metadata/tmdb.js';
     import { searchTorrentMod } from '../search/search-backend.js';
 
@@ -68,39 +69,34 @@
                     statusText: '',
                     episodesStatus: 'ready'
                 });
-                ensureSeasonPool();
             });
         }
 
-        // As soon as we know the season (title + season number + TMDB's own runtime/episode-count
-        // data for a correct per-episode bitrate estimate), there's nothing episode-specific left to
-        // wait for — every episode's own torrent search would use the same season-wide query terms
-        // anyway (see buildQueries: no `episode` on the target means season-pack-style queries only).
-        // So search once, in the background, right when the episode list loads, instead of once per
-        // click: the results enrich the episode list (availability badges) and the Перевод/Фильтры
-        // chips (only offer voice/quality options that actually exist in this season) *before* the
-        // user commits to anything, and let a click resolve instantly instead of waiting out another
-        // Jackett round trip when the pool already covers it (see selection-interactor.js).
-        function ensureSeasonPool() {
+        // The ONE torrent fetch for the whole work. `season: 0` makes buildQueries emit plain title
+        // (+ year) queries — no season/episode suffixes — so the pool spans every season's releases
+        // (season packs like "S1-5E1-62 of 62" now matter: parseSignals handles season ranges, and
+        // the gate/scoring in scoring.js matches such a pack against any of its seasons). Everything
+        // else — badges, filters, clicks — is local filtering over this pool (see selectors and
+        // selection-interactor.js). `onLoaded` fires after the pool lands (used by the movie flow
+        // to kick off the local candidate pick once data is actually there).
+        function loadAllTorrents(onLoaded) {
             var state = store.get();
-            if (!hasSeasons) return;
-            if (state.seasonPoolStatus === 'loading') return; // already in flight for this generation
-            var generation = state.seasonGeneration;
+            if (state.poolStatus === 'loading') return; // already in flight for this generation
+            var generation = state.poolGeneration;
             var target = {
                 movie: object.movie,
-                season: state.season,
+                season: 0,
                 episode: 0,
-                seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes,
                 customQuery: state.customQuery
             };
-            store.patch({ seasonPoolStatus: 'loading' });
+            store.patch({ poolStatus: 'loading' });
             searchTorrentMod(target).then(function (response) {
-                if (isDestroyed() || store.get().seasonGeneration !== generation) return;
+                if (isDestroyed() || store.get().poolGeneration !== generation) return;
                 store.patch({
-                    seasonPool: response.failed ? [] : response.results,
-                    seasonPoolStatus: response.failed ? 'error' : 'ready'
+                    pool: response.failed ? [] : response.results,
+                    poolStatus: response.failed ? 'error' : 'ready'
                 });
+                if (typeof onLoaded === 'function') onLoaded();
             });
         }
 
@@ -108,11 +104,12 @@
             var state = store.get();
             if (season === state.season) return false;
             rememberSeason(movie, season);
+            // Season flip is LOCAL: the pool already holds every season's releases, so nothing is
+            // re-fetched — only the TMDB episode list for the new season, which re-derives badges
+            // from the same pool via selectors.
             store.patch({
                 season: season,
-                seasonGeneration: state.seasonGeneration + 1,
-                seasonPool: null,
-                seasonPoolStatus: 'idle'
+                seasonGeneration: state.seasonGeneration + 1
             });
             loadEpisodes();
             return true;
@@ -123,27 +120,27 @@
             store.patch({ stage: 'episodes', statusText: '' });
         }
 
-        // Re-run the season-wide background search under a new query context (e.g. the user typed a
-        // disambiguating name override in the toolbar search). The episode list itself is TMDB data
-        // and stays put — only the torrent pool (and therefore the row badges) is re-fetched, the
-        // same way Online Mod re-fetches its balancer's data for a re-worded query without leaving
-        // its screen. ensureSeasonPool builds its target from current state, so a fresh call here
-        // already picks up state.customQuery.
-        function requery() {
+        // Re-fetch the whole-work pool under a new query context (the user typed a disambiguating
+        // name override in the toolbar search). The episode list is TMDB data and stays put — only
+        // the pool (and therefore the row badges) is re-fetched, the same way Online Mod re-fetches
+        // its balancer's data for a re-worded query without leaving its screen. `onLoaded` fires
+        // after the fresh pool lands (movie flow: then show the local candidate pick).
+        function requery(onLoaded) {
             var state = store.get();
-            store.patch({ seasonPool: null, seasonPoolStatus: 'idle' });
-            ensureSeasonPool();
+            store.patch({ pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1 });
+            loadAllTorrents(onLoaded);
         }
 
         function start() {
             if (!hasSeasons) return;
             loadEpisodes();
+            loadAllTorrents();
         }
 
         return {
             start: start,
             loadEpisodes: loadEpisodes,
-            ensureSeasonPool: ensureSeasonPool,
+            loadAllTorrents: loadAllTorrents,
             setSeason: setSeason,
             showEpisodeList: showEpisodeList,
             requery: requery

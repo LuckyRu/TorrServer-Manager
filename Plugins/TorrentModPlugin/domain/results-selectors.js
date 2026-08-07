@@ -7,14 +7,21 @@
     // staleness checks were prone to). A pure function over already-stored state can't drift by
     // construction and costs nothing worth avoiding to recompute on each render.
     import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeText } from './results-core.js';
+    import { buildSeasonItems } from '../metadata/season-picker.js';
 
     export function selectBusy(state) {
-        return state.episodesStatus === 'loading' || state.seasonPoolStatus === 'loading' || state.searchStatus === 'loading';
+        return state.episodesStatus === 'loading' || state.poolStatus === 'loading' || state.searchStatus === 'loading';
     }
 
     export function selectFilterChipData(state, movie, hasSeasons) {
         return {
             seasonLabel: currentSeasonLabel(movie, hasSeasons, state),
+            // Season picker items, refreshed on every season change: Lampa.Filter renders the
+            // "selected" marker straight off these objects (it mutates them in place via
+            // Filter.prototype.selected), so the array handed to filter.set('sort', ...) must be
+            // rebuilt with the new season's selected flag — otherwise the chip keeps showing the
+            // previously picked season as active on every reopen.
+            seasonItems: buildSeasonItems(movie, state.season),
             activeLabels: activeFilterLabels(state),
             filterItems: buildFilterItems(movie, hasSeasons, state)
         };
@@ -38,11 +45,11 @@
 
     export function selectCandidatesForEpisode(object, state, number) {
         var target = buildEpisodeTarget(object, state, number);
-        return candidatesForEpisode(state.seasonPool, target, state);
+        return candidatesForEpisode(state.pool, target, state);
     }
 
     export function selectEpisodeBadges(object, state) {
-        if (!state.seasonPool) return {};
+        if (!state.pool) return {};
         var map = {};
         (state.episodesCache || []).forEach(function (episode) {
             var number = parseInt(episode.episode_number, 10);
