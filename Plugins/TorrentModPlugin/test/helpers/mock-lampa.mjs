@@ -31,7 +31,8 @@ export function setupMockLampa() {
     });
 
     const reguestHandlers = [];
-    globalThis.__mockReguest = (match, data) => reguestHandlers.push({ match, data });
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest = (match, data, delay) => reguestHandlers.push({ match, data, delay: delay || 0 });
     globalThis.__clearReguest = () => reguestHandlers.splice(0);
 
     globalThis.Lampa = {
@@ -52,9 +53,11 @@ export function setupMockLampa() {
         Reguest: function () {
             this.timeout = () => this;
             this.native = (url, cb, err) => {
+                globalThis.__requestLog.push(url);
                 const handler = reguestHandlers.find((h) => h.match(url));
                 const data = handler ? handler.data : null;
-                setTimeout(() => { if (data) cb(data); else if (err) err(); }, 0);
+                const delay = handler ? handler.delay : 0;
+                setTimeout(() => { if (data) cb(data); else if (err) err(); }, delay);
             };
         },
         Activity: { push: () => {}, backward: () => {}, back: () => {}, all: () => [], call: () => {} },

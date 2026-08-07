@@ -79,9 +79,15 @@
         // else — badges, filters, clicks — is local filtering over this pool (see selectors and
         // selection-interactor.js). `onLoaded` fires after the pool lands (used by the movie flow
         // to kick off the local candidate pick once data is actually there).
+        var pendingOnLoaded = null;
         function loadAllTorrents(onLoaded) {
             var state = store.get();
-            if (state.poolStatus === 'loading') return; // already in flight for this generation
+            if (state.poolStatus === 'loading') {
+                // Already in flight: don't lose a caller's callback (e.g. the movie flow's first
+                // selectEpisode(0)) if loadAllTorrents is re-invoked mid-load (found in review).
+                if (typeof onLoaded === 'function') pendingOnLoaded = onLoaded;
+                return;
+            }
             var generation = state.poolGeneration;
             var target = {
                 movie: object.movie,
@@ -97,6 +103,9 @@
                     poolStatus: response.failed ? 'error' : 'ready'
                 });
                 if (typeof onLoaded === 'function') onLoaded();
+                var pending = pendingOnLoaded;
+                pendingOnLoaded = null;
+                if (pending && pending !== onLoaded) pending();
             });
         }
 
@@ -106,10 +115,14 @@
             rememberSeason(movie, season);
             // Season flip is LOCAL: the pool already holds every season's releases, so nothing is
             // re-fetched — only the TMDB episode list for the new season, which re-derives badges
-            // from the same pool via selectors.
+            // from the same pool via selectors. Also bump searchGeneration: an in-flight freshSearch
+            // (only possible with an active customQuery) was made for the OLD season and must be
+            // discarded, not shown on the new season's screen (found in review).
             store.patch({
                 season: season,
-                seasonGeneration: state.seasonGeneration + 1
+                seasonGeneration: state.seasonGeneration + 1,
+                searchGeneration: state.searchGeneration + 1,
+                searchStatus: 'idle'
             });
             loadEpisodes();
             return true;

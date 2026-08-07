@@ -32,7 +32,7 @@
         return defaultSearchName(target.movie);
     }
 
-    // Options come from what's actually in the season pool once it's loaded — no point offering
+    // Options come from what's actually in the whole-work pool once it's loaded — no point offering
     // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
     // list only while the pool is still loading (or for movies, which never populate one).
     export function poolValues(state, pluck, order) {

@@ -71,6 +71,11 @@ try {
     if (rows === 0) throw new Error('экран серий пуст — вероятно nocomponent');
     if (hasStatus === 0) throw new Error('нет статус-строки');
 
+    // клик по серии: с мок-кандидатами с высоким availability это уходит в автоплей (overlay),
+    // с низким — в список кандидатов; главное, что путь hover:enter → selectEpisode не падает
+    await page.locator('.torrent-mod__list .torrent-mod-row').first().dispatchEvent('hover:enter');
+    await page.waitForTimeout(2000);
+
     const relevant = consoleErrors.filter((e) => RELEVANT_ERROR.test(e));
     if (relevant.length) {
         console.error('E2E: ошибки Torrent Mod в консоли:');

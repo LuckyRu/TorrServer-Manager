@@ -28,6 +28,7 @@ function jackettRaw(title, seeders, peers, hash) {
 
 runner.test('сериал: start → пул → смена сезона → фильтр → клик серии → кандидаты', async () => {
     globalThis.__clearReguest();
+    globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [
             { episode_number: 1, name: 'Эпизод 1', runtime: 22 },
@@ -51,13 +52,17 @@ runner.test('сериал: start → пул → смена сезона → фи
     if (!state.pool || state.pool.length !== 2) throw new Error('ожидал 2 раздачи в пуле, получил ' + (state.pool || []).length);
     if (!state.episodesCache || state.episodesCache.length !== 2) throw new Error('серии не загрузились');
 
-    // смена сезона — локально, пул не перезагружается (тот же объект)
+    // смена сезона — локально, пул не перезагружается (тот же объект) и НЕ отправляется новый
+    // torrent-search запрос (только TMDB season)
     const poolBefore = state.pool;
+    const searchCallsBefore = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
     domain.episodes.setSeason(3);
     await flushMicrotasks();
     const afterSeason = domain.store.get();
     if (afterSeason.season !== 3) throw new Error('сезон не сменился');
     if (afterSeason.pool !== poolBefore) throw new Error('пул перезагрузился при смене сезона — должен остаться');
+    const searchCallsAfter = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
+    if (searchCallsAfter !== searchCallsBefore) throw new Error('смена сезона сделала лишний torrent-search запрос');
 
     // фильтр
     domain.filters.setVoiceFilter('Дубляж');
@@ -107,6 +112,33 @@ runner.test('фильм: start → пул → локальный пикер (б�
     await flushMicrotasks();
     const requeried = domain.store.get();
     if (requeried.stage !== 'candidates') throw new Error('после смены названия фильм должен показать кандидатов');
+});
+
+runner.test('гонка: freshSearch при active customQuery отбрасывается сменой сезона до ответа', async () => {
+    globalThis.__clearReguest();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), { episodes: [{ episode_number: 7, runtime: 22 }] });
+    // медленный торрент-поиск: успеет стартовать, но не ответить до смены сезона
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'cccc')],
+        indexers: []
+    }, 80);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((r) => setTimeout(r, 160)); // серии + пул полностью пришли
+
+    domain.selection.searchWithQuery('Futurama'); // customQuery → requery (медленный)
+    await new Promise((r) => setTimeout(r, 10));
+    domain.selection.selectEpisode(7);             // клик серии при активном customQuery → freshSearch (медленный, season 2)
+    await new Promise((r) => setTimeout(r, 10));
+    domain.episodes.setSeason(3);                  // смена сезона должна инвалидировать in-flight freshSearch
+    await new Promise((r) => setTimeout(r, 200));  // все ответы пришли
+
+    const state = domain.store.get();
+    if (state.season !== 3) throw new Error('сезон не сменился');
+    if (state.stage === 'candidates') throw new Error('устаревший freshSearch показал кандидатов на новом сезоне');
+    if (state.searchStatus !== 'idle') throw new Error('searchStatus не сброшен: ' + state.searchStatus);
 });
 
 await runner.run();

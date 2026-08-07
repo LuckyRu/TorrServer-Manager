@@ -14,7 +14,6 @@
     export function createSelectionInteractor(options) {
         var store = options.store;
         var object = options.object;
-        var movie = options.movie;
         var hasSeasons = options.hasSeasons;
         var isDestroyed = options.isDestroyed;
         var requery = options.requery;
@@ -67,7 +66,14 @@
             }
             var candidates = selectCandidatesForEpisode(object, state, episode);
             if (candidates.length) { finishSelection(candidates, target, pickerOnly); return; }
-            notify('Раздач не нашлось');
+            if (hasSeasons) {
+                notify('Раздач не нашлось');
+            } else {
+                // Movie: no episode list to fall back to — an empty pool would leave the grid
+                // blank (stage was 'episodes' with no content). Say so on screen instead of just
+                // a toast (found in review).
+                store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
+            }
         }
 
         function freshSearch(target, pickerOnly) {
@@ -82,8 +88,15 @@
                 // Screen closed, or a newer selectEpisode()/season switch has since taken over —
                 // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
                 // this exact request being the one cancelSearch() just cancelled on destroy, not by
-                // an actual Jackett problem) over whatever the user is looking at now.
+                // an actual Jackett problem) over whatever the user is looking at now. The generation
+                // check alone is not enough: setSeason() bumps only seasonGeneration (the search's
+                // own generation stays put), so also re-check that the season/query this request was
+                // made for are still the current ones — otherwise a late season-2 search response
+                // could surface candidates for season 2 on a screen now showing season 3 (found in
+                // review).
                 if (isDestroyed() || store.get().searchGeneration !== generation) return;
+                var current = store.get();
+                if (current.season !== target.season || current.customQuery !== target.customQuery) return;
                 if (response.failed) {
                     notify('Jackett недоступен или не ответил');
                     store.patch({ searchStatus: 'idle', statusText: '' });
@@ -117,7 +130,11 @@
         // it is NOT a request to start playback of the top match right now.
         function searchWithQuery(value) {
             if (!value) return;
-            store.patch({ customQuery: value, searchText: value });
+            // Bump searchGeneration: any in-flight freshSearch (e.g. an episode click made while a
+            // customQuery was already active) belongs to the previous query context and must be
+            // discarded, not painted over the new one (found in review).
+            var current = store.get();
+            store.patch({ customQuery: value, searchText: value, searchGeneration: current.searchGeneration + 1, searchStatus: 'idle' });
             if (hasSeasons) {
                 // Stay on the episode list (it's TMDB data, independent of the query) and just
                 // re-fetch the whole-work pool under the new name — the row badges then reflect it.
