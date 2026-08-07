@@ -183,10 +183,11 @@ entry-point/build-config layer above all of them.
   (`tmdb.js`, `season-picker.js` — TMDB season/episode data; zero import edges to/from `search/`,
   confirming these are genuinely separate concerns and not one pipeline), `playback/`
   (`smart-preload.js` alone — a deliberately single-file folder, since it's a named headline feature
-  orthogonal to both search and screen rendering, not because every folder needs >1 file), `ui/`
-  (the three Lampa-registration files `card-button.js`/`settings.js`/`styles.js`, plus the results
-  screen itself split three ways — see below), and `index.js` at the folder root as the entry point
-  (mirrors `Program.cs` staying at the C# project root). `npm run build:plugin` (esbuild,
+  orthogonal to both search and screen rendering, not because every folder needs >1 file), `domain/`
+  (State + Interactors for the results screen — see below), `ui/` (the three Lampa-registration
+  files `card-button.js`/`settings.js`/`styles.js`, plus the results screen's own View — see below),
+  and `index.js` at the folder root as the entry point (mirrors `Program.cs` staying at the C#
+  project root). `npm run build:plugin` (esbuild,
   `package.json`) bundles it into
   `Plugins/TorrentModPlugin.bundle.js` — a single classic script, `--format=iife` — which is what
   actually gets embedded as `TorrServerManager.TorrentModPlugin.js`; the bundle is generated and
@@ -601,6 +602,85 @@ entry-point/build-config layer above all of them.
       hand-verified with a throwaway Node harness exactly when the gating math is touched (see this
       file's own earlier note on that) — the right level of investment for ~1,600 lines with one
       deliberate author and no stated ambition to grow this into a general-purpose framework.
+  - **The results screen's View/ViewModel/Core split above was itself superseded by an explicit
+    request for a real Domain layer** — State + Interactors, with the View subscribing to state
+    changes instead of being pushed to via named callback methods. `Plugins/TorrentModPlugin/domain/`
+    now holds: `store.js` (~25-line generic pub-sub — `get()`/`subscribe(listener)`/`patch(partial)`;
+    `patch` shallow-merges into a *new* top-level object so untouched fields keep their old
+    reference, making `state.x !== previous.x` a valid, cheap dirty-check with no deep-diffing
+    needed; has zero domain knowledge on purpose — no "season" or "staleness" concept lives here),
+    `results-core.js` (unchanged content, just relocated from `ui/` — the request was explicit that
+    "domain logic must live in the domain", and this file was already exactly that, only mis-filed),
+    `results-state.js` (`createInitialResultsState` — plain data only; deliberately drops the old
+    `seasonPoolPromise` field a live Promise has no business being observable state to begin with —
+    replaced by a status enum + generation counter, both plain, comparable, renderable values),
+    `results-selectors.js` (derived data — `selectBusy`, `selectFilterChipData`, `selectEpisodeBadges`
+    etc. — computed fresh on every call, never stored, for the same "can't drift" reason a separately
+    -maintained flag could: a pure function over already-stored fields cannot go out of sync with
+    them by construction), and three interactor modules grouped by actual call/data-dependency edges
+    in the old code, not surface topic similarity — `episodes-interactor.js` (`loadEpisodes`/
+    `ensureSeasonPool`/`setSeason`/`showEpisodeList`: `ensureSeasonPool` was already *called from
+    inside* `loadEpisodes`, a direct call edge, and both share the same season-scoped resource set),
+    `selection-interactor.js` (`selectEpisode`/`searchWithQuery`/`playCandidate`: `searchWithQuery`
+    already delegated to `selectEpisode`, both terminate in the same `finishSelection`), and
+    `filters-interactor.js` (`setVoiceFilter`/`setResolutionFilter`/`resetFilters` — deliberately
+    separate from the async pair above: synchronous, no network call, no staleness/generation concern
+    at all, a genuinely different *shape* of process that grouping with the async ones would have
+    diluted). `results-domain.js` is the composition root (`createResultsDomain`) — one shared
+    `destroyed` flag both async interactors read, not one per interactor.
+    - **Local vs. global waiting states**: three independent status fields
+      (`episodesStatus`/`seasonPoolStatus`/`searchStatus`, each `'idle'|'loading'|'ready'|'error'`)
+      because each drives a genuinely independent piece of UI (grid content vs. badge column vs.
+      head status text) — a single combined enum would have conflated three different things. Global
+      "is anything busy" (`selectBusy`) is a pure derivation over the three, not a fourth
+      separately-maintained field, for the drift reason above.
+    - **Dependency/staleness resolution**: replaced three independent, slightly-inconsistent ad hoc
+      value-comparison guards (`state.season !== requestedSeason`, `state.seasonPoolSeason !==
+      state.season`, `state.season !== target.season || state.lastEpisode !== episode` — added
+      piecemeal during the prior hardening pass) with a monotonic `seasonGeneration`/`searchGeneration`
+      counter, bumped by whichever interactor call starts a fresh async op, captured by that call, and
+      compared against the *store's current* value when the response resolves. This closes a real gap
+      value comparison structurally can't: switch season 2 → 3 → 2 again quickly, and the *first*
+      season-2 request's late response would pass a naive `season !== requestedSeason` check (season
+      really is 2 again) even though a second, newer season-2 fetch is also in flight and should win —
+      a narrow edge case (needs two same-value switches within one network round trip) but a real bug
+      class value comparison alone doesn't rule out. Deliberately **not** pushed down into `store.js`
+      itself (e.g. a generic `patchIfCurrent(key, expected, partial)` on the Store) — staleness policy
+      is domain-specific (which counter guards which field), and baking it into the generic pub-sub
+      would conflate a reusable primitive with policy that has exactly two call sites; the dedup
+      lives in the domain layer that actually understands it instead.
+    - **The View's render loop**: exactly one `store.subscribe(render)` in `results-screen.js`,
+      diffing the new state against the previous by reference-equality per field group and calling
+      whichever existing DOM-update function that group implies (`renderEpisodes`, `showMessage`,
+      `updateEpisodeBadges`, `syncFilterChips`/`refreshFilterOptions`, `setSearchText`, `setStatus`,
+      `renderCandidateList` — all unchanged bodies from the prior ViewModel-callback version, only
+      *what triggers them* changed). No per-topic/per-slice subscriptions — this is a remote-control
+      TV UI where every state transition is already a discrete, deliberate action (a D-pad press, a
+      network response resolving) at most a few times a minute, not continuous high-frequency input;
+      building a second layer of topic-registration machinery to solve a performance problem that
+      doesn't exist here would be pure ceremony. The very first paint (before the subscription has
+      seen any *change* to diff against) is still done with one explicit direct call at View
+      construction time, same as the old callback-port version did — a subscription only reacts to
+      transitions, it has nothing to compare against for the state that was already there before
+      anyone subscribed.
+    - **`playback/smart-preload.js` deliberately stays outside the Store/Domain pattern**, called
+      into as a plain cross-module function (`startDownload(item, target)`) from
+      `selection-interactor.js`, same shape as before. Its overlay is appended directly to
+      `$('body')` and its own `Lampa.Controller.add('torrent_mod_preload', ...)` entry — entirely
+      outside the `Lampa.Explorer`/`Scroll`/`Filter`/`content`-controller tree the results View owns,
+      and its lifetime is deliberately *decoupled* from the results screen's own (`startDownload`
+      pushes into `Lampa.Torrent.start` and keeps its own timers polling after the results Activity
+      is gone, by design). Folding it into this domain would mean the Store carrying state nothing in
+      the results View's own render loop ever reads, or special-casing `domain.destroy()` to *not*
+      cancel it — worse on both counts than a plain function call across the boundary.
+    - Verified live end to end after the rewrite: initial paint (persisted season/voice/quality
+      correctly restored on first render, before any subscription had fired), a season switch via
+      the toolbar chip (chip label + episode list + badges all updated through the same
+      `setSeason → loadEpisodes → ensureSeasonPool` chain, now entirely via `store.patch`/subscribe
+      instead of explicit `view.*` calls), the Фильтр panel's Сбросить/Перевод/Качество entries, an
+      episode pick resolving to the candidate list, and "К списку серий" back navigation — no new
+      console errors beyond the same pre-existing, unrelated noise (`modification.js`, third-party
+      cub.rip 500s) seen throughout every prior verification pass this session.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

@@ -6,22 +6,23 @@
     // ActivitySlide's try/catch and silently swaps in the built-in nocomponent fallback);
     // start()/pause()/stop()/resize()/destroy()/back() are all optional, called only if present.
     //
-    // Split three ways: results-core.js (pure state shape + pure formatting/decision functions, no
-    // DOM/Lampa UI awareness), results-viewmodel.js (owns mutable state, orchestrates Core plus the
-    // search/metadata/playback data-layer modules, talks to this file only through a small `view`
-    // port), and this file — everything that actually touches
-    // Lampa.Explorer/Scroll/Filter/Controller/DOM/jQuery, plus the Lampa.Component contract itself.
-    // Lampa has no reactivity of any kind (confirmed against its real source) so the View↔ViewModel
-    // binding below is entirely our own convention, not framework-provided: synchronous UI events
-    // (a Filter pick) pull fresh data right after calling a ViewModel action; ViewModel pushes
-    // through the `view` port only for async completions nobody is synchronously waiting on (a
-    // TMDB/Jackett fetch resolving).
+    // View subscribes to a domain Store instead of exposing a named-callback `view` port — Lampa has
+    // no reactivity of any kind (confirmed against its real source) so this subscribe/notify loop is
+    // entirely our own convention, not framework-provided, same as the callback-port version before
+    // it was. What changed: the domain (Plugins/TorrentModPlugin/domain/) now owns state + the
+    // async/business processes (interactors) that update it and calls `store.patch(...)`; this file
+    // owns exactly the things that touch Lampa.Explorer/Scroll/Filter/Controller/DOM/jQuery, plus the
+    // Lampa.Component contract itself, and has one `store.subscribe(render)` that diffs the new state
+    // against the previous and calls whichever of its own DOM-update functions the diff implies.
+    // Local/global waiting states and dependency (staleness) resolution live in the domain's own
+    // status/generation fields (domain/results-state.js) — this file just renders whatever they say.
     import { escapeHtml, cancelSearch } from '../shared/utils.js';
     import { baseTitles } from '../search/query-building.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
-    import { candidateBadgeText, candidateSubtitleText, searchQueryText, isSeriesWithSeasons } from './results-core.js';
-    import { createResultsViewModel } from './results-viewmodel.js';
+    import { candidateBadgeText, candidateSubtitleText, searchQueryText, isSeriesWithSeasons } from '../domain/results-core.js';
+    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges } from '../domain/results-selectors.js';
+    import { createResultsDomain } from '../domain/results-domain.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -38,7 +39,7 @@
         var object = options.object;
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
-        var viewModel = options.viewModel;
+        var domain = options.domain;
 
         var explorer = new Lampa.Explorer(object);
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
@@ -81,36 +82,28 @@
             if (!value) return;
             toolbar.find('.filter--search > div').text(value).removeClass('hide');
             restoreContentFocus();
-            viewModel.searchWithQuery(value);
+            domain.selection.searchWithQuery(value);
         };
         filter.onSelect = function (type, a, b) {
             if (a && a.reset) {
-                viewModel.resetFilters();
-                syncFilterChips(viewModel.getFilterChipData());
+                domain.filters.resetFilters();
                 restoreContentFocus();
-                updateEpisodeBadges(viewModel.getEpisodeBadges());
                 return;
             }
             if (type === 'sort') {
                 restoreContentFocus();
-                if (!viewModel.setSeason(a.season)) return;
-                syncFilterChips(viewModel.getFilterChipData());
-                viewModel.loadEpisodes();
+                domain.episodes.setSeason(a.season);
                 return;
             }
             if (type !== 'filter' || !b) return;
             if (a.kind === 'season') {
                 restoreContentFocus();
-                if (!viewModel.setSeason(b.season)) return;
-                syncFilterChips(viewModel.getFilterChipData());
-                viewModel.loadEpisodes();
+                domain.episodes.setSeason(b.season);
                 return;
             }
-            if (a.kind === 'voice') viewModel.setVoiceFilter(b.value);
-            else if (a.kind === 'quality') viewModel.setResolutionFilter(b.value);
-            syncFilterChips(viewModel.getFilterChipData());
+            if (a.kind === 'voice') domain.filters.setVoiceFilter(b.value);
+            else if (a.kind === 'quality') domain.filters.setResolutionFilter(b.value);
             restoreContentFocus();
-            updateEpisodeBadges(viewModel.getEpisodeBadges());
         };
         // Select.show()'s own native close() (confirmed by reading it in app.min.js) never restores
         // the previously-active controller itself — it only hides the overlay and calls whatever
@@ -130,7 +123,10 @@
             // "Сортировать"), so this is the established technique, not a workaround.
             toolbar.find('.filter--sort span').text('Сезон');
         }
-        syncFilterChips(viewModel.getFilterChipData());
+        // Explicit initial paint — the store subscription set up below only reacts to *changes*
+        // (a state/previous-state diff), so the very first paint (before anything has changed yet)
+        // is done directly here once, same as the old callback-port version did.
+        syncFilterChips(selectFilterChipData(domain.store.get(), movie, hasSeasons));
 
         scroll.append(grid);
         explorer.appendHead(toolbar);
@@ -204,7 +200,7 @@
                     [episode.air_date, progressText(view)].filter(Boolean).join(' · ')
                 );
                 if (view && Lampa.Timeline && Lampa.Timeline.render) node.append(Lampa.Timeline.render(view));
-                node.on('hover:enter', function () { viewModel.selectEpisode(number); });
+                node.on('hover:enter', function () { domain.selection.selectEpisode(number); });
                 grid.append(node);
                 episodeRows[number] = node;
             });
@@ -329,56 +325,79 @@
             episodeRows = {};
             if (canReturnToEpisodeList) {
                 var backNode = row('← К списку серий', '');
-                backNode.on('hover:enter', function () { viewModel.showEpisodeList(); });
+                backNode.on('hover:enter', function () { domain.episodes.showEpisodeList(); });
                 grid.append(backNode);
             }
             candidates.forEach(function (item) {
                 var node = row(item.title, candidateSubtitleText(item));
                 node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
-                node.on('hover:enter', function () { viewModel.playCandidate(item, target); });
+                node.on('hover:enter', function () { domain.selection.playCandidate(item, target); });
                 grid.append(node);
             });
             refreshGrid();
         }
 
-        function render(js) {
+        // The one `store.subscribe` for this whole screen. Diffs the new state against the previous
+        // one field-group at a time and calls whichever DOM-update function that group implies —
+        // cheap reference-equality checks (Store.patch always returns a *new* top-level object but
+        // keeps old references for anything it didn't touch, so `state.x !== previous.x` is a valid,
+        // cheap "did this change" check, no deep-diffing needed). Grouped the same way the old
+        // callback-port version's call sites were, so the actual DOM work is byte-for-byte identical
+        // to before — only *what triggers it* changed.
+        function render(state, previous) {
+            if (state.stage !== previous.stage || state.episodesCache !== previous.episodesCache ||
+                state.candidates !== previous.candidates || state.message !== previous.message) {
+                if (state.stage === 'episodes') renderEpisodes(state.episodesCache, state.season);
+                else if (state.stage === 'candidates') renderCandidateList(state.candidates.items, state.candidates.target, state.candidates.canReturnToEpisodeList);
+                else if (state.stage === 'message') showMessage(state.message.text, state.message.retry ? domain.episodes.loadEpisodes : null);
+            }
+            if (state.seasonPool !== previous.seasonPool || state.episodesCache !== previous.episodesCache) {
+                updateEpisodeBadges(selectEpisodeBadges(object, state));
+            }
+            // Same distinction the old code's own comment called out: touching filter.chosen() (the
+            // collapsed-chip summary text) when only the pool's *available options* changed, not the
+            // user's chosen values, would be unnecessary churn — full resync only when a value the
+            // user actually picked changed.
+            if (state.voiceType !== previous.voiceType || state.resolution !== previous.resolution || state.season !== previous.season) {
+                syncFilterChips(selectFilterChipData(state, movie, hasSeasons));
+            } else if (state.seasonPool !== previous.seasonPool) {
+                refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));
+            }
+            if (state.searchText !== previous.searchText) setSearchText(state.searchText);
+            if (state.statusText !== previous.statusText) setStatus(state.statusText);
+        }
+
+        domain.store.subscribe(render);
+
+        function renderComponent(js) {
             return explorer.render(js);
         }
 
         return {
-            create: function () { return render(true); },
-            render: render,
+            create: function () { return renderComponent(true); },
+            render: renderComponent,
             start: function () { explorer.toggle(); registerContentController(); },
             destroy: function () {
                 try { scroll.destroy(); } catch (e) {}
                 try { explorer.destroy(); } catch (e) {}
-            },
-            renderEpisodes: renderEpisodes,
-            showMessage: showMessage,
-            updateEpisodeBadges: updateEpisodeBadges,
-            syncFilterChips: syncFilterChips,
-            refreshFilterOptions: refreshFilterOptions,
-            setSearchText: setSearchText,
-            setStatus: setStatus,
-            renderCandidateList: renderCandidateList
+            }
         };
     }
 
     export function TorrentModComponent(object) {
         var movie = object.movie || {};
         var hasSeasons = isSeriesWithSeasons(movie);
-        var view = {};
-        var viewModel = createResultsViewModel({ object: object, movie: movie, hasSeasons: hasSeasons, view: view });
-        Object.assign(view, createResultsView({ object: object, movie: movie, hasSeasons: hasSeasons, viewModel: viewModel }));
+        var domain = createResultsDomain({ object: object, movie: movie, hasSeasons: hasSeasons });
+        var view = createResultsView({ object: object, movie: movie, hasSeasons: hasSeasons, domain: domain });
 
         this.create = function () { return view.create(); };
         this.render = function (js) { return view.render(js); };
-        this.start = function () { view.start(); viewModel.start(); };
+        this.start = function () { view.start(); domain.start(); };
         this.pause = function () {};
         this.stop = function () {};
         this.destroy = function () {
             cancelSearch();
-            viewModel.destroy();
+            domain.destroy();
             view.destroy();
         };
     }

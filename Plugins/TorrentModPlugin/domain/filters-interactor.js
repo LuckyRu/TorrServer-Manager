@@ -1,0 +1,86 @@
+    // ---------- domain: filters interactor ----------
+    //
+    // Deliberately separate from episodes/selection: these are synchronous, no network call, no
+    // staleness/generation concern at all — a genuinely different *shape* of process. Grouping them
+    // with the async interactors would dilute that distinction rather than clarify it.
+    //
+    // Two-tier persistence, same shape Online Mod uses for its own balancer choice
+    // (Storage.get('online_balanser', ...) + Storage.cache('online_last_balanser', 200, {}),
+    // confirmed live in vendor/lampa-source/plugins/online/component.js): a global default plus a
+    // per-movie override cache that takes priority when present. Storage.cache(name, max, empty)
+    // only *reads* (and prunes down to `max` entries if over) — confirmed against the real source,
+    // core/storage/storage.js — it does not auto-persist further mutations, so every write still
+    // needs its own explicit Storage.set() call, same as Online Mod's own read-mutate-set sequence.
+    var VOICE_DEFAULT_KEY = 'torrent_mod_voice';
+    var VOICE_CACHE_KEY = 'torrent_mod_last_voice';
+    var QUALITY_DEFAULT_KEY = 'torrent_mod_quality';
+    var QUALITY_CACHE_KEY = 'torrent_mod_last_quality';
+    var PER_MOVIE_CACHE_MAX = 200;
+
+    function rememberVoice(movie, value) {
+        try {
+            Lampa.Storage.set(VOICE_DEFAULT_KEY, value);
+            var last = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            last[movie.id] = value;
+            Lampa.Storage.set(VOICE_CACHE_KEY, last);
+        } catch (e) {}
+    }
+
+    function rememberQuality(movie, value) {
+        try {
+            Lampa.Storage.set(QUALITY_DEFAULT_KEY, value);
+            var last = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            last[movie.id] = value;
+            Lampa.Storage.set(QUALITY_CACHE_KEY, last);
+        } catch (e) {}
+    }
+
+    export function createFiltersInteractor(options) {
+        var store = options.store;
+        var movie = options.movie;
+
+        // "Reset" is an explicit choice too, same as picking a value — persisting 'any' here is
+        // what makes reset actually *stick* next time this movie's screen opens, instead of the
+        // per-movie memory silently overriding it right back on the next visit.
+        function resetFilters() {
+            rememberVoice(movie, 'any');
+            rememberQuality(movie, 'any');
+            store.patch({ voiceType: 'any', resolution: 'any' });
+        }
+
+        function setVoiceFilter(value) {
+            rememberVoice(movie, value);
+            store.patch({ voiceType: value });
+        }
+
+        function setResolutionFilter(value) {
+            rememberQuality(movie, value);
+            store.patch({ resolution: value });
+        }
+
+        return {
+            resetFilters: resetFilters,
+            setVoiceFilter: setVoiceFilter,
+            setResolutionFilter: setResolutionFilter
+        };
+    }
+
+    // Exported separately (not part of the interactor's own returned API) since it has to run once
+    // at composition time, before the store's first subscriber attaches — see results-domain.js.
+    export function applyPersistedPreferences(store, movie) {
+        try {
+            var state = store.get();
+            var lastSeason = Lampa.Storage.cache('torrent_mod_last_season', PER_MOVIE_CACHE_MAX, {});
+            var season = lastSeason[movie.id] ? lastSeason[movie.id] : state.season;
+
+            var voiceType = Lampa.Storage.get(VOICE_DEFAULT_KEY, 'any');
+            var lastVoice = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            if (lastVoice[movie.id]) voiceType = lastVoice[movie.id];
+
+            var resolution = Lampa.Storage.get(QUALITY_DEFAULT_KEY, 'any');
+            var lastQuality = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            if (lastQuality[movie.id]) resolution = lastQuality[movie.id];
+
+            store.patch({ season: season, voiceType: voiceType, resolution: resolution });
+        } catch (e) {}
+    }
