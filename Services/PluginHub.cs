@@ -538,6 +538,23 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
+        // Lampa asks the hosted app root for these two assets on every start and 404s when they're
+        // absent — harmless but noisy (and modification.js's 404 came back with a JSON MIME type,
+        // which the browser refuses to execute as a script). Serve minimal valid stubs instead:
+        // the blacklist as an empty array (the app appends it to the Status 'custom' line, see
+        // vendor/lampa-source/src/core/plugins.js loadBlackList) and modification.js as an empty
+        // script — that plugin is simply not part of this Lampa build.
+        if (relativePath.Replace('\\', '/').Equals("plugins_black_list.json", StringComparison.OrdinalIgnoreCase))
+        {
+            await WriteTextAsync(response, "[]", "application/json; charset=utf-8");
+            return;
+        }
+        if (relativePath.Replace('\\', '/').Equals("plugins/modification.js", StringComparison.OrdinalIgnoreCase))
+        {
+            await WriteTextAsync(response, "// no-op stub: modification.js is not part of this Lampa build\n", "application/javascript; charset=utf-8");
+            return;
+        }
+
         var root = Path.GetFullPath(AppPaths.LampaAppDirectory) + Path.DirectorySeparatorChar;
         var fullPath = Path.GetFullPath(Path.Combine(AppPaths.LampaAppDirectory, relativePath));
         if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))

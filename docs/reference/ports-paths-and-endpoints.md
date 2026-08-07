@@ -41,6 +41,22 @@
 | `GET`/etc | `/app/*` | Статика самого Lampa web-app (`yumata/lampa` дистрибутив) | LAN |
 | `GET` | `/jackett/*` | Reverse proxy к loopback Jackett, путь+query один в один | LAN |
 
+### Заглушки в статике `/app/` (Lampa запрашивает сама)
+
+Lampa при каждом старте стучится в корень хостимого приложения за двумя файлами, которых в
+`yumata/lampa`-дистрибутиве нет. Чтобы не было шумных 404 в консоли (у `modification.js` 404 ещё и
+приходил с JSON MIME — браузер отказывался выполнять его как скрипт), `PluginHub` отдаёт валидные
+заглушки:
+
+| Путь | Заглушка | Зачем это Lampa |
+|---|---|---|
+| `GET /app/plugins_black_list.json` | `[]` (пустой массив) | Чёрный список плагинов; Lampa добавляет его в Status-строку `custom` (`src/core/plugins.js`, `loadBlackList`) |
+| `GET /app/plugins/modification.js` | пустой JS-скрипт (`// no-op stub`) | Собственный плагин `modification.js` — не входит в эту сборку Lampa |
+
+Реализация: `PluginHub.WriteLampaAppFileAsync` (до проверки существования файла на диске).
+Если когда-нибудь понадобится реальный чёрный список — заменить заглушку на настоящий JSON-массив
+подстрок (формат: `["lampa.line.pm", "cub.rip/…"]`, Lampa фильтрует плагины по подстроке).
+
 `/api/smart-search` существовал для убранного `SmartTsPlugin.js`, удалён вместе с ним.
 
 ### Кэш-заголовки, на которые можно полагаться
