@@ -16,6 +16,11 @@ There is no `.sln` file and no test project — this is a single-project WinForm
 plus ADRs and system-design write-ups) — this file stays a dense, agent-oriented instruction set; `docs/`
 is where the same knowledge lives reorganized for a human reading one topic at a time.
 
+**Build prerequisite: Node.js on PATH.** `TorrentModPlugin.js`'s source is real ES modules (see its own
+section below); `dotnet build`/`dotnet publish` bundles it via esbuild automatically (MSBuild shells out
+to `npm run build:plugin`, auto-running `npm install` first if `node_modules/` is missing) — no separate
+manual step, but Node.js has to actually be installed on whatever machine runs `dotnet build`.
+
 ## Commands
 
 Build (debug):
@@ -169,7 +174,21 @@ entry-point/build-config layer above all of them.
   one, its own results screen instead of an overlay. If a plugin's config entry survives from before this
   removal, `BuiltInPlugins.Read` throws `InvalidDataException("Неизвестный встроенный плагин.")` for it —
   clear it via `POST /api/config` rather than hand-editing `lampa-plugins.json`.)
-- **`TorrentModPlugin.js`** — embedded as `TorrServerManager.TorrentModPlugin.js`. Own card button, own
+- **`TorrentModPlugin.js`** — source lives as real ES modules (`import`/`export`) under
+  `Plugins/TorrentModPlugin/`, one file per concern (`state.js`, `utils.js`, `tmdb.js`,
+  `season-picker.js`, `query-building.js`, `release-parsing.js`, `scoring.js`, `search-backend.js`,
+  `results-screen.js`, `smart-preload.js`, `card-button.js`, `settings.js`, `styles.js`, `index.js`
+  as the entry point). `npm run build:plugin` (esbuild, `package.json`) bundles it into
+  `Plugins/TorrentModPlugin.bundle.js` — a single classic script, `--format=iife` — which is what
+  actually gets embedded as `TorrServerManager.TorrentModPlugin.js`; the bundle is generated and
+  gitignored, never edited directly. `TorrServerManager.csproj`'s `BuildTorrentModPluginBundle`
+  target runs this automatically before `CoreCompile` (with `Inputs`/`Outputs` so it skips when
+  nothing under `Plugins/TorrentModPlugin/` changed), auto-installing npm packages first via a
+  `node_modules`-existence check — `dotnet build`/`dotnet publish` alone is still enough, but
+  **building this project now requires Node.js on PATH**. Deliberately *not* `<script
+  type="module">` in Lampa itself — Lampa injects one plain `<script src="...">` tag per plugin,
+  and the target device is an LG WebOS TV browser, not worth the module-loading/CORS risk there;
+  esbuild's IIFE bundle is what actually ships. Own card button, own
   `Lampa.Component.add('torrent_mod', ...)` results screen (not a native-screen wrapper) — a deliberate
   product choice; see the plan this was built from (`playful-leaping-wilkinson` in `~/.claude/plans/` at
   authoring time) for the tradeoffs. Searches via `/api/torrent-search` (all Jackett indexers at once).
@@ -455,12 +474,16 @@ entry-point/build-config layer above all of them.
     shown elsewhere. Deliberately skips MediaInfo's own public-service fallback — a third-party dependency
     outside this project's infrastructure, inconsistent with keeping everything (Jackett, TorrServer)
     local/loopback-only.
-  - **Fast JS-only iteration without rebuilding the .NET app**: drop an updated copy of the file at
-    `%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js` (same file name as the
-    `EmbeddedResource`) — `BuiltInPlugins.Read` checks that path first and only falls back to the
-    embedded resource if it's absent. `POST /api/plugins/refresh` (loopback-only) then picks up the new
-    content via the normal SHA-256 cache-diff path — no `dotnet build`/`publish`/process-restart needed.
-    Applies to any built-in plugin, not just this one.
+  - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
+    (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
+    `Plugins/TorrentModPlugin/` and writes straight to
+    `%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js` — `BuiltInPlugins.Read` checks that
+    path first and only falls back to the embedded resource if it's absent. `POST
+    /api/plugins/refresh` (loopback-only) then picks up the new content via the normal SHA-256
+    cache-diff path — no `dotnet build`/`publish`/process-restart needed. The dev-override
+    mechanism itself (`BuiltInPlugins.Read` checking `dev-plugins/<file>` first) applies to any
+    built-in plugin, not just this one — only the `npm run dev:plugin` watch script is
+    TorrentModPlugin-specific.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

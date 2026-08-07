@@ -8,6 +8,11 @@ internal sealed record BuiltInPluginDefinition(string Id, string Url, string Nam
 
 internal static class BuiltInPlugins
 {
+    // torrent_mod's ResourceName is the esbuild-bundled output of Plugins/TorrentModPlugin/ (real
+    // ES modules — import/export, one file per concern) — see package.json's build:plugin script
+    // and TorrServerManager.csproj's BuildTorrentModPluginBundle target, which runs it before
+    // CoreCompile. The bundle itself (Plugins/TorrentModPlugin.bundle.js) is generated, gitignored,
+    // and never edited directly.
     private static readonly BuiltInPluginDefinition[] Definitions =
     [
         new("torrent_mod", "builtin://torrent-mod", "Torrent Mod — поиск и просмотр торрентов", "Торренты", "TorrServerManager.TorrentModPlugin.js")
@@ -21,10 +26,10 @@ internal static class BuiltInPlugins
         var definition = Definitions.FirstOrDefault(item => item.Url.Equals(url, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidDataException("Неизвестный встроенный плагин.");
 
-        // Dev-only fast path: drop an updated copy of the .js file into dev-plugins/ (same file
-        // name as the EmbeddedResource, e.g. TorrentModPlugin.js) and it's picked up on the next
-        // refresh (manual "Обновить локальные копии" or the periodic loop) via the normal
-        // SHA-256 cache-diff path in PluginHub — no dotnet build/publish/restart needed.
+        // Dev-only fast path: `npm run dev:plugin` (esbuild --watch) writes straight here on every
+        // save under Plugins/TorrentModPlugin/, picked up on the next refresh (manual "Обновить
+        // локальные копии" or the periodic loop) via the normal SHA-256 cache-diff path in
+        // PluginHub — no dotnet build/publish/restart needed.
         const string resourcePrefix = "TorrServerManager.";
         var fileName = definition.ResourceName.StartsWith(resourcePrefix, StringComparison.Ordinal)
             ? definition.ResourceName[resourcePrefix.Length..]

@@ -8,7 +8,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>TorrServerManager</AssemblyName>
     <RootNamespace>TorrServerManager</RootNamespace>
-    <Version>1.14.1</Version>
+    <Version>1.15.0</Version>
     <Authors>Local TorrServer Manager</Authors>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -18,8 +18,32 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
+    <!-- node_modules/ (npm's, for the plugin-bundling toolchain below) is never .NET project
+         content — exclude it from every default item glob the SDK would otherwise scan it with,
+         the same way it already excludes bin/obj. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);node_modules/**</DefaultItemExcludes>
   </PropertyGroup>
+
   <ItemGroup>
-    <EmbeddedResource Include="Plugins/TorrentModPlugin.js" LogicalName="TorrServerManager.TorrentModPlugin.js" />
+    <_TorrentModPluginSource Include="Plugins/TorrentModPlugin/**/*.js" />
+  </ItemGroup>
+
+  <!-- Plugins/TorrentModPlugin/ is real ES module source (import/export) for the embedded Lampa
+       plugin — see package.json. esbuild bundles it into the single classic script Lampa actually
+       loads (Lampa injects one <script> tag per plugin; the target device is an LG WebOS TV
+       browser, not worth the <script type="module"> risk). Requires Node.js — see README.md. -->
+  <Target Name="EnsureNpmPackages" BeforeTargets="BuildTorrentModPluginBundle" Condition="!Exists('node_modules')">
+    <Exec Command="npm install" />
+  </Target>
+
+  <Target Name="BuildTorrentModPluginBundle"
+          BeforeTargets="BeforeBuild;CoreCompile"
+          Inputs="package.json;@(_TorrentModPluginSource)"
+          Outputs="Plugins/TorrentModPlugin.bundle.js">
+    <Exec Command="npm run build:plugin" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Plugins/TorrentModPlugin.bundle.js" LogicalName="TorrServerManager.TorrentModPlugin.js" />
   </ItemGroup>
 </Project>
