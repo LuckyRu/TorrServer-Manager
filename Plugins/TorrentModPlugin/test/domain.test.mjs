@@ -20,7 +20,7 @@ import {
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
-import { fileLoadedBytes } from '../playback/smart-preload.js';
+import { fileLoadedBytes, classifyVideoCodec } from '../playback/smart-preload.js';
 
 const runner = createRunner();
 
@@ -257,6 +257,20 @@ runner.test('fileLoadedBytes: буфер только выбранного фа�
     // нулевые/невалидные входные данные — безопасный 0
     if (fileLoadedBytes(null, 4194304, 0, 10) !== 0) throw new Error('null pieces должен дать 0');
     if (fileLoadedBytes({}, 0, 0, 10) !== 0) throw new Error('pieceLength 0 должен дать 0');
+});
+
+runner.test('classifyVideoCodec: ffprobe-гейт для непросматриваемых кодеков', () => {
+    // «древнее говно» — блок
+    for (const c of ['mpeg2video', 'mpeg1video', 'mpeg4', 'vc1', 'wmv3', 'h263', 'rv40', 'flv1']) {
+        if (classifyVideoCodec(c) !== 'bad') throw new Error(c + ' должен быть bad');
+    }
+    // потоковые — good
+    for (const c of ['h264', 'hevc', 'av1', 'vp9']) {
+        if (classifyVideoCodec(c) !== 'good') throw new Error(c + ' должен быть good');
+    }
+    // нет видеопотока
+    if (classifyVideoCodec('') !== 'no-video') throw new Error('пустой кодек = no-video');
+    if (classifyVideoCodec(undefined) !== 'no-video') throw new Error('undefined = no-video');
 });
 
 await runner.run();

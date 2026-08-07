@@ -190,19 +190,36 @@
             // without transcoding (and AV1 on older sets), 'likely' for explicit H.264/H.265,
             // 'unknown' when the title says nothing reliable. Real compatibility is only known
             // after the file is picked (ffprobe) — see smart-preload.js.
-            compatibility: null
+            compatibility: null,
+            compatibilityReason: ''
         };
-        release.compatibility = computeCompatibility(release);
+        release.compatibility = computeCompatibility(release, source);
+        release.compatibilityReason = compatibilityReason(release, source);
         return release;
     }
 
     var RISKY_CONTAINERS = ['AVI', 'MPG', 'VOB', 'WMV', 'FLV', 'RM'];
     var RISKY_CODECS = ['XviD', 'DivX', 'MPEG-2', 'VC-1', 'WMV', 'RealVideo', 'H.263'];
 
-    export function computeCompatibility(release) {
-        if (RISKY_CODECS.indexOf(release.videoCodec) >= 0) return 'risky';
-        if (RISKY_CONTAINERS.indexOf(release.container) >= 0) return 'risky';
-        if (release.videoCodec === 'AV1') return 'risky'; // old WebOS sets lack AV1 decode
+    // Title-level compatibility guess — a heuristic, NOT proof (the real codec is only known from
+    // ffprobe of the picked file, see smart-preload.js's probe gate). Order matters: an explicit
+    // H.264/H.265 wins (even a "DVDRip" re-encode is fine), then known-bad containers/codecs, then
+    // raw-DVD hints (a "DVDRip" with NO codec/container stated is almost always MPEG-2 in VOB).
+    export function computeCompatibility(release, source) {
         if (release.videoCodec === 'H.264' || release.videoCodec === 'H.265') return 'likely';
+        if (RISKY_CODECS.indexOf(release.videoCodec) >= 0) return 'risky';
+        if (release.videoCodec === 'AV1') return 'risky'; // old WebOS sets lack AV1 decode
+        if (RISKY_CONTAINERS.indexOf(release.container) >= 0) return 'risky';
+        if (release.sourceType === 'DVDRip') return 'risky'; // raw DVD rip without stated codec
+        if (/\b(?:raw|video_ts|iso|dvd5|dvd9)\b/i.test(source)) return 'risky';
         return 'unknown';
+    }
+
+    export function compatibilityReason(release, source) {
+        if (RISKY_CODECS.indexOf(release.videoCodec) >= 0) return release.videoCodec;
+        if (release.videoCodec === 'AV1') return 'AV1';
+        if (RISKY_CONTAINERS.indexOf(release.container) >= 0) return release.container;
+        if (release.sourceType === 'DVDRip') return 'DVDRip без кодека';
+        if (/\b(?:raw|video_ts|iso|dvd5|dvd9)\b/i.test(source)) return 'RAW DVD';
+        return '';
     }

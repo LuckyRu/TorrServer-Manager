@@ -29,6 +29,22 @@
 
     var LEAD_SECONDS = 25;
 
+    // Video codecs the browser/WebOS cannot decode without TorrServer transcoding (the raw-DVDRip
+    // class: MPEG-1/2, MPEG-4 ASP = XviD/DivX, VC-1, WMV*, H.263, RealVideo, FLV1 — and the absence
+    // of a video stream). This is the ffprobe-level arbiter: the title heuristic (release-parsing
+    // compatibility) only suspects, this confirms from the actual file's streams.
+    var BAD_VIDEO_CODECS = ['mpeg1video', 'mpeg2video', 'mpeg4', 'vc1', 'wmv1', 'wmv2', 'wmv3',
+        'msmpeg4v1', 'msmpeg4v2', 'msmpeg4v3', 'h263', 'h263p', 'rv10', 'rv20', 'rv30', 'rv40', 'flv1'];
+
+    // Returns 'good' | 'bad' | 'no-video' given the video stream's codec_name (lowercase). AV1 is
+    // deliberately NOT here — newer WebOS sets decode it, older ones don't (kept as title 'risky',
+    // not a hard reject). Pure function for testability.
+    export function classifyVideoCodec(codecName) {
+        var codec = String(codecName || '').toLowerCase();
+        if (!codec) return 'no-video';
+        return BAD_VIDEO_CODECS.indexOf(codec) >= 0 ? 'bad' : 'good';
+    }
+
     var PLAYABLE_FORMATS = ['asf', 'wmv', 'divx', 'avi', 'mp4', 'm4v', 'mov', '3gp', '3g2', 'mkv', 'trp', 'tp', 'mts', 'mpg', 'mpeg', 'dat', 'vob', 'rm', 'rmvb', 'm2ts', 'ts'];
 
     function isPlayableFile(file) {
@@ -85,7 +101,21 @@
 
     function maybeProceed(pending) {
         if (!pending || pending.clicked) return;
+        // The ffprobe gate (raw DVDRip class: MPEG-2/MPEG-4 ASP/VC-1/WMV/...) is the final arbiter —
+        // a CONFIRMED-bad codec must never start playback (not even via the timeout or "Смотреть
+        // сейчас"): black screen instead of the series is worse than an honest "не поддерживается"
+        // (found by the architect). Checked BEFORE the ready-gate so it fires the moment ffprobe
+        // resolves, not only once the buffer happens to be ready.
+        if (pending.probeStatus === 'bad') {
+            pending.clicked = true;
+            cleanupSmartPreload(pending);
+            if (pendingPlayback === pending) pendingPlayback = null;
+            notify(pending.probeMessage || 'Формат видео не поддерживается на этом устройстве');
+            return;
+        }
         if (!pending.ready && !pending.timedOut) return;
+        // Buffer may be ready, but the gate isn't open yet — wait for ffprobe ('good'/'unavailable').
+        if (pending.probeStatus === 'pending') return;
         pending.clicked = true;
         cleanupSmartPreload(pending);
         if (pending.bestFile) {
@@ -227,6 +257,7 @@
         var base = torrServerBase();
         if (!base) return;
         pending.probed = true;
+        pending.probeStatus = 'pending';
         $.ajax({
             url: base + '/torrents', method: 'POST',
             data: JSON.stringify({ action: 'get', hash: pending.hash }),
@@ -277,8 +308,32 @@
                         if (pending.fileLength) target = Math.min(target, pending.fileLength);
                         pending.targetBytes = target;
                     }
-                }).fail(function () {});
-        }).fail(function () {});
+                    // THE GATE: classify the ACTUAL video codec. 'bad' blocks playback entirely —
+                    // this is how the raw-DVDRip class (MPEG-2/VOB) gets caught even when the title
+                    // said nothing suspicious (found by the architect). Re-arm maybeProceed: the
+                    // buffer may already be ready, but the gate just opened (or closed).
+                    var verdict = video ? classifyVideoCodec(video.codec_name) : 'no-video';
+                    if (verdict === 'bad') {
+                        pending.probeStatus = 'bad';
+                        pending.probeMessage = 'Формат видео ' + String(video.codec_name || '').toUpperCase() + ' не поддерживается на этом устройстве — выберите другую раздачу';
+                    } else if (verdict === 'no-video') {
+                        pending.probeStatus = 'bad';
+                        pending.probeMessage = 'В раздаче не найден видеопоток — выберите другую раздачу';
+                    } else {
+                        pending.probeStatus = 'good';
+                    }
+                    maybeProceed(pending);
+                }).fail(function () {
+                    // ffprobe unavailable (no ffprobe on this TorrServer build, or /ffp 400s) — NOT
+                    // proof of a bad format: release the gate as 'unavailable' and play (the title
+                    // heuristic still ranks risky candidates down).
+                    pending.probeStatus = 'unavailable';
+                    maybeProceed(pending);
+                });
+        }).fail(function () {
+            pending.probeStatus = 'unavailable';
+            maybeProceed(pending);
+        });
     }
 
     function cleanupSmartPreload(pending) {
@@ -590,6 +645,8 @@
             ready: false,
             timedOut: false,
             probed: false,
+            probeStatus: 'pending',
+            probeMessage: '',
             error: ''
         };
         showSmartPreload(pendingPlayback);

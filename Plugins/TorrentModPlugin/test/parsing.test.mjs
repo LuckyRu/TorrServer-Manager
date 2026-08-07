@@ -133,6 +133,14 @@ const formatCases = [
     ['Сериал (2021) 1080p HEVC MKV', { videoCodec: 'H.265', container: 'MKV', compatibility: 'likely' }],
     // без формата в названии — unknown, не отсекаем
     ['Фильм (2018) 1080p WEB-DL', { compatibility: 'unknown' }],
+    // raw DVDRip без кодека — почти всегда MPEG-2/VOB, риск
+    ['Фильм (2002) DVDRip', { sourceType: 'DVDRip', compatibility: 'risky', compatibilityReason: 'DVDRip без кодека' }],
+    ['Сериал (2005) DVDRip 480p', { compatibility: 'risky' }],
+    ['Фильм RAW DVD (1998)', { compatibility: 'risky', compatibilityReason: 'RAW DVD' }],
+    ['Фильм (2003) VIDEO_TS', { compatibility: 'risky' }],
+    ['Фильм (2005) DVD5', { compatibility: 'risky' }],
+    // DVDRip с явным H.264 — ок (likely побеждает)
+    ['Фильм (2015) DVDRip 720p H.264', { compatibility: 'likely', videoCodec: 'H.264' }],
     // кириллический \b: «Дубляж» распознаётся
     ['Фильм (2024) 1080p Дубляж', { voiceType: 'Дубляж' }],
     // dual audio

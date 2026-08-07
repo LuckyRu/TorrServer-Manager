@@ -214,9 +214,10 @@
         if (item.release.subtitles) bits.push('субтитры');
         // Title-level compatibility warning ("древнее говно"): WebOS won't play XviD/DivX/MPEG-2/
         // VC-1/WMV/AVI without TorrServer transcoding. Not a hard gate — it's a visible warning and
-        // a ranking penalty, since the title is only a heuristic (see scoring.formatPenalty).
+        // a ranking penalty, since the title is only a heuristic (see scoring.formatPenalty). The
+        // real codec is confirmed by ffprobe at play time (see smart-preload.js).
         if (item.release.compatibility === 'risky') {
-            bits.push('Риск: ' + (item.release.videoCodec || item.release.container || 'формат'));
+            bits.push('Риск: ' + (item.release.compatibilityReason || item.release.videoCodec || item.release.container || 'формат'));
         }
         return bits.join(' · ');
     }
