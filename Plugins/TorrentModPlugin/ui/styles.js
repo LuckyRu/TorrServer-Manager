@@ -39,14 +39,12 @@
             '.torrent-mod-row__subtitle{padding-left:3.4em;font-size:.7em;margin-top:.7em}',
             '.torrent-mod-row__badge{padding-left:3.4em;font-size:.7em;margin-top:.3em}',
             '.view--torrent-mod svg{margin-right:.7em}',
-            // Fully opaque, not translucent — this is the full-screen buffering overlay shown while
-            // TorrServer warms the torrent up to the duration-based target (the native torrent-file
-            // screen is NOT opened anymore — playback is direct via Torserver.hash/Player.play, see
-            // playback/smart-preload.js). It used to sit on top of Lampa's native file screen, and
-            // even a small amount of see-through (this used to be rgba(...,.92)) was enough for that
-            // screen's own bright rows to bleed through at the edges — confirmed live, reported as
-            // still-visible "мусор" behind our own overlay despite it technically being on top.
-            '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:#080c14;display:flex;align-items:center;justify-content:center;padding:2em}',
+            // Semi-transparent, not fully opaque: the native torrent-file screen is NOT opened
+            // anymore (direct playback via Torserver.hash/Player.play, see playback/smart-preload.js),
+            // so there is nothing bright underneath to hide — the old fully-opaque #080c14 existed
+            // only to cover that native screen's rows bleeding through. A touch of see-through reads
+            // as a lighter modal and keeps the app feeling native.
+            '.torrent-mod-preload{position:fixed;z-index:10000;inset:0;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:2em}',
             '.torrent-mod-preload__box{width:min(46em,92vw);background:#182231;border-radius:1.2em;padding:2em;box-shadow:0 1em 5em #000}',
             '.torrent-mod-preload__title{font-size:1.2em;font-weight:700;margin-bottom:.6em}',
             '.torrent-mod-preload__percent{font-size:2.5em;font-weight:700;margin:.4em 0 .15em}',

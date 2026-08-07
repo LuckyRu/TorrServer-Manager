@@ -256,7 +256,7 @@ internal sealed class PluginHub : IDisposable
                 var query = context.Request.QueryString["query"]?.Trim() ?? "";
                 if (query.Length is < 2 or > 200)
                     throw new InvalidDataException("Поисковый запрос должен содержать от 2 до 200 символов.");
-                await WriteTorrentSearchAsync(context.Response, query, context.Request.Url?.GetLeftPart(UriPartial.Authority) ?? "");
+                await WriteTorrentSearchAsync(context.Response, query);
                 return;
             }
 
@@ -373,7 +373,7 @@ internal sealed class PluginHub : IDisposable
         });
     }
 
-    private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query, string requestAuthority)
+    private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query)
     {
         string apiKey;
         try
@@ -423,21 +423,21 @@ internal sealed class PluginHub : IDisposable
                 : "[]";
 
             // Jackett fills each result's Link (and anything else HTTP) with its own loopback
-            // download endpoint (http://127.0.0.1:9117/dl/...) — unreachable from LAN devices (a TV
-            // loading the plugin would try to hit 127.0.0.1 on itself and fail). Rewrite those to
-            // our own /jackett reverse-proxy (ProxyToJackettAsync below serves the same Jackett
-            // path), built on the exact host the client used to reach us — so a TV querying over
-            // http://192.168.10.108:8095 gets back http://192.168.10.108:8095/jackett/... links.
-            if (!string.IsNullOrEmpty(requestAuthority))
-            {
-                var proxyBase = requestAuthority.TrimEnd('/') + "/jackett";
-                var port = AppPaths.JackettPort.ToString();
-                resultsText = resultsText
-                    .Replace($"http://127.0.0.1:{port}", proxyBase)
-                    .Replace($"https://127.0.0.1:{port}", proxyBase)
-                    .Replace($"http://localhost:{port}", proxyBase)
-                    .Replace($"https://localhost:{port}", proxyBase);
-            }
+            // download endpoint (http://127.0.0.1:9117/dl/...). Those links are consumed ONLY by
+            // TorrServer on THIS machine (the plugin passes link into Lampa.Torserver.hash, which
+            // hands it straight to TorrServer — the TV never downloads the .torrent itself), so the
+            // address must be reachable FROM TorrServer. Rewriting to the request's LAN authority
+            // was a live-found bug: TorrServer couldn't dial its own LAN IP (192.168.10.108:8095 →
+            // connection refused, seen in server.log), so every .torrent-only release (all current
+            // indexers return link, no magnet) stalled forever. Rewrite to loopback + our /jackett
+            // reverse-proxy instead — TorrServer is co-located with the manager by design.
+            var proxyBase = $"http://127.0.0.1:{AppPaths.PluginHubPort}/jackett";
+            var port = AppPaths.JackettPort.ToString();
+            resultsText = resultsText
+                .Replace($"http://127.0.0.1:{port}", proxyBase)
+                .Replace($"https://127.0.0.1:{port}", proxyBase)
+                .Replace($"http://localhost:{port}", proxyBase)
+                .Replace($"https://localhost:{port}", proxyBase);
 
             await WriteTextAsync(
                 response,

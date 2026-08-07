@@ -35,8 +35,7 @@
 | `GET` | `/api/config` | Текущая конфигурация (JSON) | LAN |
 | `POST` | `/api/config` | Сохранить конфигурацию + запустить рефреш | loopback |
 | `POST` | `/api/plugins/refresh` | Форс-рефреш кэша плагинов (нужен `-d ""` в curl) | loopback |
-| `GET` | `/api/torrent-search?query=` | Агрегированный поиск по всем индексаторам Jackett для Torrent Mod | LAN |
-| `GET` | `/lampa.js` | Bootstrap loader — читает `/api/config`, инжектит включённые плагины | LAN |
+| `GET` | `/api/torrent-search?query=` | Агрегированный поиск по всем индексаторам Jackett для Torrent Mod | LAN || `GET` | `/lampa.js` | Bootstrap loader — читает `/api/config`, инжектит включённые плагины | LAN |
 | `GET` | `/plugins/{cacheKey}.js` | Закэшированный плагин (по SHA-256-based ключу) | LAN |
 | `GET`/etc | `/app/*` | Статика самого Lampa web-app (`yumata/lampa` дистрибутив) | LAN |
 | `GET` | `/jackett/*` | Reverse proxy к loopback Jackett, путь+query один в один | LAN |
@@ -65,6 +64,16 @@ Lampa при каждом старте стучится в корень хост
 `If-None-Match` реальным 304. Устройство в LAN обязано перепроверять с сервером перед использованием
 кэшированной копии — без этого правки могли годами не доходить до реального устройства даже после
 пересборки/republish.
+
+### Ссылки в `/api/torrent-search` — loopback, потому что их потребляет TorrServer
+
+Jackett кладёт в `Link` результата свой loopback download-эндпоинт (`http://127.0.0.1:9117/dl/...`).
+`PluginHub` переписывает их на **`http://127.0.0.1:8095/jackett/...`** (наш reverse-proxy). Это
+намеренно loopback, а не LAN-IP: единственный потребитель этих ссылок — **TorrServer на этом же
+ПК** (плагин передаёт `link` в `Lampa.Torserver.hash`, ТВ сам `.torrent` не скачивает). Переписывание
+на LAN-IP было живым багом: TorrServer не мог дозвониться до собственного LAN-адреса
+(`dial tcp 192.168.10.108:8095: connection refused` в `server.log`), и все раздачи, отдающие только
+`.torrent`-ссылку без magnet (сейчас так все настроенные индексаторы), зависали навсегда.
 
 ## Эндпоинты TorrServer, на которые опирается Torrent Mod (не наш код, для справки)
 
