@@ -1,5 +1,5 @@
     // ---------- query building ----------
-    import { enabled, pad, compact, unique } from './utils.js';
+    import { enabled, pad, compact, unique } from '../shared/utils.js';
 
     export function baseTitles(movie) {
         return unique([

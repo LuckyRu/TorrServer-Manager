@@ -175,10 +175,18 @@ entry-point/build-config layer above all of them.
   removal, `BuiltInPlugins.Read` throws `InvalidDataException("Неизвестный встроенный плагин.")` for it —
   clear it via `POST /api/config` rather than hand-editing `lampa-plugins.json`.)
 - **`TorrentModPlugin.js`** — source lives as real ES modules (`import`/`export`) under
-  `Plugins/TorrentModPlugin/`, one file per concern (`state.js`, `utils.js`, `tmdb.js`,
-  `season-picker.js`, `query-building.js`, `release-parsing.js`, `scoring.js`, `search-backend.js`,
-  `results-screen.js`, `smart-preload.js`, `card-button.js`, `settings.js`, `styles.js`, `index.js`
-  as the entry point). `npm run build:plugin` (esbuild, `package.json`) bundles it into
+  `Plugins/TorrentModPlugin/`, grouped into folders by concern rather than left flat — the split
+  follows the actual import graph between files (checked, not guessed), not a copy of the C# side's
+  Infrastructure/Controllers/Services/UI layering: `shared/` (`state.js`, `utils.js` — no internal
+  deps, imported by nearly everything), `search/` (`query-building.js`, `release-parsing.js`,
+  `scoring.js`, `search-backend.js` — the Jackett query→parse→score pipeline), `metadata/`
+  (`tmdb.js`, `season-picker.js` — TMDB season/episode data; zero import edges to/from `search/`,
+  confirming these are genuinely separate concerns and not one pipeline), `playback/`
+  (`smart-preload.js` alone — a deliberately single-file folder, since it's a named headline feature
+  orthogonal to both search and screen rendering, not because every folder needs >1 file), `ui/`
+  (`results-screen.js` + the three Lampa-registration files `card-button.js`/`settings.js`/
+  `styles.js`), and `index.js` at the folder root as the entry point (mirrors `Program.cs` staying at
+  the C# project root). `npm run build:plugin` (esbuild, `package.json`) bundles it into
   `Plugins/TorrentModPlugin.bundle.js` — a single classic script, `--format=iife` — which is what
   actually gets embedded as `TorrServerManager.TorrentModPlugin.js`; the bundle is generated and
   gitignored, never edited directly. `TorrServerManager.csproj`'s `BuildTorrentModPluginBundle`

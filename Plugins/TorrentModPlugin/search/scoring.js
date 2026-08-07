@@ -2,7 +2,7 @@
     // matchScore-as-gate (passesMatchGate), then qualityScore+availabilityScore for ranking —
     // see CLAUDE.md's TorrentModPlugin.js section for the full rationale behind this split.
     import { baseTitles } from './query-building.js';
-    import { field, compact } from './utils.js';
+    import { field, compact } from '../shared/utils.js';
 
     function titleSimilarity(title, movie) {
         var haystack = ' ' + compact(title) + ' ';

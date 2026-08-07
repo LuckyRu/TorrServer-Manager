@@ -1,16 +1,17 @@
     // ---------- results screen (Lampa.Component) ----------
     //
-    // needs-verification: exact Component lifecycle method names/order were not confirmed
-    // against yumata/lampa-source at authoring time. Implemented against the common
-    // Activity/Component contract (create/render/start/pause/stop/destroy/back) used across
-    // this ecosystem; adjust here first if the results screen fails to mount.
-    import { baseTitles } from './query-building.js';
-    import { scoreCandidate, applyStateFilters } from './scoring.js';
-    import { searchTorrentMod } from './search-backend.js';
-    import { buildSeasonItems } from './season-picker.js';
-    import { startDownload } from './smart-preload.js';
-    import { canonicalTimeline, progressText, episodeCounts, fetchSeason } from './tmdb.js';
-    import { enabled, pad, escapeHtml, notify, debugLogCandidates, formatSize, cancelSearch } from './utils.js';
+    // Component lifecycle confirmed against the real (unminified) Lampa source, not just
+    // app.min.js/live scripting — see docs/reference/lampa-plugin-api.md's "Component/Activity"
+    // section. create()/render() are effectively required (an absent one throws inside
+    // ActivitySlide's try/catch and silently swaps in the built-in nocomponent fallback);
+    // start()/pause()/stop()/resize()/destroy()/back() are all optional, called only if present.
+    import { baseTitles } from '../search/query-building.js';
+    import { scoreCandidate, applyStateFilters } from '../search/scoring.js';
+    import { searchTorrentMod } from '../search/search-backend.js';
+    import { buildSeasonItems } from '../metadata/season-picker.js';
+    import { startDownload } from '../playback/smart-preload.js';
+    import { canonicalTimeline, progressText, episodeCounts, fetchSeason } from '../metadata/tmdb.js';
+    import { enabled, pad, escapeHtml, notify, debugLogCandidates, formatSize, cancelSearch } from '../shared/utils.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only

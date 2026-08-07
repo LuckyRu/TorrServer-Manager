@@ -1,5 +1,5 @@
     // ---------- TMDB season/episode data ----------
-    import { field, request } from './utils.js';
+    import { field, request } from '../shared/utils.js';
 
     export function canonicalTimeline(movie, season, episode) {
         if (!movie || !season || !episode || !Lampa.Timeline || !Lampa.Timeline.watchedEpisode) return null;

@@ -2,10 +2,10 @@
     // Raw Jackett response mapping (mapTorrent) and the actual multi-query fetch/merge
     // orchestration (searchTorrentMod) — the two functions that talk to /api/torrent-search.
     // Scoring/gating of the results this returns lives in scoring.js, not here.
-    import { hubBase } from './state.js';
+    import { hubBase } from '../shared/state.js';
     import { buildQueries } from './query-building.js';
     import { parseRelease } from './release-parsing.js';
-    import { compact, unique, request } from './utils.js';
+    import { compact, unique, request } from '../shared/utils.js';
 
     function mapTorrent(raw) {
         var magnet = raw.MagnetUri || raw.Magnet || '';

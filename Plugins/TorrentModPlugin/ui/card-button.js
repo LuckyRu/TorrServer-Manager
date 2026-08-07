@@ -1,7 +1,7 @@
     // ---------- card button ----------
-    import { VERSION } from './state.js';
-    import { initialSeason, openTarget } from './season-picker.js';
-    import { enabled, previousController } from './utils.js';
+    import { VERSION } from '../shared/state.js';
+    import { initialSeason, openTarget } from '../metadata/season-picker.js';
+    import { enabled, previousController } from '../shared/utils.js';
 
     export function addCardButton(event) {
         if (!event || event.type !== 'complite' || !enabled('torrent_mod_enabled', true)) return;

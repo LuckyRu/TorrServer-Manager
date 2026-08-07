@@ -12,8 +12,8 @@
     // and just call the file's own native `hover:enter` once our duration-based buffer target is
     // ready — that's the real Lampa file click, so playback starts through the exact same path it
     // always would.
-    import { parseSignals } from './release-parsing.js';
-    import { field, notify, previousController, formatSize } from './utils.js';
+    import { parseSignals } from '../search/release-parsing.js';
+    import { field, notify, previousController, formatSize } from '../shared/utils.js';
 
     var pendingPlayback = null;
 

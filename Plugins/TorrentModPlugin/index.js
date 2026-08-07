@@ -3,12 +3,12 @@
     // WebOS TV browser, not worth the module-loading risk there). Every other file in this folder
     // is a real ES module now; this one just wires the top-level registration together and guards
     // against double-injection the same way the plugin always has.
-    import { VERSION } from './state.js';
-    import { addCardButton } from './card-button.js';
-    import { addSettings } from './settings.js';
-    import { addStyles } from './styles.js';
-    import { onTorrentFile } from './smart-preload.js';
-    import { TorrentModComponent } from './results-screen.js';
+    import { VERSION } from './shared/state.js';
+    import { addCardButton } from './ui/card-button.js';
+    import { addSettings } from './ui/settings.js';
+    import { addStyles } from './ui/styles.js';
+    import { onTorrentFile } from './playback/smart-preload.js';
+    import { TorrentModComponent } from './ui/results-screen.js';
 
     function main() {
         if (!window.Lampa || window.torrent_mod_ready) return;
