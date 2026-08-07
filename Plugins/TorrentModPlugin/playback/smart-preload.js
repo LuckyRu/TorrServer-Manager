@@ -142,6 +142,22 @@
     // order. Fire-and-forget: the response body is a long-lived stream, so we resolve on headers
     // (fetch) and never read/abort it (a short $.ajax timeout used to kill the request).
     // Deliberately only swaps the play→preload parameter of the OFFICIAL URL (no invented endpoints).
+    function preloadUrlFor(file, hash) {
+        var url;
+        try { url = Lampa.Torserver.stream(file.path, hash, file.id); } catch (e) { return ''; }
+        var preloadUrl = url.replace(/([?&])play$/, '$1preload');
+        if (preloadUrl === url && url.indexOf('preload') < 0) preloadUrl = url + '&preload';
+        return preloadUrl;
+    }
+
+    function firePreload(url) {
+        if (!url) return;
+        try {
+            if (window.fetch) fetch(url, { cache: 'no-store' }).catch(function () {});
+            else $.ajax({ url: url, timeout: 15000 }).done(function () {}).fail(function () {});
+        } catch (e) {}
+    }
+
     function initiatePreload(pending) {
         if (!pending || !pending.bestFile || !pending.hash || pending.clicked) return;
         var now = Date.now();
@@ -151,15 +167,50 @@
         if (!base) return;
         pending.lastPreloadAt = now;
         pending.preloadAttempts = (pending.preloadAttempts || 0) + 1;
-        var file = pending.bestFile;
-        var url;
-        try { url = Lampa.Torserver.stream(file.path, pending.hash, file.id); } catch (e) { return; }
-        var preloadUrl = url.replace(/([?&])play$/, '$1preload');
-        if (preloadUrl === url && url.indexOf('preload') < 0) preloadUrl = url + '&preload';
-        try {
-            if (window.fetch) fetch(preloadUrl, { cache: 'no-store' }).catch(function () {});
-            else $.ajax({ url: preloadUrl, timeout: 15000 }).done(function () {}).fail(function () {});
-        } catch (e) {}
+        firePreload(preloadUrlFor(pending.bestFile, pending.hash));
+    }
+
+    // Pre-load the NEXT file of the pack while the current one is still playing (the actual fix for
+    // "прерывания на дозагрузку" when the player switches to the next episode via the playlist):
+    // as the current file approaches its end (~85% or <=60s left), ask TorrServer to warm the next
+    // playable file's cache so Playlist.next() starts with data already downloaded. One file only,
+    // fire-and-forget, gated by the torrent_mod_preload_next setting; nothing is shown and nothing
+    // in the player/playlist is touched (ADR-0003).
+    function startNextEpisodePreload(pending) {
+        var files = pending.files || [];
+        if (files.length < 2) return;
+        if (!field('torrent_mod_preload_next', true)) return;
+        var curId = pending.bestFile && String(pending.bestFile.id);
+        var next = null;
+        var found = false;
+        for (var i = 0; i < files.length; i++) {
+            if (!found) {
+                if (String(files[i].id) === curId) found = true;
+                continue;
+            }
+            next = files[i];
+            break;
+        }
+        if (!next) return; // current file is the last one in the pack
+
+        var fired = false;
+        function onTime(e) {
+            if (fired || !e || !(e.duration > 0)) return;
+            var current = e.current || 0;
+            var remaining = e.duration - current;
+            if (remaining > 0 && (current >= e.duration * 0.85 || remaining <= 60)) {
+                fired = true;
+                try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (err) {}
+                firePreload(preloadUrlFor(next, pending.hash));
+            }
+        }
+        try { Lampa.PlayerVideo.listener.follow('timeupdate', onTime); } catch (e2) {}
+        // If the player goes away before the trigger, drop the listener instead of leaking it.
+        function onPlayerDestroy() {
+            try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (e3) {}
+            try { Lampa.Player.listener.remove('destroy', onPlayerDestroy); } catch (e4) {}
+        }
+        try { Lampa.Player.listener.follow('destroy', onPlayerDestroy); } catch (e5) {}
     }
 
     // Confirms our title-guessed badges (resolution/codec/audio/subs, all regexed out of the
@@ -497,6 +548,8 @@
         // Native torrent.js also routes back from the player to the modal/previous screen
         // (Player.callback + Controller.toggle('modal'), torrent.js:442-445).
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle('modal'); }); } catch (e) {}
+        // Warm the NEXT episode's cache while this one plays — the fix for stalls on episode switch.
+        try { startNextEpisodePreload(pending); } catch (e) {}
     }
 
     export function startDownload(item, target) {

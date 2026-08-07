@@ -25,4 +25,10 @@
             param: { name: 'torrent_mod_debug', type: 'trigger', default: false },
             field: { name: 'Отладка поиска', description: 'Таблица разобранных раздач и их оценок в консоли браузера при каждом поиске' }
         });
+
+        Lampa.SettingsApi.addParam({
+            component: 'torrent_mod',
+            param: { name: 'torrent_mod_preload_next', type: 'trigger', default: true },
+            field: { name: 'Предзагрузка следующей серии', description: 'Пока серия играет, заранее качать начало следующей из пака — без паузы на буферизацию при переключении' }
+        });
     }

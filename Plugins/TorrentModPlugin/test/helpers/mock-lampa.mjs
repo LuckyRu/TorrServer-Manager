@@ -61,7 +61,8 @@ export function setupMockLampa() {
             clearFileName: (files) => files
         },
         Favorite: { add: () => {} },
-        Player: { play: () => {}, playlist: () => {}, callback: () => {} },
+        Player: { play: () => {}, playlist: () => {}, callback: () => {}, listener: { follow: () => {}, remove: () => {} } },
+        PlayerVideo: { listener: { follow: () => {}, remove: () => {} } },
         Utils: {
             bytesToSize: (bytes) => Math.round(bytes / 1048576) + ' MB',
             secondsToTimeHuman: (sec) => '00:' + String(Math.floor(sec % 60)).padStart(2, '0')
