@@ -9,13 +9,14 @@
     import { defaultSearchName } from '../search/query-building.js';
     import { formatSize } from '../shared/utils.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
-    import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
+    import { applyStateFilters, scoreCandidate, bitrateBucket, estimateBitrateForState } from '../search/scoring.js';
 
     export function createInitialState(object) {
         return {
             season: object.season || 0,
             voiceType: 'any',
-            resolution: 'any'
+            resolution: 'any',
+            bitrate: 'any'
         };
     }
 
@@ -43,6 +44,9 @@
     }
 
     export var QUALITY_LABELS = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
+
+    // Bucket keys must match scoring.js's bitrateBucket() output.
+    export var BITRATE_LABELS = { 'b2': 'До 2 Мбит/с', 'b2-5': '2–5 Мбит/с', 'b5-12': '5–12 Мбит/с', 'b12': '12+ Мбит/с' };
 
     export function currentSeasonLabel(movie, hasSeasons, state) {
         if (!hasSeasons) return '';
@@ -103,16 +107,37 @@
             items: qualityItems
         });
 
+        // Bitrate dimension (Etap 3): the primary quality signal for anyone who understands it —
+        // more informative than file size. Options are built ONLY from buckets actually present in
+        // the pool (same poolValues mechanism as voice/quality), estimated per-episode bitrate.
+        var bitrateOrder = ['b2', 'b2-5', 'b5-12', 'b12'];
+        var bitrateFound = poolValues(state, function (item) {
+            return bitrateBucket(estimateBitrateForState(item, state));
+        }, bitrateOrder);
+        var bitrateItems = [{ title: 'Любой', value: 'any', selected: (state.bitrate || 'any') === 'any' }].concat(
+            (bitrateFound.length ? bitrateFound : bitrateOrder).map(function (v) {
+                return { title: BITRATE_LABELS[v] || v, value: v, selected: state.bitrate === v };
+            })
+        );
+        select.push({
+            title: 'Битрейт',
+            subtitle: (state.bitrate || 'any') === 'any' ? 'Любой' : (BITRATE_LABELS[state.bitrate] || state.bitrate),
+            kind: 'bitrate',
+            items: bitrateItems
+        });
+
         return select;
     }
 
     // Season already has its own fast-access chip ('sort'), so the 'filter' chip's own summary
-    // (shown on the collapsed toolbar chip itself, via filter.chosen) only needs voice+quality —
-    // repeating the season label there too would just duplicate what's already visible next to it.
+    // (shown on the collapsed toolbar chip itself, via filter.chosen) only needs voice+quality+
+    // bitrate — repeating the season label there too would just duplicate what's already visible
+    // next to it.
     export function activeFilterLabels(state) {
         var labels = [];
         if (state.voiceType !== 'any') labels.push(state.voiceType);
         if (state.resolution !== 'any') labels.push(QUALITY_LABELS[state.resolution] || state.resolution);
+        if (state.bitrate && state.bitrate !== 'any') labels.push(BITRATE_LABELS[state.bitrate] || state.bitrate);
         return labels;
     }
 
@@ -165,9 +190,12 @@
 
     // Quality/source/translator/tracks line — everything parseRelease() can pull out of the raw
     // title, distinct from the tracker/seeds/size/date line below it. Two lines instead of one
-    // because a torrent row has meaningfully more to say than an episode row.
+    // because a torrent row has meaningfully more to say than an episode row. Estimated per-episode
+    // bitrate (from item._score, computed by the last scoring pass for this candidate) goes first
+    // among the technical bits — it's the primary quality signal for anyone who understands it.
     export function candidateBadgeText(item) {
         var bits = [];
+        if (item._score && item._score.bitrateMbps) bits.push('~' + (Math.round(item._score.bitrateMbps * 10) / 10) + ' Mbps');
         if (item.release.resolution) bits.push(item.release.resolution);
         if (item.release.sourceType) bits.push(item.release.sourceType);
         if (item.release.hdr) bits.push(item.release.hdr);

@@ -26,6 +26,32 @@
         return runtimeSeconds > 0 ? (perEpisodeBytes * 8) / (runtimeSeconds * 1000000) : 0;
     }
 
+    // Coarse user-facing bitrate buckets (Etap 3: bitrate is the primary quality signal for people
+    // who understand it, more than file size). Computed from the ESTIMATED per-episode bitrate —
+    // no real measurement, but consistent with what qualityScore already ranks by. Keys are stable
+    // state values; labels live in results-core (BITRATE_LABELS) so the panel can render them.
+    var BITRATE_BUCKETS = [
+        { key: 'b2', max: 2 },
+        { key: 'b2-5', max: 5 },
+        { key: 'b5-12', max: 12 },
+        { key: 'b12', max: Infinity }
+    ];
+
+    export function bitrateBucket(mbps) {
+        if (!mbps || mbps <= 0) return '';
+        for (var i = 0; i < BITRATE_BUCKETS.length; i++) {
+            if (mbps < BITRATE_BUCKETS[i].max) return BITRATE_BUCKETS[i].key;
+        }
+        return 'b12';
+    }
+
+    export function estimateBitrateForState(item, state) {
+        return estimateBitrateMbps(item, {
+            seasonEpisodeCount: state.seasonEpisodeCount,
+            avgRuntimeMinutes: state.avgRuntimeMinutes
+        });
+    }
+
     // A believable "good enough for this resolution" bitrate per tier (H.264-ish; real releases
     // vary, this only needs to be roughly right since qualityScore below is a peak, not a cliff).
     // HEVC/H.265 gets scaled down — same perceived quality at a lower bitrate, so judging it
@@ -112,15 +138,25 @@
         return item.release.voiceType === voiceType;
     }
 
-    // Shared by both the season-pool reuse path and a fresh per-episode search — translation and
-    // quality are narrowing filters, not gates: if narrowing would leave nothing, fall back to the
-    // unfiltered pool rather than showing an empty result for a filter combination nothing matches.
+    function matchesBitrate(item, state) {
+        if (!state.bitrate || state.bitrate === 'any') return true;
+        return bitrateBucket(estimateBitrateForState(item, state)) === state.bitrate;
+    }
+
+    // Shared by both the season-pool reuse path and a fresh per-episode search — translation,
+    // quality and bitrate are narrowing filters, not gates: if narrowing would leave nothing, fall
+    // back to the unfiltered pool rather than showing an empty result for a filter combination
+    // nothing matches.
     export function applyStateFilters(pool, state) {
         var byVoice = pool.filter(function (item) { return matchesTranslation(item, state.voiceType); });
         if (byVoice.length) pool = byVoice;
         if (state.resolution !== 'any') {
             var byQuality = pool.filter(function (item) { return item.release.resolution === state.resolution; });
             if (byQuality.length) pool = byQuality;
+        }
+        if (state.bitrate && state.bitrate !== 'any') {
+            var byBitrate = pool.filter(function (item) { return matchesBitrate(item, state); });
+            if (byBitrate.length) pool = byBitrate;
         }
         return pool;
     }

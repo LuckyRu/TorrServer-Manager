@@ -186,4 +186,31 @@ runner.test('openTarget не бросает', () => {
     openTarget(tvMovie, 2, 'content');
 });
 
+runner.test('buildFilterItems — содержит измерение Битрейт только с реальными бакетами пула', () => {
+    const items = buildFilterItems(tvMovie, true, state);
+    const bitrate = items.find((i) => i.kind === 'bitrate');
+    if (!bitrate) throw new Error('нет пункта Битрейт');
+    const keys = bitrate.items.map((i) => i.value);
+    // single (S02E07, 2.5 ГБ) → ~15 Mbps → b12; pack (S1-5E1-62, 120 ГБ) → ~11.7 → b5-12
+    if (keys.indexOf('b5-12') < 0 || keys.indexOf('b12') < 0) throw new Error('ожидал бакеты b5-12 и b12: ' + JSON.stringify(keys));
+});
+
+runner.test('activeFilterLabels включает выбранный битрейт', () => {
+    const l = activeFilterLabels({ voiceType: 'any', resolution: 'any', bitrate: 'b5-12' });
+    if (l.join(',') !== '5–12 Мбит/с') throw new Error(JSON.stringify(l));
+});
+
+runner.test('applyStateFilters фильтрует по битрейт-бакету', () => {
+    const low = applyStateFilters(state.pool, { ...state, bitrate: 'b12' });
+    if (low.length !== 1 || low[0] !== single) throw new Error('b12 должен оставить только single');
+    const mid = applyStateFilters(state.pool, { ...state, bitrate: 'b5-12' });
+    if (mid.length !== 1 || mid[0] !== seasonPack) throw new Error('b5-12 должен оставить только пак');
+});
+
+runner.test('candidateBadgeText показывает расчётный битрейт', () => {
+    const withScore = Object.assign({}, single, { _score: { bitrateMbps: 15.2 } });
+    const text = candidateBadgeText(withScore);
+    if (text.indexOf('~15.2 Mbps') < 0) throw new Error('нет битрейта в бейдже: ' + text);
+});
+
 await runner.run();

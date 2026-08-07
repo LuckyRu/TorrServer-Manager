@@ -109,6 +109,7 @@
             }
             if (a.kind === 'voice') domain.filters.setVoiceFilter(b.value);
             else if (a.kind === 'quality') domain.filters.setResolutionFilter(b.value);
+            else if (a.kind === 'bitrate') domain.filters.setBitrateFilter(b.value);
             restoreContentFocus();
         };
         // Select.show()'s own native close() (confirmed by reading it in app.min.js) never restores
@@ -374,7 +375,8 @@
             // collapsed-chip summary text) when only the pool's *available options* changed, not the
             // user's chosen values, would be unnecessary churn — full resync only when a value the
             // user actually picked changed.
-            if (state.voiceType !== previous.voiceType || state.resolution !== previous.resolution || state.season !== previous.season) {
+            if (state.voiceType !== previous.voiceType || state.resolution !== previous.resolution ||
+                state.bitrate !== previous.bitrate || state.season !== previous.season) {
                 syncFilterChips(selectFilterChipData(state, movie, hasSeasons));
             } else if (state.pool !== previous.pool) {
                 refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));

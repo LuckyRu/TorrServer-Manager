@@ -15,6 +15,8 @@
     var VOICE_CACHE_KEY = 'torrent_mod_last_voice';
     var QUALITY_DEFAULT_KEY = 'torrent_mod_quality';
     var QUALITY_CACHE_KEY = 'torrent_mod_last_quality';
+    var BITRATE_DEFAULT_KEY = 'torrent_mod_bitrate';
+    var BITRATE_CACHE_KEY = 'torrent_mod_last_bitrate';
     var PER_MOVIE_CACHE_MAX = 200;
 
     function rememberVoice(movie, value) {
@@ -35,6 +37,15 @@
         } catch (e) {}
     }
 
+    function rememberBitrate(movie, value) {
+        try {
+            Lampa.Storage.set(BITRATE_DEFAULT_KEY, value);
+            var last = Lampa.Storage.cache(BITRATE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            last[movie.id] = value;
+            Lampa.Storage.set(BITRATE_CACHE_KEY, last);
+        } catch (e) {}
+    }
+
     export function createFiltersInteractor(options) {
         var store = options.store;
         var movie = options.movie;
@@ -45,7 +56,8 @@
         function resetFilters() {
             rememberVoice(movie, 'any');
             rememberQuality(movie, 'any');
-            store.patch({ voiceType: 'any', resolution: 'any' });
+            rememberBitrate(movie, 'any');
+            store.patch({ voiceType: 'any', resolution: 'any', bitrate: 'any' });
         }
 
         function setVoiceFilter(value) {
@@ -58,10 +70,16 @@
             store.patch({ resolution: value });
         }
 
+        function setBitrateFilter(value) {
+            rememberBitrate(movie, value);
+            store.patch({ bitrate: value });
+        }
+
         return {
             resetFilters: resetFilters,
             setVoiceFilter: setVoiceFilter,
-            setResolutionFilter: setResolutionFilter
+            setResolutionFilter: setResolutionFilter,
+            setBitrateFilter: setBitrateFilter
         };
     }
 
@@ -81,6 +99,10 @@
             var lastQuality = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
             if (lastQuality[movie.id]) resolution = lastQuality[movie.id];
 
-            store.patch({ season: season, voiceType: voiceType, resolution: resolution });
+            var bitrate = Lampa.Storage.get(BITRATE_DEFAULT_KEY, 'any');
+            var lastBitrate = Lampa.Storage.cache(BITRATE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            if (lastBitrate[movie.id]) bitrate = lastBitrate[movie.id];
+
+            store.patch({ season: season, voiceType: voiceType, resolution: resolution, bitrate: bitrate });
         } catch (e) {}
     }
