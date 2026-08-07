@@ -43,6 +43,8 @@ ADR/system-design/reference там, где одно объясняет друг�
 - **Нужно проверить, как на самом деле ведёт себя Lampa?** →
   [`how-to/verify-lampa-behavior-live.md`](how-to/verify-lampa-behavior-live.md)
 - **Точная карта компонентов** → [`reference/architecture-map.md`](reference/architecture-map.md)
+- **API Lampa для плагинов** (Component/Activity, Explorer/Scroll/Filter/Select/Controller, Template,
+  TMDB, дизайн-токены, нативные парсеры сезонов/серий) → [`reference/lampa-plugin-api.md`](reference/lampa-plugin-api.md)
 - **Порты, пути, эндпоинты** → [`reference/ports-paths-and-endpoints.md`](reference/ports-paths-and-endpoints.md)
 - **Формула оценки раздач Torrent Mod** →
   [`reference/torrent-mod-scoring-model.md`](reference/torrent-mod-scoring-model.md)

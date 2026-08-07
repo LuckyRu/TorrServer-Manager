@@ -5,3 +5,4 @@ publish/
 .vs/
 node_modules/
 Plugins/TorrentModPlugin.bundle.js
+vendor/
