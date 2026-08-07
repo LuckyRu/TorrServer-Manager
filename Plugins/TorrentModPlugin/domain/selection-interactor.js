@@ -12,6 +12,7 @@
     import { selectCandidatesForEpisode } from './results-selectors.js';
 
     var DEFAULT_KEY = 'torrent_mod_default_torrent';
+    var LAST_EPISODE_KEY = 'torrent_mod_last_episode';
     var PER_MOVIE_CACHE_MAX = 200;
 
     export function createSelectionInteractor(options) {
@@ -83,6 +84,25 @@
             } catch (e) {}
         }
 
+        // Remember where the user was (season + episode) so the screen can restore focus there on
+        // reopen — the season half already lives in torrent_mod_last_season (filters-interactor);
+        // this is the episode half, written together with the season it belonged to.
+        function saveLastEpisode(movie, season, episode) {
+            try {
+                var all = Lampa.Storage.cache(LAST_EPISODE_KEY, PER_MOVIE_CACHE_MAX, {});
+                all = all || {};
+                all[movie.id] = { season: season, episode: episode };
+                Lampa.Storage.set(LAST_EPISODE_KEY, all);
+            } catch (e) {}
+        }
+
+        function getSavedEpisode(movie) {
+            try {
+                var all = Lampa.Storage.cache(LAST_EPISODE_KEY, PER_MOVIE_CACHE_MAX, {});
+                return (all && all[movie.id]) || null;
+            } catch (e) { return null; }
+        }
+
         function selectEpisode(episode, pickerOnly) {
             var state = store.get();
             var target = {
@@ -97,6 +117,7 @@
                 lastEpisode: episode,
                 searchText: state.customQuery || searchQueryText(target)
             });
+            saveLastEpisode(object.movie, state.season, episode);
 
             // Explicit manual query — the ONLY network search left.
             if (state.customQuery) { freshSearch(target, pickerOnly); return; }
@@ -302,6 +323,7 @@
             openPicker: openPicker,
             closePicker: closePicker,
             playPickerCandidate: playPickerCandidate,
+            getSavedEpisode: getSavedEpisode,
             destroy: destroy
         };
     }

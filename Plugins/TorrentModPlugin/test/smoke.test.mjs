@@ -77,6 +77,10 @@ runner.test('сериал: start → пул → смена сезона → фи
     const picked = domain.store.get();
     if (picked.stage === 'candidates') throw new Error('клик не должен показывать список кандидатов, stage=' + picked.stage);
     if (picked.lastEpisode !== 7) throw new Error('lastEpisode не обновился');
+    // последняя серия запомнена для возврата фокуса при повторном входе
+    const savedEp = Lampa.Storage.get('torrent_mod_last_episode');
+    if (!savedEp || !savedEp[tvMovie.id] || savedEp[tvMovie.id].episode !== 7) throw new Error('последняя серия не сохранена: ' + JSON.stringify(savedEp));
+    if (domain.selection.getSavedEpisode(tvMovie).episode !== 7) throw new Error('getSavedEpisode вернул не то');
 
     // ручной запрос — единственный сетевой поиск; сериал остаётся на сериях
     domain.selection.searchWithQuery('Futurama');

@@ -46,6 +46,7 @@
         var grid = $('<div class="torrent-mod__list"></div>');
         var status = $('<div class="torrent-mod__status"></div>');
         var episodeRows = {};
+        var initialFocusDone = false;
 
         // Side picker panel (right-arrow on an episode row): a slide-in overlay listing torrents
         // for that episode. Own Scroll + Controller, surface-fixed like the old preload overlay.
@@ -269,8 +270,10 @@
         function renderEpisodes(episodes, season) {
             grid.empty();
             episodeRows = {};
+            var firstNumber = null;
             episodes.forEach(function (episode) {
                 var number = parseInt(episode.episode_number, 10);
+                if (firstNumber == null) firstNumber = number;
                 var view = canonicalTimeline(movie, season, number);
                 var node = row(
                     'Сезон ' + season + ' / Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
@@ -283,6 +286,20 @@
                 episodeRows[number] = node;
             });
             refreshGrid();
+            // First render only: move focus into the list (Lampa starts on the left Explorer card)
+            // and restore it to the last-watched episode of this season, or the first one.
+            if (!initialFocusDone && hasSeasons && firstNumber != null) {
+                initialFocusDone = true;
+                try { Lampa.Controller.toggle('content'); } catch (e) {}
+                var saved = null;
+                try { saved = domain.selection.getSavedEpisode(movie); } catch (e2) {}
+                var focusNumber = firstNumber;
+                if (saved && saved.season === season && episodeRows[saved.episode]) focusNumber = saved.episode;
+                var node = episodeRows[focusNumber];
+                if (node && node[0] && node[0].offsetParent) {
+                    try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e3) {}
+                }
+            }
         }
 
         function showMessage(message, retry) {
