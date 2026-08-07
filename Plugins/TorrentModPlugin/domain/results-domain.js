@@ -45,12 +45,11 @@
         function start() {
             if (hasSeasons) episodes.start();
             else {
-                // A movie has no per-episode runtime from TMDB season data — use its own runtime so
-                // the estimated bitrate (and the Битрейт filter buckets) is not off by the 42-min
-                // fallback (found in review).
+                // Movie: load the whole-work pool, then run the movie flow (auto-play a persisted
+                // pick if any, otherwise show the torrent list).
                 var runtime = parseInt(movie.runtime, 10) || 0;
                 if (runtime) store.patch({ avgRuntimeMinutes: runtime });
-                episodes.loadAllTorrents(function () { selection.selectEpisode(0); });
+                episodes.loadAllTorrents(function () { selection.startMovie(); });
             }
         }
 

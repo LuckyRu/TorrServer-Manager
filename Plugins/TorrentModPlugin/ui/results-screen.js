@@ -429,15 +429,19 @@
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },
                 right: function () {
-                    // Right-arrow on an EPISODE row opens the side picker instead of moving focus
-                    // (scoped to our own grid — a global .focus query could hit a foreign overlay).
-                    // The episode is dispatched into reactive state (setActiveEpisode) so the picker
-                    // and its close both read the same "where was I" truth from the store.
+                    // Right-arrow on an EPISODE row opens the side picker (series); on a movie's
+                    // TORRENT candidate row it opens the same picker for the movie (season 0) — so
+                    // the movie choice flow reuses the exact panel/torrentRow/persistence infra.
+                    // Scoped to our own grid — a global .focus query could hit a foreign overlay.
                     var focused = grid.find('.torrent-mod-episode.focus')[0];
                     if (focused) {
                         var number = parseInt($(focused).attr('data-episode'), 10);
                         domain.selection.setActiveEpisode(number);
                         domain.selection.openPicker();
+                        return;
+                    }
+                    if (grid.find('.torrent-mod-candidate.focus')[0]) {
+                        domain.selection.openPicker(0);
                         return;
                     }
                     Navigator.move('right');
@@ -501,6 +505,7 @@
             }
             candidates.forEach(function (item) {
                 var node = row(item.title, candidateSubtitleText(item));
+                node.addClass('torrent-mod-candidate');
                 node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
                 node.on('hover:enter', function () { domain.selection.playCandidate(item, target); });
                 grid.append(node);

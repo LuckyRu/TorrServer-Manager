@@ -91,13 +91,13 @@ runner.test('сериал: start → пул → смена сезона → фи
     if (requeried.stage !== 'episodes') throw new Error('сериал должен остаться на сериях, stage=' + requeried.stage);
 });
 
-runner.test('фильм: start → пул → локальный пикер (без автоплея на пустом рое)', async () => {
+runner.test('фильм: вход → список торрентов (без автоплея), выбор сохраняется как дефолт', async () => {
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
         results: [
-            jackettRaw('Дюна: Часть вторая / Dune: Part Two (2024) 1080p WEB-DL', 0, 0, 'cccc'),
+            jackettRaw('Дюна: Часть вторая / Dune: Part Two (2024) 1080p WEB-DL', 12, 6, 'cccc'),
             jackettRaw('Дюна: Часть вторая / Dune: Part Two (2024) 2160p Remux', 0, 0, 'dddd')
         ],
         indexers: []
@@ -107,16 +107,46 @@ runner.test('фильм: start → пул → локальный пикер (б�
     domain.start();
     await flushMicrotasks();
 
-    const state = domain.store.get();
+    let state = domain.store.get();
     if (state.poolStatus !== 'ready') throw new Error('пул фильма не загрузился');
-    if (state.stage !== 'candidates') throw new Error('фильм должен сразу показать кандидатов, stage=' + state.stage);
+    // вход НЕ автоплеит без сохранённого выбора — показывает список торрентов (primary content)
+    if (state.stage !== 'candidates') throw new Error('фильм должен показать список торрентов, stage=' + state.stage);
     if (!state.candidates || state.candidates.items.length !== 2) throw new Error('ожидал 2 кандидата для фильма');
 
-    // смена названия фильма — пикер без автоплея
+    // выбор из списка → персистится как дефолт сезона 0
+    const chosen = state.candidates.items[0];
+    domain.selection.playCandidate(chosen, state.candidates.target);
+    const saved = Lampa.Storage.get('torrent_mod_default_torrent');
+    if (!saved || !saved[movie.id] || !saved[movie.id][0]) throw new Error('дефолт фильма не сохранён: ' + JSON.stringify(saved));
+    if (saved[movie.id][0].title !== chosen.title) throw new Error('сохранён не тот торрент');
+
+    // смена названия фильма — ручной поиск без автоплея
     domain.selection.searchWithQuery('Dune');
     await flushMicrotasks();
     const requeried = domain.store.get();
     if (requeried.stage !== 'candidates') throw new Error('после смены названия фильм должен показать кандидатов');
+});
+
+runner.test('фильм: вход с сохранённым дефолтом — автозапуск выбранного торрента', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [
+            jackettRaw('Дюна: Часть вторая / Dune: Part Two (2024) 1080p WEB-DL', 12, 6, 'eeee'),
+            jackettRaw('Дюна: Часть вторая / Dune: Part Two (2024) 2160p Remux', 0, 0, 'ffff')
+        ],
+        indexers: []
+    });
+    // заранее сохраняем дефолт фильма (сезон 0)
+    Lampa.Storage.set('torrent_mod_default_torrent', { [movie.id]: { 0: { id: 'magnet xt urn btih eeee', title: 'x', size: 1 } } });
+
+    const domain = createResultsDomain({ object: { movie: movie, season: 0 }, movie: movie, hasSeasons: false });
+    domain.start();
+    await flushMicrotasks();
+
+    const state = domain.store.get();
+    if (state.stage === 'candidates') throw new Error('с сохранённым дефолтом фильм должен автозапуститься, а не показывать список');
 });
 
 runner.test('гонка: freshSearch при active customQuery отбрасывается сменой сезона до ответа', async () => {

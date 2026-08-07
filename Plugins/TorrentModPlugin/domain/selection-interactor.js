@@ -40,7 +40,8 @@
                 if (pendingSelection && (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
                     var pending = pendingSelection;
                     pendingSelection = null;
-                    if (pending.picker) openPicker(pending.episode);
+                    if (pending.movie) startMovie();
+                    else if (pending.picker) openPicker(pending.episode);
                     else selectEpisode(pending.episode, pending.pickerOnly);
                 } else if (pendingSelection) {
                     schedulePendingRetry();
@@ -101,6 +102,43 @@
                 var all = Lampa.Storage.cache(LAST_EPISODE_KEY, PER_MOVIE_CACHE_MAX, {});
                 return (all && all[movie.id]) || null;
             } catch (e) { return null; }
+        }
+
+        // MOVIE flow — a movie's primary content IS its torrents (no episode list). On entry:
+        // auto-play ONLY a previously picked (persisted season-0 default) torrent if it's still a
+        // valid candidate; otherwise show the torrent list so the user can actually pick one (the
+        // old unconditional auto-play made it impossible to choose on first entry — found by the
+        // architect). Reuses the same candidates/persistence/picker primitives as the series flow.
+        function startMovie() {
+            var state = store.get();
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                pendingSelection = { season: 0, episode: 0, movie: true };
+                notify('Раздачи ещё загружаются…');
+                schedulePendingRetry();
+                return;
+            }
+            var target = buildMovieTarget();
+            var candidates = selectCandidatesForEpisode(object, state, 0);
+            if (!candidates.length) {
+                store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
+                return;
+            }
+            var saved = readSeasonDefault(object.movie, 0);
+            var chosen = findSavedDefault(candidates, saved);
+            if (chosen) { startDownload(chosen, target); return; }
+            store.patch({ stage: 'candidates', candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: false } });
+        }
+
+        function buildMovieTarget() {
+            var state = store.get();
+            return {
+                movie: object.movie,
+                season: 0,
+                episode: 0,
+                seasonEpisodeCount: 0,
+                avgRuntimeMinutes: state.avgRuntimeMinutes,
+                customQuery: state.customQuery
+            };
         }
 
         function selectEpisode(episode, pickerOnly) {
@@ -327,6 +365,10 @@
         }
 
         function playCandidate(item, target) {
+            // Picking a torrent from a list is an explicit user choice — persist it as the default
+            // for this season (0 for movies), so the next entry auto-plays it (found by the architect:
+            // movie picks from the full list were never remembered before).
+            saveSeasonDefault(object.movie, target.season || 0, item);
             startDownload(item, target);
         }
 
@@ -340,6 +382,7 @@
         }
 
         return {
+            startMovie: startMovie,
             selectEpisode: selectEpisode,
             searchWithQuery: searchWithQuery,
             playCandidate: playCandidate,
