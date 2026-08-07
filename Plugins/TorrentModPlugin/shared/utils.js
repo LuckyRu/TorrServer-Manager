@@ -70,7 +70,7 @@
                     resolution: r.resolution,
                     source: r.sourceType,
                     hdr: r.hdr,
-                    codec: r.codec,
+                    codec: r.videoCodec,
                     voice: r.voiceType,
                     translator: r.translator,
                     audioTracks: r.audioTracks || '',

@@ -118,7 +118,7 @@
     export function parseRelease(title) {
         var source = String(title || '');
         var signals = parseSignals(source);
-        return {
+        var release = {
             seasons: signals.seasons,
             episodeFrom: signals.episodeFrom,
             episodeTo: signals.episodeTo,
@@ -157,6 +157,52 @@
             ]),
             translator: extractTranslator(source),
             subtitles: /\bsub\b|\bsubs\b|субтитр/i.test(source),
-            codec: matchOne(source, [[/\bh\.?265\b|\bhevc\b/i, 'H.265'], [/\bh\.?264\b|\bavc\b/i, 'H.264']])
+            // Video codec — extended beyond H.264/H.265 to catch "древнее говно" (XviD/DivX/MPEG-2/
+            // VC-1/WMV/RealVideo) that WebOS cannot play without TorrServer transcoding. The word
+            // boundary is deliberately ASCII-safe on codec names (they're latin).
+            videoCodec: matchOne(source, [
+                [/\bav1\b/i, 'AV1'],
+                [/\bh\.?265\b|\bhevc\b/i, 'H.265'],
+                [/\bh\.?264\b|\bavc\b/i, 'H.264'],
+                [/\bxvid\b/i, 'XviD'],
+                [/\bdivx\b/i, 'DivX'],
+                [/\bmpeg-?2\b|\bmp2\b/i, 'MPEG-2'],
+                [/\bvc-?1\b/i, 'VC-1'],
+                [/\bwmv[1-9]?\b|\basf\b/i, 'WMV'],
+                [/\brealvideo\b|\brv(?:10|20|30|40)\b/i, 'RealVideo'],
+                [/\bh\.?263\b|\bsorenson\b/i, 'H.263']
+            ]),
+            // Container from the title (AVI/MP4/MKV/...) — a title-level heuristic, NOT proof (AVI
+            // can hold H.264, MP4 doesn't guarantee it). 'TS' is deliberately not parsed as a
+            // container: in release titles it means телесинк (a source type), not Transport Stream.
+            container: matchOne(source, [
+                [/\bwebm\b/i, 'WebM'],
+                [/\bavi\b/i, 'AVI'],
+                [/\bmkv\b/i, 'MKV'],
+                [/\bmp4\b/i, 'MP4'],
+                [/\bmpe?g\b/i, 'MPG'],
+                [/\bvob\b/i, 'VOB'],
+                [/\bflv\b/i, 'FLV'],
+                [/\brmvb\b|\brm\b/i, 'RM'],
+                [/\b(?:m2ts|mts)\b/i, 'TS']
+            ]),
+            // Title-level compatibility guess: 'risky' for old containers/codecs WebOS won't play
+            // without transcoding (and AV1 on older sets), 'likely' for explicit H.264/H.265,
+            // 'unknown' when the title says nothing reliable. Real compatibility is only known
+            // after the file is picked (ffprobe) — see smart-preload.js.
+            compatibility: null
         };
+        release.compatibility = computeCompatibility(release);
+        return release;
+    }
+
+    var RISKY_CONTAINERS = ['AVI', 'MPG', 'VOB', 'WMV', 'FLV', 'RM'];
+    var RISKY_CODECS = ['XviD', 'DivX', 'MPEG-2', 'VC-1', 'WMV', 'RealVideo', 'H.263'];
+
+    export function computeCompatibility(release) {
+        if (RISKY_CODECS.indexOf(release.videoCodec) >= 0) return 'risky';
+        if (RISKY_CONTAINERS.indexOf(release.container) >= 0) return 'risky';
+        if (release.videoCodec === 'AV1') return 'risky'; // old WebOS sets lack AV1 decode
+        if (release.videoCodec === 'H.264' || release.videoCodec === 'H.265') return 'likely';
+        return 'unknown';
     }

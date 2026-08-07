@@ -60,7 +60,7 @@
 
     function referenceBitrateMbps(release) {
         var base = REFERENCE_BITRATE_MBPS[release.resolution] || REFERENCE_BITRATE_MBPS['1080p'];
-        return release.codec === 'H.265' ? base * 0.6 : base;
+        return release.videoCodec === 'H.265' ? base * 0.6 : base;
     }
 
     // matchScore is a hard gate, not a scored component: title has to plausibly be this movie/show,
@@ -124,14 +124,30 @@
 
         var availabilityScore = Math.min(24, Math.log(item.seeders + item.peers * 1.5 + 1) * 6);
 
+        // Title-level compatibility penalty (see release-parsing.computeCompatibility): old
+        // containers/codecs WebOS can't play without TorrServer transcoding are ranked DOWN but
+        // not gated out — the title is only a heuristic, and with GST even an AVI might play.
+        // Kept OUT of qualityScore: quality and playability are orthogonal axes, and mixing them
+        // would corrupt the bitrate peak's meaning.
+        var formatPenalty = formatPenaltyFor(release);
+
         return {
             passes: passes,
-            value: qualityScore + availabilityScore,
+            value: qualityScore + availabilityScore - formatPenalty,
             matchScore: matchScore,
             qualityScore: qualityScore,
             availabilityScore: availabilityScore,
+            formatPenalty: formatPenalty,
             bitrateMbps: bitrateMbps
         };
+    }
+
+    // Format penalty policy: explicit 'risky' codec/container — big hit (ancient AVI/XviD/MPEG-2/
+    // VC-1/WMV/RealVideo), AV1 — moderate (older WebOS sets lack AV1 decode, newer ones are fine),
+    // likely/unknown — no penalty.
+    function formatPenaltyFor(release) {
+        if (!release || release.compatibility !== 'risky') return 0;
+        return release.videoCodec === 'AV1' ? 6 : 12;
     }
 
     function matchesTranslation(item, voiceType) {

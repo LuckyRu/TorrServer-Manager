@@ -213,4 +213,22 @@ runner.test('candidateBadgeText показывает расчётный битр
     if (text.indexOf('~15.2 Mbps') < 0) throw new Error('нет битрейта в бейдже: ' + text);
 });
 
+runner.test('формат: рискованная раздача (XviD AVI) получает штраф и маркер «Риск:»', () => {
+    const riskyItem = {
+        title: 'Фильм (2003) 720p XviD AVI', tracker: 'RuTracker', size: 1400000000,
+        seeders: 10, peers: 5, magnet: 'magnet:?xt=urn:btih:ee', link: '',
+        release: parseRelease('Фильм (2003) 720p XviD AVI')
+    };
+    const likelyItem = {
+        title: 'Фильм (2024) 720p H.264 MP4', tracker: 'RuTracker', size: 1400000000,
+        seeders: 10, peers: 5, magnet: 'magnet:?xt=urn:btih:ff', link: '',
+        release: parseRelease('Фильм (2024) 720p H.264 MP4')
+    };
+    const target = { movie: movie, season: 0, episode: 0, seasonEpisodeCount: 0, avgRuntimeMinutes: 0 };
+    const riskyScore = scoreCandidate(riskyItem, target);
+    const likelyScore = scoreCandidate(likelyItem, target);
+    if (!(riskyScore.value < likelyScore.value)) throw new Error('рискованный не штрафуется: ' + riskyScore.value + ' vs ' + likelyScore.value);
+    if (candidateBadgeText(riskyItem).indexOf('Риск: XviD') < 0) throw new Error('нет маркера «Риск:»: ' + candidateBadgeText(riskyItem));
+});
+
 await runner.run();

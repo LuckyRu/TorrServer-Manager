@@ -205,12 +205,19 @@
         if (item.release.resolution) bits.push(item.release.resolution);
         if (item.release.sourceType) bits.push(item.release.sourceType);
         if (item.release.hdr) bits.push(item.release.hdr);
-        if (item.release.codec) bits.push(item.release.codec);
+        if (item.release.videoCodec) bits.push(item.release.videoCodec);
+        if (item.release.container) bits.push(item.release.container);
         if (item.release.translator) bits.push(item.release.translator);
         else if (item.release.voiceType) bits.push(item.release.voiceType);
         if (item.release.audioTracks > 1) bits.push(item.release.audioTracks + ' ауд. дор.');
         else if (item.release.audioChannels) bits.push(item.release.audioChannels);
         if (item.release.subtitles) bits.push('субтитры');
+        // Title-level compatibility warning ("древнее говно"): WebOS won't play XviD/DivX/MPEG-2/
+        // VC-1/WMV/AVI without TorrServer transcoding. Not a hard gate — it's a visible warning and
+        // a ranking penalty, since the title is only a heuristic (see scoring.formatPenalty).
+        if (item.release.compatibility === 'risky') {
+            bits.push('Риск: ' + (item.release.videoCodec || item.release.container || 'формат'));
+        }
         return bits.join(' · ');
     }
 

@@ -80,11 +80,11 @@ const releaseCases = [
     ['Дюна / Dune: Part One (Дени Вильнёв) [2021, Фантастика, боевик, драма, приключения, BDRip] Dub (Пифагор) + Sub (Rus/Eng) + hardsub (Rus)',
         { sourceType: 'BDRip', voiceType: 'Дубляж', translator: 'Пифагор', subtitles: true }],
     ['Интерстеллар / Interstellar (2014) BDRip [H.265/1080p] [10-bit] [IMAX Edition]',
-        { resolution: '1080p', sourceType: 'BDRip', codec: 'H.265' }],
+        { resolution: '1080p', sourceType: 'BDRip', videoCodec: 'H.265' }],
     ['Гладиатор 2 / Gladiator II (2024) WEBRip [H.264/1080p]',
-        { resolution: '1080p', sourceType: 'WEBRip', codec: 'H.264' }],
+        { resolution: '1080p', sourceType: 'WEBRip', videoCodec: 'H.264' }],
     ['Дюна: Пророчество / Dune: Prophecy [S1] (2024) WEB-DL-HEVC 2160p | 4K | Dolby Vision P5',
-        { resolution: '2160p', sourceType: 'WEB-DL', codec: 'H.265', hdr: 'DV' }],
+        { resolution: '2160p', sourceType: 'WEB-DL', videoCodec: 'H.265', hdr: 'DV' }],
     ['Во всё тяжкое / Ричард прощается / The Professor (Уэйн Робертс) [2018, Драма, комедия, BDRip] [DUB] [iTunes]',
         { sourceType: 'BDRip', voiceType: 'Дубляж' }],
     ['Сериал S01 1080p WEB-DL Кубик.в.Кубе',
@@ -121,6 +121,18 @@ const formatCases = [
     ['Сериал E01-E11 [WEBRip 1080p][HEVC][1-11]', { epFrom: 1, epTo: 11, explicitSeason: false }],
     // WEB-DLRip не должен поглощаться как WEB-DL
     ['Фильм (2024) WEB-DLRip 1080p', { sourceType: 'WEBRip' }],
+    // «древнее говно»: контейнеры/кодеки, которые WebOS не играет без транскодинга
+    ['Фильм (2003) 720p XviD AVI', { videoCodec: 'XviD', container: 'AVI', compatibility: 'risky' }],
+    ['Фильм (2005) 1080p DivX', { videoCodec: 'DivX', compatibility: 'risky' }],
+    ['Фильм (2004) 720p MPEG-2', { videoCodec: 'MPEG-2', compatibility: 'risky' }],
+    ['Фильм (2010) 720p VC-1 MKV', { videoCodec: 'VC-1', compatibility: 'risky' }],
+    ['Фильм (1999) RMVB', { container: 'RM', compatibility: 'risky' }],
+    ['Фильм (2024) 1080p AV1', { videoCodec: 'AV1', compatibility: 'risky' }],
+    // потоковые — likely, без ложного маркера риска
+    ['Фильм (2024) 1080p H.264 MP4', { videoCodec: 'H.264', container: 'MP4', compatibility: 'likely' }],
+    ['Сериал (2021) 1080p HEVC MKV', { videoCodec: 'H.265', container: 'MKV', compatibility: 'likely' }],
+    // без формата в названии — unknown, не отсекаем
+    ['Фильм (2018) 1080p WEB-DL', { compatibility: 'unknown' }],
     // кириллический \b: «Дубляж» распознаётся
     ['Фильм (2024) 1080p Дубляж', { voiceType: 'Дубляж' }],
     // dual audio

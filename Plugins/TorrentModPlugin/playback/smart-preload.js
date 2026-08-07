@@ -48,6 +48,13 @@
             else if (signals.explicitEpisode) score -= 100;
         }
         if (signals.explicitSeason) score += signals.seasons.indexOf(target.season) >= 0 ? 30 : -100;
+        // Format as a TIE-BREAKER only: the right episode/season always wins, but between two
+        // equally-matching files prefer a streamable container over "древнее говно" (AVI/MPG/VOB/
+        // WMV/RM/FLV) that WebOS can't play without TorrServer transcoding (architect's Etap:
+        // «древние торренты»). Extension is a heuristic, not proof — small weights on purpose.
+        var ext = path.toLowerCase().split('.').pop();
+        if (['mp4', 'mkv', 'm4v', 'mov', 'webm', 'ts', 'm2ts', 'mts'].indexOf(ext) >= 0) score += 5;
+        else if (['avi', 'mpg', 'mpeg', 'vob', 'wmv', 'asf', 'flv', 'rm', 'rmvb', 'divx'].indexOf(ext) >= 0) score -= 5;
         return score;
     }
 
@@ -139,6 +146,9 @@
                     var audio = streams.filter(function (s) { return s.codec_type === 'audio'; });
                     var subs = streams.filter(function (s) { return s.codec_type === 'subtitle'; });
                     var bits = [];
+                    // Real container from ffprobe, when TorrServer exposes it (e.g. avi/matroska/mp4)
+                    var formatName = probe && probe.format && (probe.format.format_name || probe.format.format);
+                    if (formatName) bits.push(String(formatName).toUpperCase());
                     if (video) bits.push((video.height ? video.height + 'p' : '') + (video.codec_name ? ' ' + video.codec_name.toUpperCase() : ''));
                     if (audio.length) bits.push(audio.length + ' ауд.дорожек');
                     if (subs.length) bits.push(subs.length + ' субтитров');
