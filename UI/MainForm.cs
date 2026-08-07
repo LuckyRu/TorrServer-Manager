@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.Reflection;
+using TorrServerManager.Controllers;
+using TorrServerManager.Infrastructure;
+using TorrServerManager.Services;
 
-namespace TorrServerManager;
+namespace TorrServerManager.UI;
 
 internal sealed class MainForm : Form
 {

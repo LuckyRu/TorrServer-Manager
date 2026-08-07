@@ -1,3 +1,6 @@
+using TorrServerManager.Infrastructure;
+using TorrServerManager.UI;
+
 namespace TorrServerManager;
 
 internal static class Program

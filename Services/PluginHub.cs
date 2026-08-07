@@ -4,8 +4,11 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TorrServerManager.Controllers;
+using TorrServerManager.Infrastructure;
+using TorrServerManager.Plugins;
 
-namespace TorrServerManager;
+namespace TorrServerManager.Services;
 
 internal sealed class ManagedPlugin
 {

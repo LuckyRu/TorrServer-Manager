@@ -1,6 +1,8 @@
 using System.Reflection;
+using TorrServerManager.Infrastructure;
+using TorrServerManager.Services;
 
-namespace TorrServerManager;
+namespace TorrServerManager.Plugins;
 
 internal sealed record BuiltInPluginDefinition(string Id, string Url, string Name, string Category, string ResourceName);
 

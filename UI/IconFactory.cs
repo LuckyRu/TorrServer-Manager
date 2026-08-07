@@ -1,7 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
-namespace TorrServerManager;
+namespace TorrServerManager.UI;
 
 internal static class IconFactory
 {

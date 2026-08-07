@@ -20,6 +20,6 @@
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="TorrentModPlugin.js" LogicalName="TorrServerManager.TorrentModPlugin.js" />
+    <EmbeddedResource Include="Plugins/TorrentModPlugin.js" LogicalName="TorrServerManager.TorrentModPlugin.js" />
   </ItemGroup>
 </Project>

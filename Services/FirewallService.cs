@@ -1,8 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using TorrServerManager.Infrastructure;
 
-namespace TorrServerManager;
+namespace TorrServerManager.Services;
 
 internal static class FirewallService
 {

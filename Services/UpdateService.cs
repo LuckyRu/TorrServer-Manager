@@ -2,8 +2,10 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using TorrServerManager.Controllers;
+using TorrServerManager.Infrastructure;
 
-namespace TorrServerManager;
+namespace TorrServerManager.Services;
 
 internal sealed record ReleaseInfo(
     string Version,

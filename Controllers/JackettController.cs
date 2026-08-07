@@ -2,8 +2,9 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using TorrServerManager.Infrastructure;
 
-namespace TorrServerManager;
+namespace TorrServerManager.Controllers;
 
 internal sealed record JackettStatus(
     bool IsInstalled,

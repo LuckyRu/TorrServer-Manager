@@ -61,6 +61,14 @@ The app is a single WinForms `Form` (`MainForm.cs`) wired up to a handful of con
 There is no DI container — `MainForm` constructs and owns everything, and disposes it all in
 `OnFormClosing`.
 
+Source is organized into folders that match their C# namespace (`TorrServerManager.<FolderName>`):
+`Infrastructure/` (`AppPaths`, `AppLog` — no dependencies on anything else in the project),
+`Controllers/` (`ServerController`, `JackettController` — external child-process management),
+`Services/` (`UpdateService`, `PluginHub`, `FirewallService` — depend on `Controllers`/`Infrastructure`),
+`Plugins/` (`BuiltInPlugins.cs` + the embedded `TorrentModPlugin.js`), `UI/` (`MainForm`, `IconFactory`).
+`Program.cs`, `TorrServerManager.csproj`, and `app.manifest` stay at the repository root as the
+entry-point/build-config layer above all of them.
+
 - **`Program.cs`** — entry point. Enforces single-instance via a named `Mutex` and signals an already
   running instance through a named `EventWaitHandle` (`Local\TorrServerManager.Show`) so a second launch
   just brings the existing tray window forward instead of starting a second process.

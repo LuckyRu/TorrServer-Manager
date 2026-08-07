@@ -1,4 +1,4 @@
-namespace TorrServerManager;
+namespace TorrServerManager.Infrastructure;
 
 internal static class AppPaths
 {

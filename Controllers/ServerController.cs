@@ -3,8 +3,9 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
+using TorrServerManager.Infrastructure;
 
-namespace TorrServerManager;
+namespace TorrServerManager.Controllers;
 
 internal sealed record ServerStatus(
     bool ProcessRunning,
