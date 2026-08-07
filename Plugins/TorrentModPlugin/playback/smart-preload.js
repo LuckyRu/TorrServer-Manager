@@ -70,7 +70,11 @@
 
     // Picks the best playable file from the metadata TorrServer has resolved (file_stats), scoring
     // season/episode signals in the file path like before — just from the API response instead of
-    // the native screen's torrent_file events.
+    // the native screen's torrent_file events. Once a file is chosen we explicitly KICK OFF the
+    // file preload (see initiatePreload) — /cache polling alone only reads state, it never starts
+    // the download (the native screen used to do it via its own preload() on hover:enter; losing
+    // that request in the direct-playback rewrite was the root cause of the "0%, nothing loads"
+    // report, found by the architect).
     function pickBestFile(pending) {
         if (!pending || pending.clicked || !pending.files || !pending.files.length) return;
         var scored = [];
@@ -79,8 +83,28 @@
         }
         scored.sort(function (a, b) { return b.score - a.score; });
         pending.bestFile = scored[0].f;
+        initiatePreload(pending);
         probeRealTracks(pending);
         maybeProceed(pending);
+    }
+
+    // The stream URL built by Lampa.Torserver.stream() ends with `&play` (or `&preload` when the
+    // torrserver_preload setting is on). The `&preload` variant is the actual "start filling the
+    // cache" command for TorrServer — the native screen fired it first, then polled `&stat`
+    // (torrent.js preload(), 258-309). We fire it once when the file is picked; our existing /cache
+    // polling then reports real progress. Deliberately only swaps the play→preload parameter of the
+    // OFFICIAL URL (no invented endpoints).
+    function initiatePreload(pending) {
+        if (!pending || !pending.bestFile || !pending.hash || pending.preloadStarted) return;
+        var base = torrServerBase();
+        if (!base) return;
+        pending.preloadStarted = true;
+        var file = pending.bestFile;
+        var url;
+        try { url = Lampa.Torserver.stream(file.path, pending.hash, file.id); } catch (e) { return; }
+        var preloadUrl = url.replace(/([?&])play$/, '$1preload');
+        if (preloadUrl === url && url.indexOf('preload') < 0) preloadUrl = url + '&preload';
+        try { $.ajax({ url: preloadUrl, timeout: 6000 }).done(function () {}).fail(function () {}); } catch (e) {}
     }
 
     // Confirms our title-guessed badges (resolution/codec/audio/subs, all regexed out of the
@@ -183,8 +207,20 @@
         Lampa.Controller.toggle('torrent_mod_preload');
 
         pending.clockTimer = setInterval(function () {
-            if ((Date.now() - pending.started) / 1000 >= timeoutSeconds) {
+            var elapsed = (Date.now() - pending.started) / 1000;
+            if (elapsed >= timeoutSeconds && pending.bestFile) {
+                // Buffer target not met in time (or metadata was slow but a file IS picked) — start
+                // playback anyway; the native path's own preload also gave up at a deadline.
                 pending.timedOut = true;
+                maybeProceed(pending);
+            } else if (elapsed >= timeoutSeconds * 2) {
+                // Double the budget when NO file has been picked yet: metadata for .torrent links can
+                // legitimately take longer than the playback timeout, and force-playing without a
+                // file is meaningless. After 2x give up with an honest error instead of an eternal
+                // overlay (found by the architect: the single 60s timeout used to fire before
+                // Torserver.files ever resolved, killing the whole flow).
+                pending.timedOut = true;
+                pending.error = 'Не удалось получить файлы раздачи';
                 maybeProceed(pending);
             }
         }, 1000);
@@ -355,7 +391,7 @@
             playlist: buildPlaylist(pending)
         };
 
-        try { Lampa.Player.play(data); } catch (e) {}
+        try { Lampa.Player.play(data); } catch (e) { console.warn('Torrent Mod: Player.play failed', e); }
         // Native torrent.js also routes back from the player to the modal/previous screen
         // (Player.callback + Controller.toggle('modal'), torrent.js:442-445).
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle('modal'); }); } catch (e) {}
@@ -387,6 +423,7 @@
             timeoutSeconds: timeoutSeconds,
             files: [],
             bestFile: null,
+            preloadStarted: false,
             started: Date.now(),
             clicked: false,
             ready: false,

@@ -120,7 +120,12 @@ Torrent Mod запускается **из уже найденного в TMDB п
 - **Прямой путь воспроизведения (без нативного экрана торрентов)** — выполнен (см. план
   «прямой путь» в обсуждении): `Lampa.Torrent.start()` больше НЕ вызывается. Вместо него:
   `Lampa.Torserver.hash({link})` → поллинг `Torserver.files(hash)` → `pickBestFile()` по
-  `file_stats` → `Torserver.stream(path, hash, id)` → `Lampa.Player.play({url, timeline, playlist})`.
-  Три native-сайд-эффекта компенсируются явно: `Favorite.add('history')`, `timeline:
+  `file_stats` → **`initiatePreload()`** (первый GET к stream URL с `&preload` — именно этот запрос
+  заставляет TorrServer качать файл в кэш; без него `/cache`-поллинг вечно показывал 0%, найдено
+  архитектором: поллинг читает состояние, но не запускает загрузку) → `/cache`-поллинг до
+  duration-based target → `Torserver.stream(path, hash, id)` → `Lampa.Player.play({url, timeline,
+  playlist})`. Три native-сайд-эффекта компенсируются явно: `Favorite.add('history')`, `timeline:
   Timeline.view(Torserver.parse(...).hash)`, `data.playlist` из playable-файлов пака (next-episode).
+  Таймаут не закрывает preload раньше выбора файла (metadata `.torrent`-ссылки может качаться
+  дольше 60с — даётся двойной бюджет, потом честная ошибка).
 - Этапы 4–5 — впереди.
