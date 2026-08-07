@@ -261,11 +261,18 @@
                     formatSize(loaded) + ' / ' + formatSize(pending.targetBytes) +
                     ' · ' + formatSize(speed) + '/с · сиды ' + seeds + ' · пиры ' + peers
                 );
-                // Already downloading faster than real-time playback needs — safe to start now
-                // even short of the nominal buffer target, it won't be outrun.
+                // Already downloading faster than real-time playback needs — safe to start EARLY.
+                // The user reported the overlay vanishing instantly and the player buffering itself,
+                // so this is no longer a single-tick check: "fast enough" must be BOTH a stable
+                // speed (N consecutive ticks at >=90% of the needed bitrate — a 1-second spike from
+                // peers joining proves nothing) AND a real chunk of the buffer already downloaded
+                // (>=50% of the duration-based target, i.e. ~12s of playback buffer). A 100%-of-target
+                // load still wins outright.
                 var speedMbps = speed * 8 / 1000000;
-                var keepsUpWithPlayback = pending.bitrateMbps > 0 && speed > 0 && speedMbps >= pending.bitrateMbps * 0.9;
-                if (loaded >= pending.targetBytes || keepsUpWithPlayback) {
+                var keepsUp = pending.bitrateMbps > 0 && speed > 0 && speedMbps >= pending.bitrateMbps * 0.9;
+                pending.keepUpTicks = keepsUp ? (pending.keepUpTicks || 0) + 1 : 0;
+                var earlyButReal = pending.keepUpTicks >= 5 && loaded >= pending.targetBytes * 0.5;
+                if (loaded >= pending.targetBytes || earlyButReal) {
                     pending.ready = true;
                     maybeProceed(pending);
                 } else {
@@ -434,6 +441,7 @@
             files: [],
             bestFile: null,
             preloadStarted: false,
+            keepUpTicks: 0,
             started: Date.now(),
             clicked: false,
             ready: false,
