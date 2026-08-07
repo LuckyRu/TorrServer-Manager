@@ -54,4 +54,6 @@ ADR/system-design/reference там, где одно объясняет друг�
   [`system-design/lampa-navigation-contract.md`](system-design/lampa-navigation-contract.md)
 - **Как устроен поиск/скоринг/буферизация Torrent Mod целиком** →
   [`system-design/torrent-mod-search-pipeline.md`](system-design/torrent-mod-search-pipeline.md)
+- **План перестройки Torrent Mod на единый пул раздач** →
+  [`system-design/torrent-mod-unified-pool.md`](system-design/torrent-mod-unified-pool.md)
 - **Все зафиксированные архитектурные решения** → [`adr/`](adr/) (см. `adr/README.md` за списком)

@@ -5,6 +5,22 @@
         var result = { seasons: [], episodeFrom: 0, episodeTo: 0, explicitEpisode: false, explicitSeason: false };
         var match;
 
+        // Combined season-range + episode-range: "S1-5E1-62 of 62" — both ranges in one tag.
+        // Must be tried before the plain SxxExx pattern, which would match the leading "S1" and
+        // stop at the dash (its trailing \b fails between a digit and "E" anyway, so the season
+        // range was silently lost before — season packs like "Breaking Bad (S1-5E1-62 of 62)"
+        // only ever matched season 1). Common on long-series season packs.
+        match = source.match(/\bS(\d{1,2})\s*[-–]\s*S?(\d{1,2})\s*E(\d{1,3})(?:\s*[-–]\s*E?(\d{1,3}))?/i);
+        if (match) {
+            var fromSeason = parseInt(match[1], 10);
+            var toSeason = parseInt(match[2], 10);
+            for (var s = fromSeason; s <= toSeason && s <= fromSeason + 50; s++) result.seasons.push(s);
+            result.episodeFrom = parseInt(match[3], 10);
+            result.episodeTo = parseInt(match[4] || match[3], 10);
+            result.explicitSeason = result.explicitEpisode = true;
+            return result;
+        }
+
         match = source.match(/\bS(\d{1,2})[ ._-]*E(\d{1,3})(?:\s*[-–]\s*(?:E)?(\d{1,3}))?/i);
         if (match) {
             result.seasons = [parseInt(match[1], 10)];
@@ -14,7 +30,10 @@
             return result;
         }
 
-        match = source.match(/\b(\d{1,2})x(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?/i);
+        // "4x01-07", "04x01-07" — requires a 2+ digit episode number: single-digit "2x2" is a
+        // release-group tag on many Russian/anime releases, not a season x episode marker
+        // (confirmed live: "Naruto ... 2x2 [H.265/2160p]" used to parse as S2E2).
+        match = source.match(/\b(\d{1,2})x(\d{2,3})(?:\s*[-–]\s*(\d{1,3}))?/i);
         if (match) {
             result.seasons = [parseInt(match[1], 10)];
             result.episodeFrom = parseInt(match[2], 10);
@@ -23,18 +42,21 @@
             return result;
         }
 
-        match = source.match(/(?:сезон|season)\s*[:№]?\s*(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?/i) ||
+        match = source.match(/(?:сезон|season)\s*[:№]?\s*(\d{1,2})(?!\d)(?:\s*[-–]\s*(\d{1,2})(?!\d))?/i) ||
             source.match(/(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s*(?:сезон|season)/i) ||
             source.match(/\bS(\d{1,2})(?:\s*[-–]\s*S?(\d{1,2}))?\b/i);
         if (match) {
-            var fromSeason = parseInt(match[1], 10);
-            var toSeason = parseInt(match[2] || match[1], 10);
-            for (var season = fromSeason; season <= toSeason && season <= fromSeason + 50; season++) result.seasons.push(season);
+            var seasonFrom = parseInt(match[1], 10);
+            var seasonTo = parseInt(match[2] || match[1], 10);
+            for (var season = seasonFrom; season <= seasonTo && season <= seasonFrom + 50; season++) result.seasons.push(season);
             result.explicitSeason = true;
         }
 
-        match = source.match(/(?:серии|серия|episodes?|эпизоды?)\s*[:№]?\s*(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?/i) ||
-            source.match(/[\[(](\d{1,3})\s*[-–]\s*(\d{1,3})\s*(?:из|of)\s*\d{1,3}/i) ||
+        // Episode markers: Russian ("серия 1-4", "1-4 серия", "серии"), Ukrainian ("серія 4 з 8"),
+        // English ("episodes 1-4"), "E01-E12", and bracketed "x из N"/"x of N" ranges.
+        match = source.match(/(?:серии|серия|серії|серія|episodes?|эпизоды?)\s*[:№]?\s*(\d{1,3})(?!\d)(?:\s*[-–]\s*(\d{1,3})(?!\d))?/i) ||
+            source.match(/(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?\s*(?:серии|серия|серії|серія|episodes?|эпизоды?)(?:\s*(?:из|of|з)\s*\d{1,3})?/i) ||
+            source.match(/[\[(](\d{1,3})\s*[-–]\s*(\d{1,3})\s*(?:из|of|з)\s*\d{1,3}/i) ||
             source.match(/\bE(\d{1,3})(?:\s*[-–]\s*E?(\d{1,3}))?\b/i);
         if (match) {
             result.episodeFrom = parseInt(match[1], 10);
@@ -113,6 +135,10 @@
             sourceType: matchOne(source, [
                 [/\bbdremux\b|\bremux\b/i, 'Remux'],
                 [/\bblu-?ray\b|\bbdrip\b/i, 'BDRip'],
+                // WEB-DLRip must win over plain WEB-DL — without this branch, "WEB-DL" matches as a
+                // substring of "WEB-DLRip" first (the \b before a following letter never forms, but
+                // the shorter word itself does), mislabeling the lower-grade WEBRip as WEB-DL.
+                [/\bweb-?dl\s*rip\b/i, 'WEBRip'],
                 [/\bweb-?dl\b/i, 'WEB-DL'],
                 [/\bwebrip\b/i, 'WEBRip'],
                 [/\bhdtv\b/i, 'HDTV'],
@@ -120,7 +146,7 @@
                 [/\bhdrip\b/i, 'HDRip'],
                 [/\bcamrip\b|\bts\b/i, 'CAM']
             ]),
-            hdr: /\bhdr10?\+?\b/i.test(source) ? 'HDR' : (/\bdolby ?vision\b|\bdv\b/i.test(source) ? 'DV' : ''),
+            hdr: /\bdolby ?vision\b|\bdv\b/i.test(source) ? 'DV' : (/\bhdr10?\+?\b/i.test(source) ? 'HDR' : ''),
             audioChannels: matchOne(source, [[/\b7\.1\b/, '7.1'], [/\b5\.1\b/, '5.1'], [/\b2\.0\b/, '2.0']]),
             audioTracks: extractAudioTracks(source),
             voiceType: matchOne(source, [
