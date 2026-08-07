@@ -56,6 +56,8 @@
 
         function destroy() {
             destroyed = true;
+            // Cancel interactor timers (pending-retry) that would otherwise outlive the screen.
+            if (selection.destroy) selection.destroy();
         }
 
         return {

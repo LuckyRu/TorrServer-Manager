@@ -13,6 +13,14 @@
     //                                    of bad, play anyway
     //     → Lampa.Player.play({url, timeline, playlist})
     //
+    // PLAYBACK SESSION (architect's lifecycle isolation): every launch is a session object with
+    // `alive` + `dispose()`. All async continuations (Torserver.hash/files, /ffp, /cache, player
+    // listeners) check `session.alive` first — so a late callback from a cancelled/superseded
+    // launch can never start playback or leak listeners. `dispose()` is idempotent: clears timers,
+    // removes player/video listeners, drops the session reference. The Torrent Mod SCREEN does NOT
+    // own the session — playback intentionally outlives the screen (the player keeps running after
+    // the results screen is gone); only a new startDownload or the player's own destroy disposes it.
+    //
     // Three native side effects of the old Lampa.Torrent.start path are compensated explicitly
     // (native torrent.js used to do them on hover:enter — torrent.js:437/333/446):
     //   1. Favorite.add('history', movie)      — continue-watch card
@@ -22,13 +30,13 @@
     //      (Player.play wires Playlist from data.playlist, player.js:1243)
     //
     // Plus, still silent: an initial fire-and-forget `&preload` nudge (starts the download before
-    // the player asks) and next-episode preloading near the end of the current file (the actual
-    // fix for stalls on episode switch). No global patching of Lampa.Player.play / Torserver.stream
-    // (ADR-0003).
+    // the player asks) and next-episode preloading near the end of the current file. No global
+    // patching of Lampa.Player.play / Torserver.stream (ADR-0003).
     import { parseSignals } from '../search/release-parsing.js';
-    import { notify, field } from '../shared/utils.js';
+    import { notify, field, previousController } from '../shared/utils.js';
 
-    var pendingPlayback = null;
+    var currentSession = null;
+    var sessionSeq = 0;
 
     var PLAYABLE_FORMATS = ['asf', 'wmv', 'divx', 'avi', 'mp4', 'm4v', 'mov', '3gp', '3g2', 'mkv', 'trp', 'tp', 'mts', 'mpg', 'mpeg', 'dat', 'vob', 'rm', 'rmvb', 'm2ts', 'ts'];
 
@@ -59,8 +67,7 @@
         }
         if (signals.explicitSeason) score += signals.seasons.indexOf(target.season) >= 0 ? 30 : -100;
         // Format as a TIE-BREAKER only: the right episode/season always wins, but between two
-        // equally-matching files prefer a streamable container over "древнее говно" (AVI/MPG/VOB/
-        // WMV/RM/FLV) that WebOS can't play without TorrServer transcoding.
+        // equally-matching files prefer a streamable container over "древнее говно".
         var ext = path.toLowerCase().split('.').pop();
         if (['mp4', 'mkv', 'm4v', 'mov', 'webm', 'ts', 'm2ts', 'mts'].indexOf(ext) >= 0) score += 5;
         else if (['avi', 'mpg', 'mpeg', 'vob', 'wmv', 'asf', 'flv', 'rm', 'rmvb', 'divx'].indexOf(ext) >= 0) score -= 5;
@@ -88,131 +95,132 @@
         } catch (e) {}
     }
 
-    function cleanup(pending) {
-        clearInterval(pending.filesTimer);
-        if (pendingPlayback === pending) pendingPlayback = null;
+    function torrServerBase() {
+        try { if (Lampa.Torserver && Lampa.Torserver.ip) return String(Lampa.Torserver.ip() || '').replace(/\/$/, ''); } catch (e) {}
+        return '';
     }
 
     // Registers the torrent with TorrServer directly (POST /torrents action:add, same payload the
     // native screen sends — Torserver.hash). Accepts a magnet OR an HTTP .torrent link: TorrServer
     // downloads and parses the .torrent itself, so a hash arrives in both cases.
-    function registerTorrent(pending) {
-        var item = pending.item;
-        var target = pending.target;
+    function registerTorrent(session) {
+        var item = session.item;
+        var target = session.target;
         try {
             Lampa.Torserver.hash({
                 title: item.title,
                 link: item.magnet || item.link,
                 poster: (target.movie && (target.movie.img || target.movie.poster_path)) || ''
             }, function (json) {
-                if (pending.clicked) return;
-                pending.hash = json && json.hash;
-                if (pending.hash) pollFiles(pending);
-                else { notify('Не удалось получить hash раздачи'); cleanup(pending); }
+                if (!session.alive || session.clicked) return;
+                session.hash = json && json.hash;
+                if (session.hash) pollFiles(session);
+                else { notify('Не удалось получить hash раздачи'); session.dispose(); }
             }, function () {
+                if (!session.alive) return;
                 notify('Не удалось зарегистрировать раздачу в TorrServer');
-                cleanup(pending);
+                session.dispose();
             });
         } catch (e) {
             notify('TorrServer недоступен');
-            cleanup(pending);
+            session.dispose();
         }
     }
 
     // Polls Torserver.files(hash) until metadata resolves (file_stats), then filters playable
     // files, enriches them with path_human (Torserver.clearFileName, required by Torserver.parse)
     // and picks the best one. Mirrors the native files() polling (torrent.js:149-169, 2s interval).
-    function pollFiles(pending) {
+    function pollFiles(session) {
         var attempts = 0;
         var maxAttempts = 45;
-        pending.filesTimer = setInterval(function () {
-            if (pending.clicked) { clearInterval(pending.filesTimer); return; }
+        session.filesTimer = setInterval(function () {
+            if (!session.alive || session.clicked) { clearInterval(session.filesTimer); return; }
             attempts++;
             try {
-                Lampa.Torserver.files(pending.hash, function (json) {
-                    if (pending.clicked || pending.bestFile) return;
+                Lampa.Torserver.files(session.hash, function (json) {
+                    if (!session.alive || session.clicked || session.bestFile) return;
                     var stats = (json && json.file_stats) || [];
                     var plays = stats.filter(isPlayableFile);
                     if (!plays.length) {
                         if (attempts >= maxAttempts) {
-                            clearInterval(pending.filesTimer);
+                            clearInterval(session.filesTimer);
                             notify('Не удалось получить файлы раздачи');
-                            cleanup(pending);
+                            session.dispose();
                         }
                         return;
                     }
-                    clearInterval(pending.filesTimer);
-                    pending.allFiles = stats;
+                    clearInterval(session.filesTimer);
+                    session.allFiles = stats;
                     try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
-                    pending.files = plays;
-                    pickBestFile(pending);
+                    session.files = plays;
+                    pickBestFile(session);
                 });
             } catch (e) {}
-            if (attempts >= maxAttempts) clearInterval(pending.filesTimer);
+            if (attempts >= maxAttempts) clearInterval(session.filesTimer);
         }, 2000);
     }
 
-    function pickBestFile(pending) {
-        if (!pending || pending.clicked || !pending.files || !pending.files.length) return;
+    function pickBestFile(session) {
+        if (!session.alive || session.clicked || !session.files || !session.files.length) return;
         var scored = [];
-        for (var i = 0; i < pending.files.length; i++) {
-            scored.push({ f: pending.files[i], score: preloadFileScore(pending.files[i], pending.target) });
+        for (var i = 0; i < session.files.length; i++) {
+            scored.push({ f: session.files[i], score: preloadFileScore(session.files[i], session.target) });
         }
         scored.sort(function (a, b) { return b.score - a.score; });
-        pending.bestFile = scored[0].f;
+        session.bestFile = scored[0].f;
         // Silent nudge: ask TorrServer to warm this file before the player's stream request lands.
-        firePreload(preloadUrlFor(pending.bestFile, pending.hash));
-        probeSelectedFile(pending);
+        firePreload(preloadUrlFor(session.bestFile, session.hash));
+        probeSelectedFile(session);
     }
 
-    // ffprobe gate — the final arbiter for "древнее говно" (raw DVDRip → MPEG-2 etc.): the title
-    // heuristic only suspects, this confirms from the actual file. A CONFIRMED-bad video codec (or
-    // no video stream) blocks playback with an honest toast — black screen instead of the series is
-    // worse. 'unavailable' (no ffprobe on this TorrServer build) is NOT proof of bad — play anyway.
-    // Matches the picked file by exact id (not a path substring).
-    function probeSelectedFile(pending) {
-        if (!pending || pending.probed || !pending.bestFile) return;
+    // ffprobe gate — the final arbiter for "древнее говно": the title heuristic only suspects,
+    // this confirms from the actual file. A CONFIRMED-bad video codec (or no video stream) blocks
+    // playback with an honest toast — black screen instead of the series is worse. 'unavailable'
+    // (no ffprobe on this TorrServer build) is NOT proof of bad — play anyway.
+    function probeSelectedFile(session) {
+        if (!session.alive || session.probed || !session.bestFile) return;
         var base = torrServerBase();
-        if (!base) { startDirectPlayback(pending); return; }
-        pending.probed = true;
+        if (!base) { startDirectPlayback(session); return; }
+        session.probed = true;
         $.ajax({
             url: base + '/torrents', method: 'POST',
-            data: JSON.stringify({ action: 'get', hash: pending.hash }),
+            data: JSON.stringify({ action: 'get', hash: session.hash }),
             dataType: 'json', timeout: 4000
         }).done(function (json) {
+            if (!session.alive) return;
             var files = (json && json.file_stats) || [];
-            var match = files.filter(function (f) { return String(f.id) === String(pending.bestFile.id); })[0];
-            if (!match || match.id == null) { startDirectPlayback(pending); return; }
-            $.ajax({ url: base + '/ffp/' + pending.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
+            var match = files.filter(function (f) { return String(f.id) === String(session.bestFile.id); })[0];
+            if (!match || match.id == null) { startDirectPlayback(session); return; }
+            $.ajax({ url: base + '/ffp/' + session.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
                 .done(function (probe) {
-                    if (pending.clicked) return;
+                    if (!session.alive) return;
                     var streams = probe && probe.streams;
-                    if (!streams || !streams.length) { startDirectPlayback(pending); return; }
+                    if (!streams || !streams.length) { startDirectPlayback(session); return; }
                     var video = streams.filter(function (s) { return s.codec_type === 'video'; })[0];
                     var verdict = video ? classifyVideoCodec(video.codec_name) : 'no-video';
                     if (verdict === 'bad') {
                         notify('Формат видео ' + String(video.codec_name || '').toUpperCase() + ' не поддерживается на этом устройстве — выберите другую раздачу');
-                        cleanup(pending);
+                        session.dispose();
                         return;
                     }
                     if (verdict === 'no-video') {
                         notify('В раздаче не найден видеопоток — выберите другую раздачу');
-                        cleanup(pending);
+                        session.dispose();
                         return;
                     }
-                    startDirectPlayback(pending);
-                }).fail(function () { startDirectPlayback(pending); });
-        }).fail(function () { startDirectPlayback(pending); });
+                    startDirectPlayback(session);
+                }).fail(function () { if (session.alive) startDirectPlayback(session); });
+        }).fail(function () { if (session.alive) startDirectPlayback(session); });
     }
 
     // Builds the player playlist from ALL playable files of the pack — the native torrent screen
     // used to do this (torrent.js:415-429) and handed it to Player.playlist, which is what made
     // "next episode" inside a season pack work via Video.ended → Playlist.next(). We reproduce it
     // so that behaviour doesn't regress.
-    function buildPlaylist(pending) {
-        var hash = pending.hash;
-        var movie = (pending.target && pending.target.movie) || {};
-        var files = pending.files || [];
+    function buildPlaylist(session) {
+        var hash = session.hash;
+        var movie = (session.target && session.target.movie) || {};
+        var files = session.files || [];
         var playlist = [];
         files.forEach(function (file) {
             var info = {};
@@ -232,18 +240,17 @@
     }
 
     // Starts playback through the exact data shape the native screen builds for a file element
-    // (torrent.js:336-350): url from Torserver.stream, timeline from Torserver.parse, plus the
-    // playlist. Player.play itself wires Playlist from data.playlist (player.js:1243).
-    function startDirectPlayback(pending) {
-        if (pending.clicked) return;
-        pending.clicked = true;
-        var file = pending.bestFile;
-        var target = pending.target;
+    // (torrent.js:336-350). Player.play itself wires Playlist from data.playlist (player.js:1243).
+    function startDirectPlayback(session) {
+        if (!session.alive || session.clicked) return;
+        session.clicked = true;
+        var file = session.bestFile;
+        var target = session.target;
         var movie = (target && target.movie) || {};
-        var hash = pending.hash;
-        if (!hash || !file) { cleanup(pending); return; }
+        var hash = session.hash;
+        if (!hash || !file) { session.dispose(); return; }
 
-        var files = pending.files || [];
+        var files = session.files || [];
         var info = {};
         try { info = Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }); } catch (e) {}
 
@@ -260,16 +267,19 @@
             episode: info.episode,
             path: file.path,
             timeline: Lampa.Timeline.view(info.hash),
-            playlist: buildPlaylist(pending)
+            playlist: buildPlaylist(session)
         };
 
+        // Which controller the Torrent Mod screen had before playback — the player's Back should
+        // return there, not to a 'modal' that may not exist (native torrent.js routes to modal
+        // because ITS caller is a modal; ours is the screen, found by the architect).
+        var backController = previousController() || 'content';
+
         try { Lampa.Player.play(data); } catch (e) { console.warn('Torrent Mod: Player.play failed', e); }
-        // Native torrent.js also routes back from the player to the modal/previous screen
-        // (Player.callback + Controller.toggle('modal'), torrent.js:442-445).
-        try { Lampa.Player.callback(function () { Lampa.Controller.toggle('modal'); }); } catch (e) {}
+        try { Lampa.Player.callback(function () { Lampa.Controller.toggle(backController); }); } catch (e) {}
         // Warm the NEXT episode's cache while this one plays — the fix for stalls on episode switch.
-        try { startNextEpisodePreload(pending); } catch (e) {}
-        cleanup(pending);
+        try { startNextEpisodePreload(session); } catch (e) {}
+        session.dispose();
     }
 
     // Pre-load the NEXT file of the pack while the current one is still playing (the actual fix for
@@ -277,12 +287,13 @@
     // as the current file approaches its end (~85% or <=60s left), ask TorrServer to warm the next
     // playable file's cache so Playlist.next() starts with data already downloaded. One file only,
     // fire-and-forget, gated by the torrent_mod_preload_next setting; nothing is shown and nothing
-    // in the player/playlist is touched (ADR-0003).
-    function startNextEpisodePreload(pending) {
-        var files = pending.files || [];
+    // in the player/playlist is touched (ADR-0003). Listeners are registered on the SESSION and
+    // removed by session.dispose() — they must not outlive the launch (found by the architect).
+    function startNextEpisodePreload(session) {
+        var files = session.files || [];
         if (files.length < 2) return;
         if (!field('torrent_mod_preload_next', true)) return;
-        var curId = pending.bestFile && String(pending.bestFile.id);
+        var curId = session.bestFile && String(session.bestFile.id);
         var next = null;
         var found = false;
         for (var i = 0; i < files.length; i++) {
@@ -297,36 +308,34 @@
 
         var fired = false;
         function onTime(e) {
-            if (fired || !e || !(e.duration > 0)) return;
+            if (!session.alive || fired || !e || !(e.duration > 0)) return;
             var current = e.current || 0;
             var remaining = e.duration - current;
             if (remaining > 0 && (current >= e.duration * 0.85 || remaining <= 60)) {
                 fired = true;
                 try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (err) {}
-                firePreload(preloadUrlFor(next, pending.hash));
+                firePreload(preloadUrlFor(next, session.hash));
             }
         }
-        try { Lampa.PlayerVideo.listener.follow('timeupdate', onTime); } catch (e2) {}
-        // If the player goes away before the trigger, drop the listener instead of leaking it.
         function onPlayerDestroy() {
             try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (e3) {}
             try { Lampa.Player.listener.remove('destroy', onPlayerDestroy); } catch (e4) {}
         }
+        try { Lampa.PlayerVideo.listener.follow('timeupdate', onTime); } catch (e2) {}
         try { Lampa.Player.listener.follow('destroy', onPlayerDestroy); } catch (e5) {}
+        // Register removal on the session so dispose() also clears them (e.g. the player never
+        // fired 'destroy' — play threw, or the launch was superseded).
+        session.nextCleanup = session.nextCleanup || [];
+        session.nextCleanup.push(function () {
+            try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (e6) {}
+            try { Lampa.Player.listener.remove('destroy', onPlayerDestroy); } catch (e7) {}
+        });
     }
 
-    function torrServerBase() {
-        try { if (Lampa.Torserver && Lampa.Torserver.ip) return String(Lampa.Torserver.ip() || '').replace(/\/$/, ''); } catch (e) {}
-        return '';
-    }
-
-    export function startDownload(item, target) {
-        // A new download implicitly cancels any still-pending one (an impatient double-pick during
-        // the Jackett search window).
-        if (pendingPlayback && !pendingPlayback.clicked) cleanup(pendingPlayback);
-
-        notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
-        pendingPlayback = {
+    function createSession(item, target) {
+        var session = {
+            id: ++sessionSeq,
+            alive: true,
             hash: '',
             item: item,
             target: target,
@@ -335,7 +344,30 @@
             bestFile: null,
             clicked: false,
             probed: false,
-            filesTimer: null
+            filesTimer: null,
+            nextCleanup: [],
+            dispose: function () {
+                if (!session.alive) return;
+                session.alive = false;
+                clearInterval(session.filesTimer);
+                session.filesTimer = null;
+                var cleanups = session.nextCleanup || [];
+                session.nextCleanup = [];
+                cleanups.forEach(function (fn) { try { fn(); } catch (e) {} });
+                if (currentSession === session) currentSession = null;
+            }
         };
-        registerTorrent(pendingPlayback);
+        return session;
+    }
+
+    export function startDownload(item, target) {
+        // A new launch disposes any still-pending one — its late async callbacks become harmless
+        // because they all check session.alive (found by the architect: pending.clicked alone was
+        // not a lifecycle token, so an old /ffp or /files callback could start the wrong torrent).
+        if (currentSession) currentSession.dispose();
+
+        notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
+        var session = createSession(item, target);
+        currentSession = session;
+        registerTorrent(session);
     }

@@ -49,16 +49,21 @@
 
         // Side picker panel (right-arrow on an episode row): a slide-in overlay listing torrents
         // for that episode. Own Scroll + Controller, surface-fixed like the old preload overlay.
-        var picker = $('<div class="torrent-mod-picker"></div>');
+        // Hidden with inline display:none (not just the CSS transform) so a panel that somehow
+        // outlives its screen can never be visible.
+        var picker = $('<div class="torrent-mod-picker" style="display:none"></div>');
         var pickerScroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var pickerBody = $('<div class="torrent-mod-picker__body"></div>');
         pickerScroll.append(pickerBody);
         picker.append(pickerScroll.render());
         var focusedEpisodeNode = null;
+        var viewDestroyed = false;
 
         function openPickerPanel() {
+            if (viewDestroyed) return;
             var st = domain.store.get().picker || {};
             pickerBody.empty();
+            picker.show();
             if (st.status === 'loading') {
                 pickerBody.append($('<div class="torrent-mod-picker__empty">Ищем раздачи…</div>'));
             } else if (!st.items || !st.items.length) {
@@ -76,29 +81,39 @@
             try {
                 Lampa.Controller.add('torrent_mod_picker', {
                     toggle: function () {
+                        if (viewDestroyed) return;
                         Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
                         Lampa.Controller.collectionFocus(false, pickerScroll.render(true));
                     },
-                    left: closePickerPanel,
-                    back: closePickerPanel,
-                    right: function () { Navigator.move('right'); },
-                    up: function () { Navigator.move('up'); },
-                    down: function () { Navigator.move('down'); }
+                    left: requestClosePicker,
+                    back: requestClosePicker,
+                    right: function () { if (!viewDestroyed) Navigator.move('right'); },
+                    up: function () { if (!viewDestroyed) Navigator.move('up'); },
+                    down: function () { if (!viewDestroyed) Navigator.move('down'); }
                 });
                 Lampa.Controller.toggle('torrent_mod_picker');
             } catch (e) {}
         }
 
-        function closePickerPanel() {
-            domain.selection.closePicker();
+        // DOM/controller cleanup ONLY — never touches domain state. Called from render when
+        // picker.open flips to false (which was itself produced by domain.closePicker), so no
+        // second store.patch → no recursive render (found by the architect).
+        function hidePickerDom() {
             picker.removeClass('torrent-mod-picker--open');
+            picker.hide();
             try { Lampa.Controller.toggle('content'); } catch (e) {}
-            // Restore focus to the episode row the panel was opened from — explicit, both close
-            // paths (left/back and a pick) go through here (the Select.show two-path lesson).
             if (focusedEpisodeNode && focusedEpisodeNode[0] && focusedEpisodeNode[0].offsetParent) {
                 try { Lampa.Controller.collectionFocus(focusedEpisodeNode[0], scroll.render(true)); } catch (e2) {}
             }
             focusedEpisodeNode = null;
+        }
+
+        // User-initiated close (left/back in the panel): flip domain state (render will hide the
+        // DOM via hidePickerDom) and hide immediately as a belt-and-suspenders.
+        function requestClosePicker() {
+            if (viewDestroyed) return;
+            try { domain.selection.closePicker(); } catch (e) {}
+            hidePickerDom();
         }
 
         var initialSeason = object.season || 0;
@@ -451,15 +466,17 @@
             if (state.searchText !== previous.searchText) setSearchText(state.searchText);
             if (state.statusText !== previous.statusText) setStatus(state.statusText);
             // Side picker panel: open/close on the flag, re-render its list when it fills or errors.
+            // Closing is DOM-only here — domain.closePicker already patched open:false (this render
+            // IS that patch's notification); calling closePicker again would re-enter render.
             if (state.picker.open !== previous.picker.open) {
                 if (state.picker.open) openPickerPanel();
-                else closePickerPanel();
+                else hidePickerDom();
             } else if (state.picker.open && state.picker.status !== previous.picker.status) {
                 openPickerPanel();
             }
         }
 
-        domain.store.subscribe(render);
+        var unsubscribe = domain.store.subscribe(render);
 
         function renderComponent(js) {
             return explorer.render(js);
@@ -474,8 +491,16 @@
             render: renderComponent,
             start: function () { explorer.toggle(); registerContentController(); },
             destroy: function () {
-                try { closePickerPanel(); } catch (e) {}
+                // Tear the panel down WITHOUT touching domain/store (no closePicker → no store.patch
+                // → no render): the screen is going away, render must not fight the removal. Also
+                // unsubscribe and destroy BOTH scrolls (the panel's own pickerScroll was being
+                // leaked — found by the architect). The 'content' controller is NOT toggled here:
+                // Lampa re-registers it on the next Activity start anyway, and leaving it alone
+                // avoids a global controller pointing at a dead screen.
+                viewDestroyed = true;
+                try { if (unsubscribe) unsubscribe(); } catch (e) {}
                 try { picker.remove(); } catch (e) {}
+                try { pickerScroll.destroy(); } catch (e) {}
                 try { scroll.destroy(); } catch (e) {}
                 try { explorer.destroy(); } catch (e) {}
             }

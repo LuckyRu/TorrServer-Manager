@@ -286,12 +286,22 @@
             startDownload(item, target);
         }
 
+        function destroy() {
+            // Cancel the pending-retry timer immediately (it used to keep ticking until the next
+            // 400ms fire, holding the interactor/store alive — found by the architect).
+            if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
+            pendingRetryTimer = null;
+            pendingSelection = null;
+            pendingEpisode = null;
+        }
+
         return {
             selectEpisode: selectEpisode,
             searchWithQuery: searchWithQuery,
             playCandidate: playCandidate,
             openPicker: openPicker,
             closePicker: closePicker,
-            playPickerCandidate: playPickerCandidate
+            playPickerCandidate: playPickerCandidate,
+            destroy: destroy
         };
     }
