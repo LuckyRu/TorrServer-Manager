@@ -25,12 +25,74 @@
         buildFilterItems
     } from './results-core.js';
 
+    // Two-tier persistence, same shape Online Mod uses for its own balancer choice
+    // (Storage.get('online_balanser', ...) + Storage.cache('online_last_balanser', 200, {}),
+    // confirmed live in vendor/lampa-source/plugins/online/component.js): a global default plus a
+    // per-movie override cache that takes priority when present. Storage.cache(name, max, empty)
+    // only *reads* (and prunes down to `max` entries if over) — confirmed against the real source,
+    // core/storage/storage.js — it does not auto-persist further mutations, so every write below
+    // still needs its own explicit Storage.set() call, same as Online Mod's own read-mutate-set
+    // sequence. Season has no sensible *global* default (season numbers don't transfer between
+    // shows) so it only gets the per-movie tier, layered on top of the existing initialSeason()
+    // continue-watching guess (season-picker.js) as a fallback, not a replacement for it.
+    var SEASON_CACHE_KEY = 'torrent_mod_last_season';
+    var VOICE_DEFAULT_KEY = 'torrent_mod_voice';
+    var VOICE_CACHE_KEY = 'torrent_mod_last_voice';
+    var QUALITY_DEFAULT_KEY = 'torrent_mod_quality';
+    var QUALITY_CACHE_KEY = 'torrent_mod_last_quality';
+    var PER_MOVIE_CACHE_MAX = 200;
+
     export function createResultsViewModel(options) {
         var object = options.object;
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
         var view = options.view;
         var state = createInitialState(object);
+        applyPersistedPreferences();
+
+        // Unconditional override, same as Online Mod's own `if (last_bls[movie.id]) balanser =
+        // last_bls[movie.id]` — the per-movie memory always wins over both the just-computed
+        // initial state and the global default when it exists, not just as a first-run fallback.
+        function applyPersistedPreferences() {
+            try {
+                var lastSeason = Lampa.Storage.cache(SEASON_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+                if (lastSeason[movie.id]) state.season = lastSeason[movie.id];
+
+                state.voiceType = Lampa.Storage.get(VOICE_DEFAULT_KEY, 'any');
+                var lastVoice = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+                if (lastVoice[movie.id]) state.voiceType = lastVoice[movie.id];
+
+                state.resolution = Lampa.Storage.get(QUALITY_DEFAULT_KEY, 'any');
+                var lastQuality = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+                if (lastQuality[movie.id]) state.resolution = lastQuality[movie.id];
+            } catch (e) {}
+        }
+
+        function rememberSeason(season) {
+            try {
+                var last = Lampa.Storage.cache(SEASON_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+                last[movie.id] = season;
+                Lampa.Storage.set(SEASON_CACHE_KEY, last);
+            } catch (e) {}
+        }
+
+        function rememberVoice(value) {
+            try {
+                Lampa.Storage.set(VOICE_DEFAULT_KEY, value);
+                var last = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+                last[movie.id] = value;
+                Lampa.Storage.set(VOICE_CACHE_KEY, last);
+            } catch (e) {}
+        }
+
+        function rememberQuality(value) {
+            try {
+                Lampa.Storage.set(QUALITY_DEFAULT_KEY, value);
+                var last = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+                last[movie.id] = value;
+                Lampa.Storage.set(QUALITY_CACHE_KEY, last);
+            } catch (e) {}
+        }
 
         // Same target shape candidatesForEpisode's own pre-split closure used to build itself —
         // kept as one place now that the function takes `target` as an explicit parameter.
@@ -196,22 +258,30 @@
             selectEpisode(state.lastEpisode || 0);
         }
 
+        // "Reset" is an explicit choice too, same as picking a value — persisting 'any' here is
+        // what makes reset actually *stick* next time this movie's screen opens, instead of the
+        // per-movie memory silently overriding it right back on the next visit.
         function resetFilters() {
             state.voiceType = 'any';
             state.resolution = 'any';
+            rememberVoice('any');
+            rememberQuality('any');
         }
 
         function setVoiceFilter(value) {
             state.voiceType = value;
+            rememberVoice(value);
         }
 
         function setResolutionFilter(value) {
             state.resolution = value;
+            rememberQuality(value);
         }
 
         function setSeason(season) {
             if (season === state.season) return false;
             state.season = season;
+            rememberSeason(season);
             return true;
         }
 

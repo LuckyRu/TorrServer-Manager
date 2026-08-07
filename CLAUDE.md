@@ -509,6 +509,30 @@ entry-point/build-config layer above all of them.
     overlay despite it technically being on top and z-indexed correctly. Changed to a fully opaque
     `#080c14` — no CSS-transparency category of bug can recur here regardless of what's rendered
     underneath, a stronger guarantee than tuning the alpha value closer to 1 would have been.
+  - **Season/translation/quality filter choices persist across visits, per-movie, matching Online
+    Mod's own pattern exactly** — pointed at directly (`Lampa.Storage.get('online_balanser',
+    'videocdn')` + `Lampa.Storage.cache('online_last_balanser', 200, {})`, confirmed live in
+    `vendor/lampa-source/plugins/online/component.js`) as the standard to match, after the screen
+    was resetting to defaults on every open. Two-tier, same shape: a global default
+    (`torrent_mod_voice`/`torrent_mod_quality`, `Lampa.Storage.get`) plus a per-movie override cache
+    (`torrent_mod_last_season`/`torrent_mod_last_voice`/`torrent_mod_last_quality`,
+    `Lampa.Storage.cache(name, 200, {})`, keyed by `movie.id`) that wins over the global default when
+    present — same unconditional-override read as Online Mod's own `if (last_bls[movie.id]) balanser
+    = last_bls[movie.id]`. **`Storage.cache()` only reads (and prunes down to the max entry count if
+    over) — confirmed against the real source, `core/storage/storage.js` — it does not auto-persist
+    further mutations**, so every write still needs its own explicit `Storage.set()` call, exactly
+    matching Online Mod's own read-mutate-`set()` sequence rather than assuming the returned object is
+    a live-persisting reference. Season has no sensible *global* tier (season numbers don't transfer
+    between shows) so it only gets the per-movie cache, layered on top of the pre-existing
+    `initialSeason()` continue-watching guess (`metadata/season-picker.js`, driven by Lampa's own
+    Timeline/watch-progress data) as a fallback, not a replacement for it — per-movie *browsing*
+    memory (which season you were looking at) and continue-watching (which episode you've actually
+    watched up to) are different signals worth keeping both of. "Сбросить фильтр" persists `'any'`
+    too, not just the in-memory state — otherwise reset wouldn't *stick*, the per-movie memory would
+    silently restore the old choice on the very next visit. Verified live: picked Season 5 + Дубляж
+    for a movie, closed the screen, reopened fresh for the same `movie.id` — both restored
+    automatically with no re-selection, confirmed via `Lampa.Storage.cache(...)`/`.get(...)` reads
+    showing the correct persisted values immediately after each pick, not just after reopening.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to
