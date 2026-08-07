@@ -34,7 +34,7 @@
         applyPersistedPreferences(store, movie); // one initial patch, before anyone subscribes
 
         var episodes = createEpisodesInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed });
-        var selection = createSelectionInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery });
+        var selection = createSelectionInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery, ensureSeasonLoaded: episodes.ensureSeasonLoaded });
         var filters = createFiltersInteractor({ store: store, movie: movie });
 
         // Film vs series — two genuinely different flows (see docs/system-design/torrent-mod-unified-pool.md,

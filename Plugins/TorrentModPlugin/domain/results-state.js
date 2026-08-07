@@ -35,6 +35,13 @@
             seasonEpisodeCount: 0,
             avgRuntimeMinutes: 0,
 
+            // Per-season lazy-load coverage (whole-work pool may miss season-specific releases due
+            // to Jackett's per-query result limit — no pagination). seasonLoads[season] is
+            // 'idle' | 'loading' | 'ready' | 'error': a season is fetched on demand (only when the
+            // local pool has zero candidates for it), merged into pool, and never re-fetched until
+            // the query context changes (requery resets this map). Plain data, no Promises.
+            seasonLoads: {},
+
             // What the grid area currently shows, and its payload — replaces the old code's implicit
             // "whichever render function was last called wins" with an explicit, renderable value.
             stage: 'episodes',        // 'episodes' | 'candidates' | 'message'

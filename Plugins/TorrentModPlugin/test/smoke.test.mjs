@@ -28,6 +28,7 @@ function jackettRaw(title, seeders, peers, hash) {
 
 runner.test('сериал: start → пул → смена сезона → фильтр → клик серии → кандидаты', async () => {
     globalThis.__clearReguest();
+    globalThis.__clearStorage();
     globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [
@@ -90,6 +91,8 @@ runner.test('сериал: start → пул → смена сезона → фи
 
 runner.test('фильм: start → пул → локальный пикер (без автоплея на пустом рое)', async () => {
     globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
         results: [
             jackettRaw('Дюна: Часть вторая / Dune: Part Two (2024) 1080p WEB-DL', 0, 0, 'cccc'),
@@ -116,6 +119,7 @@ runner.test('фильм: start → пул → локальный пикер (б�
 
 runner.test('гонка: freshSearch при active customQuery отбрасывается сменой сезона до ответа', async () => {
     globalThis.__clearReguest();
+    globalThis.__clearStorage();
     globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/season/'), { episodes: [{ episode_number: 7, runtime: 22 }] });
     // медленный торрент-поиск: успеет стартовать, но не ответить до смены сезона
@@ -139,6 +143,51 @@ runner.test('гонка: freshSearch при active customQuery отбрасыв�
     if (state.season !== 3) throw new Error('сезон не сменился');
     if (state.stage === 'candidates') throw new Error('устаревший freshSearch показал кандидатов на новом сезоне');
     if (state.searchStatus !== 'idle') throw new Error('searchStatus не сброшен: ' + state.searchStatus);
+});
+
+runner.test('ленивая дозагрузка сезона: пустой сезон → мерж → кандидаты, без повторных запросов', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, runtime: 22 }, { episode_number: 8, runtime: 22 }]
+    });
+    // общий пул по имени — только раздача ДРУГОГО сезона (сезон 2 остаётся пустым)
+    globalThis.__mockReguest((url) => url.includes('torrent-search') && !/(S02|сезон)/i.test(decodeURIComponent(url)), {
+        results: [jackettRaw('Футурама / Futurama S07E01 1080p WEB-DL', 5, 2, 'aaaa')],
+        indexers: []
+    });
+    // дозагрузка сезона 2 — запросы «Имя S02» и «Имя 2 сезон»
+    globalThis.__mockReguest((url) => url.includes('torrent-search') && /(S02|сезон)/i.test(decodeURIComponent(url)), {
+        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'bbbb')],
+        indexers: []
+    });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    let state = domain.store.get();
+    if (state.pool.length !== 1) throw new Error('ожидал 1 раздачу в пуле по имени, получил ' + state.pool.length);
+
+    // клик серии 7 сезона 2: локально пусто → дозагрузка сезона → мерж → кандидаты
+    domain.selection.selectEpisode(7, true);
+    await flushMicrotasks();
+    state = domain.store.get();
+    if (state.stage !== 'candidates') {
+        throw new Error('дозагрузка не привела к кандидатам, stage=' + state.stage +
+            ' loads=' + JSON.stringify(state.seasonLoads) +
+            ' log=' + JSON.stringify(globalThis.__requestLog.filter((u) => u.includes('torrent-search'))));
+    }
+    if (state.pool.length !== 2) throw new Error('ожидал мерж: 2 раздачи в пуле, получил ' + state.pool.length);
+    if (state.seasonLoads[2] !== 'ready') throw new Error('сезон 2 не помечен ready');
+
+    // повторный клик по той же серии/другой серии сезона — БЕЗ нового запроса
+    const callsBefore = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
+    domain.selection.selectEpisode(8, true);
+    await flushMicrotasks();
+    const callsAfter = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
+    if (callsAfter !== callsBefore) throw new Error('повторный клик сделал лишний запрос: ' + callsBefore + ' → ' + callsAfter);
 });
 
 await runner.run();

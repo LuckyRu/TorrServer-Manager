@@ -17,6 +17,7 @@
         var hasSeasons = options.hasSeasons;
         var isDestroyed = options.isDestroyed;
         var requery = options.requery;
+        var ensureSeasonLoaded = options.ensureSeasonLoaded;
 
         // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Used for
         // a manual name override on a movie (user re-worded the search, wants to see what's there —
@@ -66,13 +67,24 @@
             }
             var candidates = selectCandidatesForEpisode(object, state, episode);
             if (candidates.length) { finishSelection(candidates, target, pickerOnly); return; }
-            if (hasSeasons) {
-                notify('Раздач не нашлось');
-            } else {
+            if (!hasSeasons) {
                 // Movie: no episode list to fall back to — an empty pool would leave the grid
                 // blank (stage was 'episodes' with no content). Say so on screen instead of just
                 // a toast (found in review).
                 store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
+                return;
+            }
+            // Series, zero candidates for this episode: the whole-work pool may simply have missed
+            // this season's releases (Jackett's per-query limit, no pagination). Lazily fetch the
+            // season once (merged into the pool, never re-fetched until requery), then retry the
+            // local pick — see episodes-interactor.ensureSeasonLoaded.
+            var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
+            if (loadStatus === 'loading') { notify('Ищем раздачи для сезона…'); return; }
+            if (loadStatus === 'ready' || loadStatus === 'error') { notify('Раздач не нашлось'); return; }
+            if (ensureSeasonLoaded) {
+                ensureSeasonLoaded(state.season, function () { selectEpisode(episode, pickerOnly); });
+            } else {
+                notify('Раздач не нашлось');
             }
         }
 

@@ -34,6 +34,9 @@ export function setupMockLampa() {
     globalThis.__requestLog = [];
     globalThis.__mockReguest = (match, data, delay) => reguestHandlers.push({ match, data, delay: delay || 0 });
     globalThis.__clearReguest = () => reguestHandlers.splice(0);
+    // Lampa.Storage mock is shared across tests in one process — persisted prefs (e.g. last season)
+    // would leak between tests via applyPersistedPreferences, so reset it per test.
+    globalThis.__clearStorage = () => storage.clear();
 
     globalThis.Lampa = {
         Storage: {

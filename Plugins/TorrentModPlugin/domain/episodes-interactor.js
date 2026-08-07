@@ -12,6 +12,7 @@
     // docs/system-design/torrent-mod-unified-pool.md (Этап 1).
     import { fetchSeason, episodeCounts } from '../metadata/tmdb.js';
     import { searchTorrentMod } from '../search/search-backend.js';
+    import { compact } from '../shared/utils.js';
 
     var SEASON_CACHE_KEY = 'torrent_mod_last_season';
     var PER_MOVIE_CACHE_MAX = 200;
@@ -128,6 +129,54 @@
             return true;
         }
 
+        // Lazy per-season fetch, only when the whole-work pool has ZERO candidates for a season the
+        // user actually opened (Jackett's per-query result limit can leave season-specific releases
+        // out of the title-only pool — no pagination to page through them). The query is the same
+        // buildQueries(season) already used elsewhere: «Имя Sxx» + «Имя N сезон» (two formats, per
+        // live checks; season-range packs like S1-5 are NOT reachable this way — they live in the
+        // title pool, and parseSignals matches them against any covered season). Results are MERGED
+        // into the existing pool (never replacing it), dedup by magnet/link/title+size, and the
+        // season is marked ready/error so it is never re-fetched until requery resets the map.
+        function ensureSeasonLoaded(season, onComplete) {
+            var state = store.get();
+            if (!hasSeasons || state.customQuery) { if (typeof onComplete === 'function') onComplete(); return; }
+            if (state.poolStatus !== 'ready') { if (typeof onComplete === 'function') onComplete(); return; }
+            var status = state.seasonLoads && state.seasonLoads[season];
+            if (status === 'loading' || status === 'ready' || status === 'error') {
+                if (typeof onComplete === 'function') onComplete();
+                return;
+            }
+            var generation = state.poolGeneration;
+            var loads = Object.assign({}, state.seasonLoads || {});
+            loads[season] = 'loading';
+            store.patch({ seasonLoads: loads });
+
+            var target = { movie: object.movie, season: season, episode: 0 };
+            searchTorrentMod(target).then(function (response) {
+                if (isDestroyed() || store.get().poolGeneration !== generation) return;
+                var current = store.get();
+                var merged = mergePools(current.pool || [], response.failed ? [] : response.results);
+                var loads2 = Object.assign({}, current.seasonLoads || {});
+                loads2[season] = response.failed ? 'error' : 'ready';
+                store.patch({ pool: merged, seasonLoads: loads2 });
+                if (typeof onComplete === 'function') onComplete();
+            });
+        }
+
+        // Same identity as search-backend's dedup: magnet first, then link, then title+size.
+        // The pool must grow monotonically within one query context — never shrink or replace.
+        function mergePools(existing, incoming) {
+            var seen = {};
+            var out = [];
+            existing.concat(incoming).forEach(function (item) {
+                var id = compact(item.magnet || item.link || (item.title + '|' + item.size));
+                if (!id || seen[id]) return;
+                seen[id] = true;
+                out.push(item);
+            });
+            return out;
+        }
+
         // The "К списку серий" back action — reuses the already-loaded episodesCache, no refetch.
         function showEpisodeList() {
             store.patch({ stage: 'episodes', statusText: '' });
@@ -140,7 +189,8 @@
         // after the fresh pool lands (movie flow: then show the local candidate pick).
         function requery(onLoaded) {
             var state = store.get();
-            store.patch({ pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1 });
+            // New query context: old pool and per-season coverage are both invalid.
+            store.patch({ pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {} });
             loadAllTorrents(onLoaded);
         }
 
@@ -154,6 +204,7 @@
             start: start,
             loadEpisodes: loadEpisodes,
             loadAllTorrents: loadAllTorrents,
+            ensureSeasonLoaded: ensureSeasonLoaded,
             setSeason: setSeason,
             showEpisodeList: showEpisodeList,
             requery: requery
