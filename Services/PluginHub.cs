@@ -317,15 +317,6 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
-            if (context.Request.HttpMethod == "GET" && path.StartsWith("/transcode/", StringComparison.OrdinalIgnoreCase))
-            {
-                var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length != 3 || parts[1].Length != 40 || !parts[1].All(Uri.IsHexDigit) || !int.TryParse(parts[2], out var fileId) || fileId < 1)
-                    throw new InvalidDataException("Некорректный адрес транскодирования.");
-                await StreamAudioTranscodedAsync(context.Response, parts[1], fileId);
-                return;
-            }
-
             if (context.Request.HttpMethod == "GET" &&
                 (path.Equals("/app", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/app/", StringComparison.OrdinalIgnoreCase)))
             {
@@ -495,63 +486,6 @@ internal sealed class PluginHub : IDisposable
             await using var stream = await upstream.Content.ReadAsStreamAsync(cancellation.Token);
             await stream.CopyToAsync(response.OutputStream, cancellation.Token);
         }
-    }
-
-    private async Task StreamAudioTranscodedAsync(HttpListenerResponse response, string hash, int fileId)
-    {
-        if (!File.Exists(AppPaths.FfmpegExecutable))
-        {
-            await WriteErrorAsync(response, HttpStatusCode.ServiceUnavailable, "ffmpeg ещё не установлен.");
-            return;
-        }
-
-        var inputUrl = $"http://127.0.0.1:{AppPaths.Port}/play/{hash}/{fileId}";
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = AppPaths.FfmpegExecutable,
-            WorkingDirectory = AppPaths.InstallDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        foreach (var argument in new[]
-        {
-            "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-i", inputUrl,
-            "-map", "0:v:0", "-map", "0:a:0?",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "2",
-            "-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-            "pipe:1"
-        })
-            startInfo.ArgumentList.Add(argument);
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Не удалось запустить ffmpeg.");
-        var errorTask = process.StandardError.ReadToEndAsync(cancellation.Token);
-        response.ContentType = "video/mp4";
-        response.SendChunked = true;
-        try
-        {
-            await process.StandardOutput.BaseStream.CopyToAsync(response.OutputStream, cancellation.Token);
-        }
-        catch (IOException) { /* The browser/player closed the stream. */ }
-        catch (HttpListenerException) { /* The browser/player disconnected. */ }
-        finally
-        {
-            try
-            {
-                if (!process.HasExited)
-                    process.Kill(entireProcessTree: true);
-            }
-            catch { }
-            try { await process.WaitForExitAsync(cancellation.Token); }
-            catch { }
-        }
-
-        var error = await errorTask;
-        if (process.ExitCode != 0 && !string.IsNullOrWhiteSpace(error))
-            AppLog.Write($"ffmpeg audio transcode failed for {hash}/{fileId}: {error.Trim()}");
     }
 
     private async Task WriteCachedPluginAsync(HttpListenerRequest request, HttpListenerResponse response, string path)

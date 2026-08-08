@@ -789,6 +789,56 @@ entry-point/build-config layer above all of them.
       `ui/movie-results-view.js`/`series-results-view.js` are 9-line pass-throughs to the one
       `createResultsView` — `hasSeasons` is a plain branch parameter, not a second mechanism.
     - All 93 existing tests (`npm run test:plugin`) still pass unchanged after every fix above.
+  - **The ffprobe gate and the ffmpeg audio-transcode endpoint were both removed outright, replaced
+    by Lampa's own native `url_reserve` fallback** — a real API confirmed by reading
+    `vendor/lampa-source/src/interaction/player.js` directly rather than guessed. `Lampa.Player.play(data)`
+    assigns `data` to its internal `work` reference; the native `<video>` element's own `'error'`
+    listener checks `work.url_reserve` on a *fatal* decode error and automatically retries with it
+    (destroying and rebuilding the video element first) — no custom error-listening code needed on
+    our side. Playlist navigation (next episode) re-enters the same `play()` function per item, so
+    setting `url_reserve` on every `data.playlist` entry, not just the top-level `data`, makes the
+    fallback apply across a whole season pack too. `playback/smart-preload.js`'s `urlsFor(session,
+    file)` now returns `{url, url_reserve}`: `url` is always the direct `Lampa.Torserver.stream()`
+    link (instant for anything the browser can decode natively), `url_reserve` is the GST
+    transcoding URL (`gstStreamUrl`), omitted entirely when TorrServer's own address can't be
+    determined so Lampa is never handed a reserve it can't use. `buildMoviePlayerData`/
+    `buildSeriesPlayerData` (movie-player.js/series-player.js) both take a `urlsFor(file)` callback
+    now instead of a bare `streamUrl(file)` string-returning one.
+    - **Why this replaces ffprobe entirely, not just fixes its bug**: a prior fix (documented above,
+      the "gate fired after playback already started" entry) made `probeSelectedFile` diagnostics-only
+      since GST was already unconditional by the time it ran. That raised the real question — an
+      ffprobe verdict is a guess about whether the browser *would* decode a file, checked via a slow
+      network round trip; the native player's own decode attempt is a direct answer, not a guess, and
+      it was already sitting right there as a built-in Lampa mechanism. Once decode-success detection
+      moved to the player itself, ffprobe (`classifyVideoCodec`, `BAD_VIDEO_CODECS`,
+      `needsAudioTranscode`, `probeSelectedFile`, TorrServer's own `/ffp` call) had nothing left to do.
+    - **Why not make GST unconditional instead** (the simpler-looking alternative — GST's own
+      stream-copy mode is cheap on CPU when no real transcoding is needed): rejected because the cost
+      of "always GST" isn't CPU load, it's *latency*, and copy mode doesn't fix that. Measured live:
+      a bare `curl` against a fresh torrent's `/gst/{hash}/master.m3u8` took **~20 seconds** to
+      respond — TorrServer has to actually warm the real GStreamer pipeline and probe the source
+      before it can report a valid manifest (`BANDWIDTH`/`RESOLUTION`/`CODECS`), regardless of
+      whether GST ends up doing a cheap remux or a real transcode. Making GST the default would tax
+      every ordinary H.264/H.265 torrent with the same ~20s wait a genuinely incompatible file needs,
+      for files that would otherwise start instantly via direct streaming.
+    - **The ffmpeg `/transcode/{hash}/{fileId}` endpoint in `Services/PluginHub.cs`
+      (`StreamAudioTranscodedAsync`) is now fully redundant, not just unreachable**: it existed to
+      re-encode incompatible audio tracks (AC-3/E-AC-3/DTS/TrueHD, common in Russian BDRips) to AAC
+      via ffmpeg for the direct-stream path. GST's own HLS output already declares AAC audio
+      (`mp4a.40.2` in its manifest's `CODECS` attribute — observed live on a real fetch) regardless of
+      the source file's actual audio codec, so once a file needs the reserve at all, GST already
+      handles its audio too. Removed the route and the method; `hubBase`'s import in
+      `smart-preload.js` was dropped since nothing else in that file used it.
+    - **Left alone, flagged for a separate decision**: `Services/FfprobeService.cs` still downloads
+      and verifies `ffprobe.exe`+`ffmpeg.exe` on every startup (`MainForm.cs`, alongside
+      `GStreamerService`). `ffprobe.exe` backs TorrServer's own `/ffp` endpoint (unrelated to GST —
+      `GStreamerService.cs` has no ffmpeg/ffprobe dependency of its own), which nothing in this
+      plugin calls anymore; `ffmpeg.exe` now has zero callers anywhere in the codebase after this
+      change. Not removed here — stopping that installer step is a separate, easily-reversible-later
+      decision (keep `/ffp` available for a future diagnostic feature vs. fully decommission it) that
+      wasn't part of what was actually asked for in this pass.
+    - Verified: all 92 remaining tests (`npm run test:plugin`, one dropped —
+      `classifyVideoCodec`'s own test, for a function that no longer exists) pass unchanged.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

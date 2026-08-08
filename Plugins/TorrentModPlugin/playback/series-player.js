@@ -8,13 +8,15 @@ function parseSeriesFile(file, files, movie) {
     } catch (e) { return {}; }
 }
 
-export function buildSeriesPlayerData(session, buildPlaylist, streamUrl) {
+export function buildSeriesPlayerData(session, buildPlaylist, urlsFor) {
     var file = session.bestFile;
     var movie = (session.target && session.target.movie) || {};
     var files = session.files || [];
     var info = parseSeriesFile(file, files, movie);
+    var urls = urlsFor(file);
     var data = {
-        url: streamUrl(file),
+        url: urls.url,
+        url_reserve: urls.url_reserve,
         torrent_hash: session.hash,
         title: file.path_human || file.path,
         first_title: movie.name || movie.title,

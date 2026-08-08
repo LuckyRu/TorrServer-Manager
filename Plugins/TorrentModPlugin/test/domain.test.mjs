@@ -24,7 +24,6 @@ import {
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
-import { classifyVideoCodec } from '../playback/smart-preload.js';
 import { pickBestFile } from '../playback/file-selection.js';
 
 const runner = createRunner();
@@ -248,20 +247,6 @@ runner.test('формат: рискованная раздача (XviD AVI) по
     const likelyScore = scoreCandidate(likelyItem, target);
     if (!(riskyScore.value < likelyScore.value)) throw new Error('рискованный не штрафуется: ' + riskyScore.value + ' vs ' + likelyScore.value);
     if (candidateBadgeText(riskyItem).indexOf('Риск: XviD') < 0) throw new Error('нет маркера «Риск:»: ' + candidateBadgeText(riskyItem));
-});
-
-runner.test('classifyVideoCodec: ffprobe-гейт для непросматриваемых кодеков', () => {
-    // «древнее говно» — блок
-    for (const c of ['mpeg2video', 'mpeg1video', 'mpeg4', 'vc1', 'wmv3', 'h263', 'rv40', 'flv1']) {
-        if (classifyVideoCodec(c) !== 'bad') throw new Error(c + ' должен быть bad');
-    }
-    // потоковые — good
-    for (const c of ['h264', 'hevc', 'av1', 'vp9']) {
-        if (classifyVideoCodec(c) !== 'good') throw new Error(c + ' должен быть good');
-    }
-    // нет видеопотока
-    if (classifyVideoCodec('') !== 'no-video') throw new Error('пустой кодек = no-video');
-    if (classifyVideoCodec(undefined) !== 'no-video') throw new Error('undefined = no-video');
 });
 
 runner.test('выбор файла: фильм не использует episode/season scoring и выбирает основной файл', () => {

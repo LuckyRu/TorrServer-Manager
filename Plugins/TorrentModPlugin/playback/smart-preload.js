@@ -7,11 +7,30 @@
     //   Lampa.Torserver.hash(...)       register the torrent (magnet or .torrent link)
     //     → pollFiles: Torserver.files(hash)  until metadata resolves → file_stats
     //     → pickBestFile()              score season/episode signals in file paths (ours)
-    //     → probeSelectedFile()         /ffp ffprobe gate — block unplayable codecs (raw DVDRip
-    //                                    class: MPEG-2/MPEG-4 ASP/VC-1/WMV/...) with a toast
-    //                                    instead of a black screen; 'unavailable' is not proof
-    //                                    of bad, play anyway
-    //     → Lampa.Player.play({url, timeline, playlist})
+    //     → Lampa.Player.play({url, url_reserve, timeline, playlist})
+    //
+    // TRANSPORT: `url` is always the direct Lampa.Torserver.stream() link — instant for the vast
+    // majority of torrents (anything the browser can decode natively). `url_reserve` is the GST
+    // transcoding URL. Confirmed by reading vendor/lampa-source/src/interaction/player.js: Lampa's
+    // own native <video> error handler already checks `work.url_reserve` on a fatal decode error and
+    // retries with it automatically (`work` is just whatever object was passed to Player.play, or —
+    // for playlist navigation — to play() again per playlist item, so the same url/url_reserve pair
+    // on each playlist entry covers next-episode switches too). No ffprobe gate needed: an ffprobe
+    // verdict was a title-adjacent guess about whether the browser *would* decode a file; the native
+    // player's own decode attempt is a direct answer, not a guess, and it used to run at the wrong
+    // time anyway — a prior version's ffprobe gate fired its notify()+dispose() *after* GST playback
+    // had already started (pickBestFile() called startDirectPlayback() before the probe's async
+    // response could land), so a 'bad codec' verdict just showed a false error over video that was
+    // already playing fine. Removed entirely, along with the now-fully-redundant ffmpeg
+    // Plugin Hub `/transcode/` audio endpoint it fed: GST's own HLS output already declares AAC audio
+    // (`mp4a.40.2` in its manifest's CODECS attribute, confirmed live) regardless of the source
+    // file's actual audio codec, so the separate ffmpeg audio-only transcode path had nothing left to
+    // do. Making GST *unconditional* instead (skip url_reserve, always use the GST url) was
+    // considered and rejected: TorrServer's own `/gst/.../master.m3u8` takes ~20s to respond (it has
+    // to warm the real GStreamer pipeline before it can report a valid manifest) — that latency comes
+    // from probing/demuxing the source, not from whether GST ends up doing a cheap stream-copy or a
+    // real transcode, so "always GST" would tax every ordinary H.264/H.265 torrent with the same ~20s
+    // wait a genuinely incompatible file needs, for no reason.
     //
     // PLAYBACK SESSION (architect's lifecycle isolation): every launch is a session object with
     // `alive` + `dispose()`. All async continuations (Torserver.hash/files, /ffp, /cache, player
@@ -34,7 +53,7 @@
     // patching of Lampa.Player.play / Torserver.stream (ADR-0003).
     import { parseSignals } from '../shared/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
-    import { hubBase, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
+    import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
     import { isPlayableFile, pickBestFile as pickBestPlayableFile } from './file-selection.js';
     import { buildMoviePlayerData } from './movie-player.js';
     import { buildSeriesPlayerData } from './series-player.js';
@@ -43,30 +62,6 @@
     var sessionSeq = 0;
     var REGISTERED_HASH_CACHE = 'torrent_mod_registered_hashes';
     var REGISTERED_HASH_CACHE_MAX = 200;
-
-    // Video codecs the browser/WebOS cannot decode without TorrServer transcoding (the raw-DVDRip
-    // class). This is the ffprobe-level arbiter: the title heuristic (release-parsing compatibility)
-    // only suspects, this confirms from the actual file's streams. Pure function for testability.
-    var BAD_VIDEO_CODECS = ['mpeg1video', 'mpeg2video', 'mpeg4', 'vc1', 'wmv1', 'wmv2', 'wmv3',
-        'msmpeg4v1', 'msmpeg4v2', 'msmpeg4v3', 'h263', 'h263p', 'rv10', 'rv20', 'rv30', 'rv40', 'flv1'];
-
-    export function classifyVideoCodec(codecName) {
-        var codec = String(codecName || '').toLowerCase();
-        if (!codec) return 'no-video';
-        return BAD_VIDEO_CODECS.indexOf(codec) >= 0 ? 'bad' : 'good';
-    }
-
-    function needsAudioTranscode(streams) {
-        var audio = (streams || []).filter(function (stream) { return stream.codec_type === 'audio'; });
-        if (!audio.length) return false;
-        // These codecs are accepted by the browser/WebOS HTML5 player in the containers we emit.
-        // AC-3/E-AC-3/DTS/TrueHD tracks are common in Russian BDRips but are not decodable by the
-        // target browser; Plugin Hub's ffmpeg route converts the first audio track to stereo AAC.
-        var browserCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac'];
-        return audio.every(function (stream) {
-            return browserCodecs.indexOf(String(stream.codec_name || '').toLowerCase()) < 0;
-        });
-    }
 
     // The stream URL built by Lampa.Torserver.stream() ends with `&play` (or `&preload` when the
     // torrserver_preload setting is on). The `&preload` variant is TorrServer's "start filling the
@@ -81,14 +76,23 @@
         return preloadUrl;
     }
 
-    function streamUrlFor(session, file) {
-        if (session.useGst) {
-            var base = torrServerBase();
-            if (base) return base + '/gst/' + encodeURIComponent(session.hash) + '/master.m3u8?index=' + encodeURIComponent(file.id) + '&audio=0';
-        }
-        if (session.transcodeAudio)
-            return hubBase + '/transcode/' + encodeURIComponent(session.hash) + '/' + encodeURIComponent(file.id);
+    function directStreamUrl(session, file) {
         return Lampa.Torserver.stream(file.path, session.hash, file.id);
+    }
+
+    function gstStreamUrl(session, file) {
+        var base = torrServerBase();
+        if (!base) return '';
+        return base + '/gst/' + encodeURIComponent(session.hash) + '/master.m3u8?index=' + encodeURIComponent(file.id) + '&audio=0';
+    }
+
+    // {url, url_reserve} for one file — url_reserve is omitted (not just empty) when TorrServer's
+    // own address can't be determined, so we never hand Lampa a reserve it can't use.
+    function urlsFor(session, file) {
+        var result = { url: directStreamUrl(session, file) };
+        var reserve = gstStreamUrl(session, file);
+        if (reserve) result.url_reserve = reserve;
+        return result;
     }
 
     function firePreload(url) {
@@ -297,61 +301,7 @@
         });
         // Silent nudge: ask TorrServer to warm this file before the player's stream request lands.
         firePreload(preloadUrlFor(session.bestFile, session.hash));
-        // Playback is not gated on ffprobe. The player/HLS pipeline can start immediately; ffprobe
-        // continues in the background for diagnostics and codec warnings. Waiting here made a
-        // perfectly playable torrent sit behind /torrents + /ffp timeouts before showing anything.
-        session.useGst = true;
         startDirectPlayback(session);
-        probeSelectedFile(session);
-    }
-
-    // ffprobe runs purely for DIAGNOSTICS now, not as a gate: pickBestFile() already calls
-    // startDirectPlayback() before this ever runs (GST transcodes on the fly, so the player must
-    // not sit behind /torrents + /ffp round trips before showing anything — see the comment there).
-    // That means session.clicked is already true by the time any callback below fires: a verdict of
-    // 'bad'/'no-video' used to notify()+dispose() the session regardless, which showed a false
-    // "unsupported format" toast and tore down cleanup (next-episode preload) on top of video that
-    // was already playing correctly through GST. Log only; never touch a session already in flight.
-    // (session.transcodeAudio is still set for streamUrlFor's non-GST fallback branch, though in
-    // practice useGst is always true by the time streamUrlFor runs, so that branch — and this whole
-    // codec verdict — is dormant unless GST itself becomes unreachable mid-session.)
-    function probeSelectedFile(session) {
-        if (!session.alive || session.probed || !session.bestFile) return;
-        var base = torrServerBase();
-        if (!base) return;
-        session.probed = true;
-        $.ajax({
-            url: base + '/torrents', method: 'POST',
-            // contentType matters: jQuery defaults POST bodies to application/x-www-form-urlencoded,
-            // which TorrServer answers with 400 — the ffprobe gate silently fell back to direct
-            // playback (or worse) on real devices (found by the user via DevTools network tab).
-            contentType: 'application/json',
-            data: JSON.stringify({ action: 'get', hash: session.hash }),
-            dataType: 'json', timeout: 4000
-        }).done(function (json) {
-            if (!session.alive) return;
-            var files = (json && json.file_stats) || [];
-            var match = files.filter(function (f) { return String(f.id) === String(session.bestFile.id); })[0];
-            if (!match || match.id == null) return;
-            $.ajax({ url: base + '/ffp/' + session.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
-                .done(function (probe) {
-                    if (!session.alive) return;
-                    var streams = probe && probe.streams;
-                    if (!streams || !streams.length) return;
-                    session.transcodeAudio = needsAudioTranscode(streams);
-                    var video = streams.filter(function (s) { return s.codec_type === 'video'; })[0];
-                    var verdict = video ? classifyVideoCodec(video.codec_name) : 'no-video';
-                    if (verdict !== 'good') {
-                        console.warn('Torrent Mod: ffprobe нашёл проблемный формат уже во время воспроизведения (GST транскодирует)', {
-                            verdict: verdict, codec: video && video.codec_name, hash: session.hash
-                        });
-                    }
-                }).fail(function () {
-                    console.warn('Torrent Mod: /ffp запрос не удался — диагностика формата недоступна');
-                });
-        }).fail(function () {
-            console.warn('Torrent Mod: /torrents get не удался — диагностика формата недоступна');
-        });
     }
 
     // Builds the player playlist from ALL playable files of the pack — the native torrent screen
@@ -366,11 +316,13 @@
         files.forEach(function (file) {
             var info = {};
             try { info = Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }); } catch (e) {}
+            var urls = urlsFor(session, file);
             playlist.push({
                 title: file.path_human || file.path,
                 first_title: movie.name || movie.title,
                 card: movie,
-                url: streamUrlFor(session, file),
+                url: urls.url,
+                url_reserve: urls.url_reserve,
                 season: info.season,
                 episode: info.episode,
                 path: file.path,
@@ -395,8 +347,8 @@
         try { if (movie.id) Lampa.Favorite.add('history', movie, 100); } catch (e) {}
 
         var data = session.mode === MODE_MOVIE
-            ? buildMoviePlayerData(session, function (file) { return streamUrlFor(session, file); })
-            : buildSeriesPlayerData(session, buildPlaylist, function (file) { return streamUrlFor(session, file); });
+            ? buildMoviePlayerData(session, function (file) { return urlsFor(session, file); })
+            : buildSeriesPlayerData(session, buildPlaylist, function (file) { return urlsFor(session, file); });
 
         // Which controller the Torrent Mod screen had before playback — the player's Back should
         // return there, not to a 'modal' that may not exist (native torrent.js routes to modal
@@ -482,9 +434,6 @@
             allFiles: [],
             bestFile: null,
             clicked: false,
-            probed: false,
-            transcodeAudio: false,
-            useGst: false,
             filesTimer: null,
             nextCleanup: [],
             dispose: function () {
@@ -504,7 +453,7 @@
     export function startDownload(item, target) {
         // A new launch disposes any still-pending one — its late async callbacks become harmless
         // because they all check session.alive (found by the architect: pending.clicked alone was
-        // not a lifecycle token, so an old /ffp or /files callback could start the wrong torrent).
+        // not a lifecycle token, so an old /files callback could start the wrong torrent).
         if (currentSession) currentSession.dispose();
 
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
