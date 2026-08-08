@@ -61,7 +61,6 @@
         picker.append(pickerScroll.render());
         var focusedEpisodeNumber = null;
         var viewDestroyed = false;
-        var focusedCandidateNode = null;
 
         function openPickerPanel() {
             if (viewDestroyed) return;
@@ -119,18 +118,14 @@
         // DOM/controller cleanup ONLY — never touches domain state. Called from render when
         // picker.open flips to false (which was itself produced by domain.closePicker), so no
         // second store.patch → no recursive render (found by the architect). The cursor is restored
-        // from REACTIVE state for series (activeEpisode) and from the candidate row the movie picker
-        // was opened from (movies have no episodeRows — found in review).
+        // from REACTIVE state (activeEpisode) — only an episode row ever opens this picker now, a
+        // candidate row's own right-arrow opens the Фильтр chip instead (see registerContentController).
         function hidePickerDom() {
             picker.removeClass('torrent-mod-picker--open');
             picker.hide();
             try { Lampa.Controller.toggle('content'); } catch (e) {}
             var activeEpisode = domain.store.get().activeEpisode;
             var node = activeEpisode ? episodeRows[activeEpisode] : null;
-            if (!node && focusedCandidateNode && focusedCandidateNode[0] && focusedCandidateNode[0].offsetParent) {
-                node = focusedCandidateNode;
-            }
-            focusedCandidateNode = null;
             if (node && node[0] && node[0].offsetParent) {
                 try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e2) {}
             }
@@ -435,10 +430,10 @@
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },
                 right: function () {
-                    // Right-arrow on an EPISODE row opens the side picker (series); on a movie's
-                    // TORRENT candidate row it opens the same picker for the movie (season 0) — so
-                    // the movie choice flow reuses the exact panel/torrentRow/persistence infra.
-                    // Scoped to our own grid — a global .focus query could hit a foreign overlay.
+                    // Right-arrow on an EPISODE row opens the side picker (series) — an episode row
+                    // has no torrent info of its own yet, the picker is the only way to see
+                    // candidates for it without leaving the episode list. Scoped to our own grid — a
+                    // global .focus query could hit a foreign overlay.
                     var focused = grid.find('.torrent-mod-episode.focus')[0];
                     if (focused) {
                         var number = parseInt($(focused).attr('data-episode'), 10);
@@ -446,10 +441,17 @@
                         domain.selection.openPicker();
                         return;
                     }
+                    // A CANDIDATE row is already a torrent list — Enter on it plays the torrent AND
+                    // persists it as the season/movie default (playCandidate), so the old
+                    // openPicker(0) here just reopened the exact same list with a "Выбрано" marker
+                    // for zero extra information, purely redundant screen-within-a-screen (reported
+                    // directly by the user: "зачем при навигации вправо мне список торрентов
+                    // открывается? Мне там фильтры нужны"). Right is repurposed as a shortcut
+                    // straight to the Фильтр chip instead — same panel `up` would eventually reach
+                    // by walking to the toolbar, without needing to leave the list first.
                     if (grid.find('.torrent-mod-candidate.focus')[0]) {
-                        focusedCandidateNode = grid.find('.torrent-mod-candidate.focus');
-                        domain.selection.openPicker(0);
-                        return;
+                        var filterChip = toolbar.find('.filter--filter');
+                        if (filterChip.length) { filterChip.trigger('hover:enter'); return; }
                     }
                     Navigator.move('right');
                 },

@@ -970,7 +970,38 @@ entry-point/build-config layer above all of them.
     cache-diff path — no `dotnet build`/`publish`/process-restart needed. The dev-override
     mechanism itself (`BuiltInPlugins.Read` checking `dev-plugins/<file>` first) applies to any
     built-in plugin, not just this one — only the `npm run dev:plugin` watch script is
-    TorrentModPlugin-specific.
+    TorrentModPlugin-specific. `npm run install:plugin-dev`
+    (`scripts/build-plugin-dev.mjs`) is the one-shot, non-watching counterpart — same dev-override
+    output, but a script that actually exits, needed for a completing VS Code task rather than
+    `watch-plugin.mjs`'s `ctx.watch()` which never returns. Both share the override path via
+    `scripts/plugin-target.mjs` so it's computed in exactly one place. `.vscode/tasks.json` wires
+    this up as the default build task ("Собрать и установить плагин (dev)"), plus a watch variant
+    and a task that POSTs `/api/plugins/refresh` against the already-running app afterward.
+  - **Right-arrow on a CANDIDATE row (the primary torrent list — a movie from the first frame, or a
+    series after picking a low-confidence episode) used to reopen the exact same list in a slide-in
+    picker panel** — reported directly by the user ("зачем при навигации вправо мне список торрентов
+    открывается? Мне там фильтры нужны"). Root cause: the picker (right-arrow on an EPISODE row)
+    exists because an episode row has no torrent info of its own — the panel is the only way to see
+    candidates for it. A candidate row IS already a torrent list; Enter on it already plays the
+    torrent AND persists it as the season/movie default (`playCandidate`), so the picker's "Выбрано"
+    marker showed zero information the row didn't already have — pure redundant screen-within-a-screen,
+    not a deliberate feature (confirmed via `git log`: introduced deliberately in `1145920` to reuse
+    the picker's persistence infra for movies, but the redundancy with `playCandidate` already doing
+    the same persistence wasn't caught at the time). Fixed in `ui/results-screen.js`'s `right` handler
+    for `'content'`: a focused candidate row now triggers the toolbar's `.filter--filter` chip
+    directly (`toolbar.find('.filter--filter').trigger('hover:enter')`, the same `hover:enter` Lampa's
+    own Filter widget binds internally — confirmed by reading `vendor/lampa-source/src/interaction/
+    filter.js`) instead of calling `openPicker(0)`. `openPicker` itself is untouched — an EPISODE
+    row's right-arrow still opens it, that path was never the problem. The now-dead
+    `focusedCandidateNode` bookkeeping (only ever set by the removed branch, read by `hidePickerDom`
+    as a fallback focus-restore target) was deleted along with it rather than left as an unreachable
+    fallback. Verified live end to end via the actual running app (not guessed): opened a movie's
+    Torrent Mod screen, confirmed focus lands on a `.torrent-mod-candidate` row
+    (`Lampa.Controller.enabled().name === 'content'`), called the registered `right()` handler
+    directly, confirmed a real `Lampa.Select` overlay opened (`Lampa.Controller.enabled().name ===
+    'select'`, a genuine `.selectbox` in the DOM — not a lookalike), then called `back()` and
+    confirmed focus correctly returns to `'content'` with the same candidate row still focused (no
+    dead-focus regression of the kind documented earlier in this section for `Lampa.Select`).
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
