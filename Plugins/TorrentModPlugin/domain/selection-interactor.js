@@ -13,6 +13,7 @@
     import { selectCandidatesForEpisode } from './results-selectors.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
+    import { log, warn } from '../shared/core/log.js';
 
     var DEFAULT_KEY = 'torrent_mod_default_torrent';
     var LAST_EPISODE_KEY = 'torrent_mod_last_episode';
@@ -119,6 +120,7 @@
         // old unconditional auto-play made it impossible to choose on first entry — found by the
         // architect). Reuses the same candidates/persistence/picker primitives as the series flow.
         function startMovie() {
+            log('selection', 'startMovie()');
             var state = store.get();
             if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
                 pendingSelection = { season: 0, episode: 0, movie: true };
@@ -129,12 +131,18 @@
             var target = buildMovieTarget();
             var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
             if (!candidates.length) {
+                log('selection', 'startMovie: подходящих раздач не найдено в пуле');
                 store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
                 return;
             }
             var saved = readSeasonDefault(object.movie, 0);
             var chosen = findSavedDefault(candidates, saved);
-            if (chosen) { startDownload(chosen, target); return; }
+            if (chosen) {
+                log('selection', 'startMovie: автозапуск сохранённого дефолта — ' + chosen.title);
+                startDownload(chosen, target);
+                return;
+            }
+            log('selection', 'startMovie: показываю список торрентов (' + candidates.length + ' кандидатов), дефолта нет');
             store.patch({ stage: 'candidates', candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: false } });
         }
 
@@ -174,10 +182,12 @@
             var target = buildMovieTarget();
             var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
             if (!candidates.length) { store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } }); return; }
+            log('selection', 'showMoviePool: ' + candidates.length + ' кандидатов, pickerOnly=' + !!pickerOnly);
             finishSelection(candidates, target, pickerOnly);
         }
 
         function selectEpisode(episode, pickerOnly) {
+            log('selection', 'selectEpisode(' + episode + '), pickerOnly=' + !!pickerOnly);
             var state = store.get();
             var target = {
                 movie: object.movie,
@@ -212,18 +222,21 @@
             if (candidates.length) {
                 var saved = readSeasonDefault(object.movie, state.season);
                 var chosen = findSavedDefault(candidates, saved) || candidates[0];
+                log('selection', 'selectEpisode(' + episode + '): запуск — ' + chosen.title + (chosen === saved ? ' (сохранённый дефолт)' : ' (лучший по рейтингу)'));
                 startDownload(chosen, target);
                 return;
             }
             // Zero candidates → lazy season fetch → retry the click.
             var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
             if (loadStatus === 'loading') {
+                log('selection', 'selectEpisode(' + episode + '): дозагрузка сезона уже идёт, откладываю выбор');
                 pendingEpisode = { season: state.season, episode: episode, pickerOnly: pickerOnly };
                 notify('Ищем раздачи для сезона…');
                 return;
             }
             if (loadStatus === 'ready' || loadStatus === 'error') { notify('Раздач не нашлось'); return; }
             if (ensureSeasonLoaded) {
+                log('selection', 'selectEpisode(' + episode + '): в пуле пусто — запускаю дозагрузку сезона ' + state.season);
                 ensureSeasonLoaded(state.season, function () {
                     var current = store.get();
                     var pending = pendingEpisode;
@@ -254,6 +267,7 @@
         function openPicker(episode) {
             var state = store.get();
             if (episode === undefined) episode = state.activeEpisode || state.lastEpisode || 0;
+            log('selection', 'openPicker(' + episode + ')');
             var target = {
                 movie: object.movie,
                 mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
@@ -312,12 +326,14 @@
         }
 
         function playPickerCandidate(item, target) {
+            log('selection', 'playPickerCandidate: ' + item.title + ' (эпизод ' + target.episode + ', сезон ' + target.season + ')');
             saveSeasonDefault(object.movie, target.season, item);
             store.patch({ picker: { open: false, episode: target.episode, items: [], target: null, status: 'idle', selectedId: null } });
             startDownload(item, target);
         }
 
         function closePicker() {
+            log('selection', 'closePicker()');
             // Cancel any deferred picker intent too — closing the panel must not resurrect it when
             // the pool finishes loading (found in review).
             if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
@@ -328,6 +344,7 @@
 
         function freshSearch(target, pickerOnly) {
             var generation = store.get().searchGeneration + 1;
+            log('selection', 'freshSearch: "' + (target.customQuery || '') + '", сезон=' + target.season + ', эпизод=' + target.episode + ', generation=' + generation);
             store.patch({
                 searchGeneration: generation,
                 searchStatus: 'loading',
@@ -346,13 +363,17 @@
                 // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
                 // this exact request being the one cancelSearch() just cancelled on destroy, not by
                 // an actual Jackett problem) over whatever the user is looking at now.
-                if (!isCurrentGeneration(store, 'searchGeneration', generation, isDestroyed, stillTargeted)) return;
+                if (!isCurrentGeneration(store, 'searchGeneration', generation, isDestroyed, stillTargeted)) {
+                    log('selection', 'freshSearch отброшен как устаревший, generation=' + generation);
+                    return;
+                }
                 if (response.failed) {
                     // Was a bare notify() toast that just faded away — now the same retryable-message
                     // pattern loadEpisodes' TMDB failure already uses (results-state.js's
                     // message.retry), so two failures that are the same thing to the user ("couldn't
                     // load data, try again") get the same UX instead of one having a real "Повторить"
                     // affordance and the other just a disappearing toast (found in review).
+                    warn('selection', 'freshSearch: поиск не удался (Jackett недоступен)');
                     store.patch({
                         searchStatus: 'error', stage: 'message',
                         message: { text: 'Jackett недоступен или не ответил', retry: function () { freshSearch(target, pickerOnly); } }
@@ -361,6 +382,7 @@
                 }
                 var pool = applyStateFilters(response.results, store.get());
                 if (!pool.length) {
+                    log('selection', 'freshSearch: пул пуст после фильтров');
                     notify('Ничего не найдено');
                     store.patch({ searchStatus: 'idle', statusText: '' });
                     return;
@@ -373,8 +395,9 @@
                 var candidates = pool.filter(function (item) { return item._score.passes; });
                 candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
                 store.patch({ searchStatus: 'ready', statusText: '' });
-                if (!candidates.length) { notify('Похожих раздач не нашлось'); return; }
+                if (!candidates.length) { log('selection', 'freshSearch: похожих раздач не нашлось (гейт отсеял все)'); notify('Похожих раздач не нашлось'); return; }
 
+                log('selection', 'freshSearch успех: ' + candidates.length + ' кандидатов прошли гейт');
                 finishSelection(candidates, target, pickerOnly);
             });
         }
@@ -387,6 +410,7 @@
         // it is NOT a request to start playback of the top match right now.
         function searchWithQuery(value) {
             if (!value) return;
+            log('selection', 'searchWithQuery: "' + value + '"');
             // Bump searchGeneration: any in-flight freshSearch (e.g. an episode click made while a
             // customQuery was already active) belongs to the previous query context and must be
             // discarded, not painted over the new one (found in review).
@@ -412,6 +436,7 @@
             // Picking a torrent from a list is an explicit user choice — persist it as the default
             // for this season (0 for movies), so the next entry auto-plays it (found by the architect:
             // movie picks from the full list were never remembered before).
+            log('selection', 'playCandidate: ' + item.title + ' (сезон ' + (target.season || 0) + ')');
             saveSeasonDefault(object.movie, target.season || 0, item);
             startDownload(item, target);
         }

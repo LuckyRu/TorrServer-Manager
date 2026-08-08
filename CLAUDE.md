@@ -934,6 +934,33 @@ entry-point/build-config layer above all of them.
       recovery; one new `smoke.test.mjs` case — previously entirely uncovered — calling `destroy()`
       mid-flight against two deliberately delayed mock responses and confirming neither one mutates
       the store after teardown).
+  - **`shared/core/log.js` — a consistent lifecycle-logging helper (`log(scope, message, data)`/
+    `warn(scope, message, data)`, format `Torrent Mod [scope]: message`), added after the user asked
+    for detailed console-visible lifecycle logging across the whole plugin ("сделай мне подробное
+    логирование жизненного цикла... хочу по консоли отслеживать что происходит") having just fixed a
+    debug `console.log` line themselves. Replaces every scattered ad hoc `console.log('Torrent Mod:
+    ...')`/`console.warn(...)` call (inconsistent prefixing, no scope) with one helper called from
+    every layer that has a lifecycle worth watching in the console: `index.js` (plugin boot),
+    `ui/torrent-mod-component.js` (component create/start/destroy, movie-vs-series mode), `domain/
+    results-domain.js` (domain start/destroy, idempotent-destroy noted explicitly),
+    `domain/episodes-interactor.js` (season load/pool load/lazy per-season load — start, stale-discard
+    via generation, success-with-count, error — plus `setSeason`'s old→new transition and `requery`'s
+    pool reset), `domain/selection-interactor.js` (every entry point — `selectEpisode`, `openPicker`,
+    `playPickerCandidate`, `closePicker`, `startMovie`, `showMoviePool`, `searchWithQuery`,
+    `playCandidate` — plus `freshSearch`'s full stale/failure/empty/success set), and
+    `playback/smart-preload.js` (`startDownload` as the actual playback-session entry point —
+    previously had zero logging despite being the most important point to see in the console;
+    `registerTorrent`'s full 3-way fallback chain — cached-hash validate/reuse/expire, list-lookup
+    found/missing, fresh add — `pollFiles`'s metadata-wait progress and timeout, `pickBestFile`,
+    `startDirectPlayback`'s built player-data shape (url/url_reserve/playlist length presence, not the
+    URLs themselves), and `startNextEpisodePreload`'s actual fire point). Deliberately left alone:
+    `shared/utils.js`'s `notify()` (`console.log` fallback only when `Lampa.Noty` itself is
+    unavailable — a UI-notification fallback, not a lifecycle log point) and its separate
+    `torrent_mod_debug`-gated scored-candidates table (an opt-in diagnostic feature with a different
+    purpose and audience than always-on lifecycle tracing). Verified live via `npm run test:plugin`
+    (all 108 tests still green — `smoke.test.mjs`'s existing scenarios now also print the full
+    lifecycle trace for every domain-flow test, itself a live demonstration the logging covers the
+    intended surface end to end).
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

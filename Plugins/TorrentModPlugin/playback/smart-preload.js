@@ -57,6 +57,7 @@
     import { isPlayableFile, pickBestFile as pickBestPlayableFile } from './file-selection.js';
     import { buildMoviePlayerData } from './movie-player.js';
     import { buildSeriesPlayerData } from './series-player.js';
+    import { log, warn } from '../shared/core/log.js';
 
     var currentSession = null;
     var sessionSeq = 0;
@@ -160,8 +161,9 @@
         var target = session.target;
         var source = item.magnet ? 'magnet' : 'torrent-link';
         var base = torrServerBase();
+        log('playback', 'registerTorrent: "' + item.title + '" (' + source + ', ' + item.tracker + ')');
         if (!base) {
-            console.warn('Torrent Mod: TorrServer URL не настроен', { mode: session.mode });
+            warn('playback', 'registerTorrent: TorrServer URL не настроен', { mode: session.mode });
             notify('TorrServer недоступен');
             session.dispose();
             return;
@@ -180,11 +182,13 @@
 
         function useRegisteredHash(hash) {
             if (!session.alive || !hash) return;
+            log('playback', 'registerTorrent: используем hash ' + hash);
             session.hash = hash;
             pollFiles(session);
         }
 
         function addTorrent() {
+            log('playback', 'registerTorrent: добавляю новый торрент (' + source + ')');
             try {
                 $.ajax({
                     url: base + '/torrents',
@@ -197,16 +201,17 @@
                     if (!session.alive || session.clicked) return;
                     session.hash = json && json.hash;
                     if (session.hash) {
+                        log('playback', 'registerTorrent: добавлен, hash=' + session.hash);
                         rememberRegisteredHash(item, session.hash);
                         pollFiles(session);
                     } else {
-                        console.warn('Torrent Mod: action:add вернул пустой hash', json);
+                        warn('playback', 'registerTorrent: action:add вернул пустой hash', json);
                         notify('Не удалось получить hash раздачи');
                         session.dispose();
                     }
                 }).fail(function (xhr, status, error) {
                     if (!session.alive) return;
-                    console.warn('Torrent Mod: /torrents action:add fail', {
+                    warn('playback', 'registerTorrent: /torrents action:add fail', {
                         mode: session.mode,
                         source: source,
                         title: item.title,
@@ -218,7 +223,7 @@
                     session.dispose();
                 });
             } catch (e) {
-                console.warn('Torrent Mod: /torrents action:add бросил', e);
+                warn('playback', 'registerTorrent: /torrents action:add бросил', e);
                 notify('TorrServer недоступен');
                 session.dispose();
             }
@@ -242,13 +247,14 @@
                     var entryTitle = String(entry && entry.title || '');
                     return entry && entry.hash && (entryTitle === title || entryTitle === plainTitle || entryTitle.replace(/^\[LAMPA\]\s*/i, '') === plainTitle);
                 })[0];
-                if (found) useRegisteredHash(found.hash);
+                if (found) { log('playback', 'registerTorrent: найден уже зарегистрированный торрент по списку'); useRegisteredHash(found.hash); }
                 else onMissing();
             }).fail(onMissing);
         }
 
         var knownHash = readRegisteredHash(item);
         if (knownHash) {
+            log('playback', 'registerTorrent: проверяю кэшированный hash ' + knownHash);
             // Validate the cached hash first. If TorrServer was restarted and the torrent is no
             // longer available, fall back to one normal add; never blindly reuse stale state.
             $.ajax({
@@ -260,9 +266,9 @@
                 timeout: 5000
             }).done(function (json) {
                 if (session.alive && json && (json.hash || json.title)) useRegisteredHash(knownHash);
-                else if (session.alive) addTorrent();
+                else if (session.alive) { log('playback', 'registerTorrent: кэшированный hash протух, добавляю заново'); addTorrent(); }
             }).fail(function () {
-                if (session.alive) addTorrent();
+                if (session.alive) { log('playback', 'registerTorrent: не удалось проверить кэшированный hash, добавляю заново'); addTorrent(); }
             });
         } else {
             findExistingTorrent(addTorrent);
@@ -275,6 +281,7 @@
     function pollFiles(session) {
         var attempts = 0;
         var maxAttempts = 45;
+        log('playback', 'pollFiles: старт опроса метаданных, hash=' + session.hash);
         function attempt() {
             if (!session.alive || session.clicked) { clearInterval(session.filesTimer); return; }
             attempts++;
@@ -287,18 +294,19 @@
                         if (attempts >= maxAttempts) {
                             clearInterval(session.filesTimer);
                             notify('Не удалось получить файлы раздачи');
-                            console.warn('Torrent Mod: metadata не пришли за ' + (maxAttempts * 2) + 'с, hash=' + session.hash);
+                            warn('playback', 'pollFiles: metadata не пришли за ' + (maxAttempts * 2) + 'с, hash=' + session.hash);
                             session.dispose();
                         }
                         return;
                     }
                     clearInterval(session.filesTimer);
+                    log('playback', 'pollFiles: метаданные получены, попытка ' + attempts + ', файлов=' + plays.length);
                     session.allFiles = stats;
                     try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
                     session.files = plays;
                     pickBestFile(session);
                 });
-            } catch (e) { console.warn('Torrent Mod: Torserver.files бросил', e); }
+            } catch (e) { warn('playback', 'pollFiles: Torserver.files бросил', e); }
             if (attempts >= maxAttempts) clearInterval(session.filesTimer);
         }
         session.filesTimer = setInterval(attempt, 2000);
@@ -311,10 +319,9 @@
         if (!session.alive || session.clicked || !session.files || !session.files.length) return;
         session.bestFile = pickBestPlayableFile(session.files, session.target, parseSignals);
         if (!session.bestFile) return;
-        console.log('Torrent Mod: выбран файл', {
+        log('playback', 'pickBestFile: выбран файл "' + session.bestFile.path + '"', {
             mode: session.mode,
             torrent: session.item.title,
-            file: session.bestFile.path,
             size: session.bestFile.length || session.bestFile.size || 0
         });
         // Silent nudge: ask TorrServer to warm this file before the player's stream request lands.
@@ -360,7 +367,7 @@
         var target = session.target;
         var movie = (target && target.movie) || {};
         var hash = session.hash;
-        if (!hash || !file) { session.dispose(); return; }
+        if (!hash || !file) { warn('playback', 'startDirectPlayback: нет hash или файла, отмена'); session.dispose(); return; }
 
         // Compensated native side effect #1: continue-watch card (torrent.js:437).
         try { if (movie.id) Lampa.Favorite.add('history', movie, 100); } catch (e) {}
@@ -369,13 +376,15 @@
             ? buildMoviePlayerData(session, function (file) { return urlsFor(session, file); })
             : buildSeriesPlayerData(session, buildPlaylist, function (file) { return urlsFor(session, file); });
 
+        log('playback', 'startDirectPlayback: запуск Player.play', { mode: session.mode, hasUrl: !!data.url, hasUrlReserve: !!data.url_reserve, playlistLength: (data.playlist || []).length });
+
         // Which controller the Torrent Mod screen had before playback — the player's Back should
         // return there, not to a 'modal' that may not exist (native torrent.js routes to modal
         // because ITS caller is a modal; ours is the screen, found by the architect).
         var backController = previousController() || 'content';
 
         var started = false;
-        try { Lampa.Player.play(data); started = true; } catch (e) { console.warn('Torrent Mod: Player.play failed', e); }
+        try { Lampa.Player.play(data); started = true; } catch (e) { warn('playback', 'startDirectPlayback: Player.play failed', e); }
         if (!started) { session.dispose(); return; }
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle(backController); }); } catch (e) {}
         // Warm the NEXT episode's cache while this one plays — the fix for stalls on episode switch.
@@ -423,6 +432,7 @@
             if (remaining > 0 && (current >= e.duration * 0.85 || remaining <= 60)) {
                 fired = true;
                 try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (err) {}
+                log('playback', 'startNextEpisodePreload: прогреваю следующий файл "' + next.path + '"');
                 firePreload(preloadUrlFor(next, session.hash));
             }
         }
@@ -470,10 +480,11 @@
     }
 
     export function startDownload(item, target) {
+        log('playback', 'startDownload: "' + item.title + '" (' + item.tracker + ', ' + item.seeders + ' сидов), mode=' + (target && target.mode));
         // A new launch disposes any still-pending one — its late async callbacks become harmless
         // because they all check session.alive (found by the architect: pending.clicked alone was
         // not a lifecycle token, so an old /files callback could start the wrong torrent).
-        if (currentSession) currentSession.dispose();
+        if (currentSession) { log('playback', 'startDownload: отменяю предыдущую незавершённую сессию #' + currentSession.id); currentSession.dispose(); }
 
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
         var session = createSession(item, target);

@@ -23,6 +23,7 @@
     import { createSelectionInteractor } from './selection-interactor.js';
     import { createFiltersInteractor } from './filters-interactor.js';
     import { createLifecycle } from '../shared/core/lifecycle.js';
+    import { log } from '../shared/core/log.js';
 
     export function createResultsDomain(options) {
         var object = options.object;
@@ -44,6 +45,7 @@
         // episode list, the candidate list IS the primary content, so we load the pool first and
         // then run the local pick (auto-play on a confident match, picker otherwise).
         function start() {
+            log('domain', 'start(), hasSeasons=' + hasSeasons + ', movie.id=' + movie.id);
             if (hasSeasons) episodes.start();
             else {
                 // Movie: load the whole-work pool, then run the movie flow (auto-play a persisted
@@ -57,10 +59,11 @@
         function destroy() {
             // Idempotent via lifecycle.dispose() — a second destroy() call is a no-op instead of
             // re-running teardown.
-            lifecycle.dispose(function () {
+            var disposed = lifecycle.dispose(function () {
                 // Cancel interactor timers (pending-retry) that would otherwise outlive the screen.
                 if (selection.destroy) selection.destroy();
             });
+            log('domain', disposed ? 'destroy()' : 'destroy() — уже уничтожен, повторный вызов проигнорирован');
         }
 
         return {

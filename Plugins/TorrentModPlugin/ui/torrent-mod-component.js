@@ -9,10 +9,14 @@ import { createSeriesResultsViewModel } from '../domain/series-results-viewmodel
 import { createMovieResultsView } from './movie-results-view.js';
 import { createSeriesResultsView } from './series-results-view.js';
 import { cancelSearch } from '../shared/utils.js';
+import { VERSION } from '../shared/state.js';
+import { log } from '../shared/core/log.js';
 
 export function TorrentModComponent(object) {
     var movie = object.movie || {};
     var series = isSeriesWithSeasons(movie);
+    var mode = series ? 'series' : 'movie';
+    log('component', 'создан (v' + VERSION + '), режим=' + mode + ', movie.id=' + movie.id, movie.title);
     var viewModel = series
         ? createSeriesResultsViewModel({ object: object, movie: movie })
         : createMovieResultsViewModel({ object: object, movie: movie });
@@ -22,10 +26,15 @@ export function TorrentModComponent(object) {
 
     this.create = function () { return view.create(); };
     this.render = function (js) { return view.render(js); };
-    this.start = function () { view.start(); viewModel.start(); };
+    this.start = function () {
+        log('component', 'старт, режим=' + mode);
+        view.start();
+        viewModel.start();
+    };
     this.pause = function () {};
     this.stop = function () {};
     this.destroy = function () {
+        log('component', 'уничтожение, режим=' + mode);
         cancelSearch();
         viewModel.destroy();
         view.destroy();

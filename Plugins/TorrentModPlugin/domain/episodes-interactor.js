@@ -16,6 +16,7 @@
     import { compact } from '../shared/utils.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
+    import { log, warn } from '../shared/core/log.js';
 
     var PER_MOVIE_CACHE_MAX = 200;
 
@@ -38,10 +39,14 @@
             var state = store.get();
             var requestedSeason = state.season;
             var generation = state.seasonGeneration;
+            log('episodes', 'loadEpisodes старт, сезон=' + requestedSeason + ', generation=' + generation);
             store.patch({ episodesStatus: 'loading', statusText: 'Загрузка списка серий…' });
 
             fetchSeason(movie, requestedSeason).then(function (result) {
-                if (!isCurrentGeneration(store, 'seasonGeneration', generation, isDestroyed)) return;
+                if (!isCurrentGeneration(store, 'seasonGeneration', generation, isDestroyed)) {
+                    log('episodes', 'loadEpisodes отброшен как устаревший, сезон=' + requestedSeason + ', generation=' + generation);
+                    return;
+                }
 
                 // fetchSeason now returns a Result (shared/core/result.js): a network failure and a
                 // legitimately empty TMDB season used to be indistinguishable here (fetchSeason's own
@@ -49,6 +54,7 @@
                 // surfaces as its own retryable message instead of falling through to the synthetic
                 // fallback-episode-count branch below, which is for the genuinely-empty case only.
                 if (!result.ok) {
+                    warn('episodes', 'loadEpisodes ошибка (' + result.error.kind + '): ' + result.error.message, { retryable: result.error.retryable });
                     store.patch({ episodesStatus: 'error', stage: 'message', message: { text: result.error.message, retry: result.error.retryable ? loadEpisodes : null } });
                     return;
                 }
@@ -62,9 +68,11 @@
                     for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
                 }
                 if (!episodes.length) {
+                    warn('episodes', 'loadEpisodes: TMDB не вернул ни одной серии для сезона ' + requestedSeason);
                     store.patch({ episodesStatus: 'error', stage: 'message', message: { text: 'Список серий недоступен', retry: loadEpisodes } });
                     return;
                 }
+                log('episodes', 'loadEpisodes успех, сезон=' + requestedSeason + ', серий=' + episodes.length);
                 store.patch({
                     episodesCache: episodes,
                     seasonEpisodeCount: seasonEpisodeCount,
@@ -89,6 +97,7 @@
             if (state.poolStatus === 'loading') {
                 // Already in flight: don't lose a caller's callback (e.g. the movie flow's first
                 // selectEpisode(0)) if loadAllTorrents is re-invoked mid-load (found in review).
+                log('episodes', 'loadAllTorrents уже в процессе, callback добавлен в очередь');
                 if (typeof onLoaded === 'function') pendingOnLoaded = onLoaded;
                 return;
             }
@@ -100,10 +109,16 @@
                 episode: 0,
                 customQuery: state.customQuery
             };
+            log('episodes', 'loadAllTorrents старт, generation=' + generation + (state.customQuery ? ', customQuery=' + state.customQuery : ''));
             store.patch({ poolStatus: 'loading' });
             var search = hasSeasons ? searchSeriesTorrents : searchMovieTorrents;
             search(target).then(function (response) {
-                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
+                    log('episodes', 'loadAllTorrents отброшен как устаревший, generation=' + generation);
+                    return;
+                }
+                if (response.failed) warn('episodes', 'loadAllTorrents: поиск не удался');
+                else log('episodes', 'loadAllTorrents успех, раздач в пуле=' + response.results.length);
                 store.patch({
                     pool: response.failed ? [] : response.results,
                     poolStatus: response.failed ? 'error' : 'ready'
@@ -118,6 +133,7 @@
         function setSeason(season) {
             var state = store.get();
             if (season === state.season) return false;
+            log('episodes', 'setSeason: ' + state.season + ' → ' + season);
             rememberSeason(movie, season);
             // Season flip is LOCAL: the pool already holds every season's releases, so nothing is
             // re-fetched — only the TMDB episode list for the new season, which re-derives badges
@@ -155,14 +171,19 @@
             var loads = Object.assign({}, state.seasonLoads || {});
             loads[season] = 'loading';
             store.patch({ seasonLoads: loads });
+            log('episodes', 'ensureSeasonLoaded: дозагрузка сезона ' + season + ' (в общем пуле для него пусто)');
 
             var target = { movie: object.movie, season: season, episode: 0 };
             searchSeriesTorrents(target).then(function (response) {
-                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
+                    log('episodes', 'ensureSeasonLoaded(' + season + ') отброшен как устаревший');
+                    return;
+                }
                 var current = store.get();
                 var merged = mergePools(current.pool || [], response.failed ? [] : response.results);
                 var loads2 = Object.assign({}, current.seasonLoads || {});
                 loads2[season] = response.failed ? 'error' : 'ready';
+                log('episodes', 'ensureSeasonLoaded(' + season + ') ' + (response.failed ? 'ошибка' : 'успех') + ', пул после мержа=' + merged.length);
                 store.patch({ pool: merged, seasonLoads: loads2 });
                 if (typeof onComplete === 'function') onComplete();
             });
@@ -194,6 +215,7 @@
         // after the fresh pool lands (movie flow: then show the local candidate pick).
         function requery(onLoaded) {
             var state = store.get();
+            log('episodes', 'requery: сброс пула под новым запросом, customQuery=' + state.customQuery);
             // New query context: old pool and per-season coverage are both invalid.
             store.patch({ pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {} });
             loadAllTorrents(onLoaded);

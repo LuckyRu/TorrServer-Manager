@@ -8,6 +8,7 @@
     import { addSettings } from './ui/settings.js';
     import { addStyles } from './ui/styles.js';
     import { TorrentModComponent } from './ui/torrent-mod-component.js';
+    import { log } from './shared/core/log.js';
 
     function main() {
         if (!window.Lampa || window.torrent_mod_ready) return;
@@ -26,7 +27,7 @@
             if (Lampa.Torserver && Lampa.Torserver.connected)
                 Lampa.Torserver.connected(function () {}, function () {});
         } catch (e) {}
-        console.log('Torrent Mod ' + VERSION + ': ready');
+        log('boot', 'плагин загружен, версия ' + VERSION);
     }
 
     main();
