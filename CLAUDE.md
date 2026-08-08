@@ -843,6 +843,28 @@ entry-point/build-config layer above all of them.
     path documented in `docs/reference/lampa-player-api.md`, if that's ever built) at effectively zero
     ongoing cost, unlike `ffmpeg.exe`, which had no plausible future caller once its one consumer was
     gone.
+  - **`url_reserve` playback was hitting a real ~20s-cancel-then-retry pattern in production**, found
+    from a user-provided DevTools network capture: a `master.m3u8?index=...&audio=0` request showing
+    `(canceled)` at exactly 20.00s, followed immediately by a second, identical request that succeeded
+    in ~8s. Root-caused by reading `vendor/lampa-source` directly rather than guessing: hls.js's own
+    manifest-load timeout defaults to **10000ms**
+    (`Player.playdata().hls_manifest_timeout || 10000`, `interaction/player/video.js`) with one
+    internal retry before hls.js gives up — matching the observed ~20s-then-retry shape exactly.
+    `player.js` (`interaction/player.js:1200`) already extends this to `60000` automatically, but only
+    `if(data.torrent_hash && Torserver.gstWork())` — and `Torserver.gstWork()`
+    (`interaction/torserver.js:137-139`) checks the **global** `torrserver_gts` Lampa setting, which
+    this plugin never touches (GST is decided per-file via `url_reserve`, not that toggle). So every
+    GST reserve playback was running hls.js's un-extended 10s(×~2) budget against TorrServer's own
+    genuinely slow (~20s+, measured live) `/gst/.../master.m3u8` pipeline warm-up — the request that
+    got canceled wasn't wasted work either: TorrServer kept warming server-side regardless of the
+    client giving up, which is why the immediate retry succeeded faster. Fixed by having `urlsFor()`
+    (`playback/smart-preload.js`) set `hls_manifest_timeout: 60000` alongside `url_reserve` whenever a
+    GST reserve URL exists — same value Lampa's own code would apply for a GST torrent, just triggered
+    by `url_reserve`'s presence instead of the global setting nobody here uses. Threaded onto the
+    top-level player data (`movie-player.js`/`series-player.js`) and onto every `data.playlist` entry
+    (`buildPlaylist`), for the same reason `url_reserve` itself needed to be on every entry — playlist
+    navigation re-enters `play()` per item and reassigns `work`, so a per-item field is the only kind
+    that survives an episode switch.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

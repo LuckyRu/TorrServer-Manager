@@ -23,6 +23,7 @@ export function buildMoviePlayerData(session, urlsFor) {
     var data = {
         url: urls.url,
         url_reserve: urls.url_reserve,
+        hls_manifest_timeout: urls.hls_manifest_timeout,
         torrent_hash: session.hash,
         title: file.path_human || file.path,
         first_title: movie.name || movie.title,

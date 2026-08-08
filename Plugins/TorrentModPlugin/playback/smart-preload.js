@@ -86,12 +86,30 @@
         return base + '/gst/' + encodeURIComponent(session.hash) + '/master.m3u8?index=' + encodeURIComponent(file.id) + '&audio=0';
     }
 
-    // {url, url_reserve} for one file — url_reserve is omitted (not just empty) when TorrServer's
-    // own address can't be determined, so we never hand Lampa a reserve it can't use.
+    // {url, url_reserve, hls_manifest_timeout} for one file — url_reserve/hls_manifest_timeout are
+    // omitted (not just empty) when TorrServer's own address can't be determined, so we never hand
+    // Lampa a reserve it can't use.
+    //
+    // hls_manifest_timeout matters because hls.js's own manifest-load timeout defaults to 10s
+    // (Player.playdata().hls_manifest_timeout || 10000, vendor/lampa-source/src/interaction/player/
+    // video.js) — too short for TorrServer's own /gst/.../master.m3u8, which takes ~20s+ to warm the
+    // real GStreamer pipeline before it can answer (measured live). Lampa's own player.js already
+    // extends this to 60000 automatically, but only when `Torserver.gstWork()` is true — a check on
+    // the GLOBAL `torrserver_gts` Lampa setting, which this plugin never touches (GST is decided
+    // per-file via url_reserve, not that toggle). Without setting this ourselves, hls.js runs the
+    // GST reserve manifest against the un-extended 10s budget, hits it, cancels, and only succeeds on
+    // its own internal retry once TorrServer's pipeline happens to already be warm from the first,
+    // client-abandoned attempt — visible live as a canceled ~20s request followed by a second, faster
+    // one (found via a user-reported DevTools network capture). 60000 matches the value Lampa's own
+    // code would apply for a GST torrent, just triggered by url_reserve's presence instead of the
+    // global setting.
     function urlsFor(session, file) {
         var result = { url: directStreamUrl(session, file) };
         var reserve = gstStreamUrl(session, file);
-        if (reserve) result.url_reserve = reserve;
+        if (reserve) {
+            result.url_reserve = reserve;
+            result.hls_manifest_timeout = 60000;
+        }
         return result;
     }
 
@@ -323,6 +341,7 @@
                 card: movie,
                 url: urls.url,
                 url_reserve: urls.url_reserve,
+                hls_manifest_timeout: urls.hls_manifest_timeout,
                 season: info.season,
                 episode: info.episode,
                 path: file.path,
