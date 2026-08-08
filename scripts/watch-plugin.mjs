@@ -5,15 +5,9 @@
 // (derived from %LOCALAPPDATA%, a Windows env var) doesn't depend on which shell "npm run" happens
 // to invoke on this machine.
 import esbuild from 'esbuild';
-import path from 'node:path';
+import { devPluginOutfile } from './plugin-target.mjs';
 
-const localAppData = process.env.LOCALAPPDATA;
-if (!localAppData) {
-    console.error('LOCALAPPDATA is not set — this project only targets Windows.');
-    process.exit(1);
-}
-
-const outfile = path.join(localAppData, 'TorrServer', 'dev-plugins', 'TorrentModPlugin.js');
+const outfile = devPluginOutfile();
 
 const ctx = await esbuild.context({
     entryPoints: ['Plugins/TorrentModPlugin/index.js'],

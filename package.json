@@ -6,6 +6,7 @@
   "scripts": {
     "build:plugin": "esbuild Plugins/TorrentModPlugin/index.js --bundle --format=iife --charset=utf8 --outfile=Plugins/TorrentModPlugin.bundle.js",
     "dev:plugin": "node scripts/watch-plugin.mjs",
+    "install:plugin-dev": "node scripts/build-plugin-dev.mjs",
     "test:plugin": "node Plugins/TorrentModPlugin/test/core.test.mjs && node Plugins/TorrentModPlugin/test/parsing.test.mjs && node Plugins/TorrentModPlugin/test/domain.test.mjs && node Plugins/TorrentModPlugin/test/smoke.test.mjs",
     "test:e2e": "node Plugins/TorrentModPlugin/test/e2e.test.mjs"
   },

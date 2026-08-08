@@ -1,0 +1,86 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Собрать и установить плагин (dev)",
+            "detail": "npm run install:plugin-dev — собирает Plugins/TorrentModPlugin/ и кладёт бандл в %LocalAppData%\\TorrServer\\dev-plugins\\TorrentModPlugin.js, откуда BuiltInPlugins.Read() берёт его вместо встроенного ресурса. Не требует dotnet build/publish/перезапуска.",
+            "type": "shell",
+            "command": "npm",
+            "args": ["run", "install:plugin-dev"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Следить за плагином (dev, watch)",
+            "detail": "npm run dev:plugin — то же самое, но в режиме esbuild watch: пересобирает и перезаписывает dev-override при каждом сохранении файла под Plugins/TorrentModPlugin/.",
+            "type": "shell",
+            "command": "npm",
+            "args": ["run", "dev:plugin"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(esbuild)(:)\\s+(error)(:)\\s+(.*)$",
+                    "file": 1,
+                    "severity": 3,
+                    "message": 5
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*",
+                    "endsPattern": "^Watching Plugins/TorrentModPlugin/"
+                }
+            }
+        },
+        {
+            "label": "Обновить кэш плагина на локальном PluginHub",
+            "detail": "Просит уже запущенный TorrServerManager (порт 8095, только loopback) заново прочитать dev-override и обновить lampa-cache — иначе устройство в LAN получит старую закэшированную версию ещё до следующего периодического refresh (6ч).",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-Command",
+                "try { Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8095/api/plugins/refresh -TimeoutSec 5 | Out-Null; Write-Host 'Кэш плагинов обновлён.' } catch { Write-Warning 'TorrServerManager не отвечает на 127.0.0.1:8095 — приложение запущено?' }"
+            ],
+            "dependsOn": ["Собрать и установить плагин (dev)"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Собрать плагин (production bundle)",
+            "detail": "npm run build:plugin — production-бандл в Plugins/TorrentModPlugin.bundle.js, который встраивается как ресурс при dotnet build/publish. Не трогает dev-override.",
+            "type": "shell",
+            "command": "npm",
+            "args": ["run", "build:plugin"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
