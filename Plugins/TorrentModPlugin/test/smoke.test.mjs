@@ -109,6 +109,8 @@ runner.test('фильм: вход → список торрентов (без а
 
     let state = domain.store.get();
     if (state.poolStatus !== 'ready') throw new Error('пул фильма не загрузился');
+    const movieQuery = globalThis.__requestLog.find((u) => u.includes('/api/torrent-search')) || '';
+    if (/S\d+E\d+/i.test(decodeURIComponent(movieQuery))) throw new Error('поиск фильма получил series query: ' + movieQuery);
     // вход НЕ автоплеит без сохранённого выбора — показывает список торрентов (primary content)
     if (state.stage !== 'candidates') throw new Error('фильм должен показать список торрентов, stage=' + state.stage);
     if (!state.candidates || state.candidates.items.length !== 2) throw new Error('ожидал 2 кандидата для фильма');

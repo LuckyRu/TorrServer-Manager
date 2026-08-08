@@ -7,7 +7,7 @@
     import { addCardButton } from './ui/card-button.js';
     import { addSettings } from './ui/settings.js';
     import { addStyles } from './ui/styles.js';
-    import { TorrentModComponent } from './ui/results-screen.js';
+    import { TorrentModComponent } from './ui/torrent-mod-component.js';
 
     function main() {
         if (!window.Lampa || window.torrent_mod_ready) return;
@@ -18,6 +18,14 @@
         Lampa.Template.add('torrent_mod', '<div></div>');
         Lampa.Component.add('torrent_mod', TorrentModComponent);
         Lampa.Listener.follow('full', addCardButton);
+        // Let Lampa's own Player know that TorrServer is using the GST transport. Without this
+        // background handshake Player.play can render HLS correctly but keep using the raw-stream
+        // statistics path, so the torrent speed/peers panel stays empty.
+        try {
+            Lampa.Storage.set('torrserver_gts', true);
+            if (Lampa.Torserver && Lampa.Torserver.connected)
+                Lampa.Torserver.connected(function () {}, function () {});
+        } catch (e) {}
         console.log('Torrent Mod ' + VERSION + ': ready');
     }
 

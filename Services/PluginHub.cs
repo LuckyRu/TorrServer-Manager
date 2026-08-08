@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -316,6 +317,15 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" && path.StartsWith("/transcode/", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 3 || parts[1].Length != 40 || !parts[1].All(Uri.IsHexDigit) || !int.TryParse(parts[2], out var fileId) || fileId < 1)
+                    throw new InvalidDataException("Некорректный адрес транскодирования.");
+                await StreamAudioTranscodedAsync(context.Response, parts[1], fileId);
+                return;
+            }
+
             if (context.Request.HttpMethod == "GET" &&
                 (path.Equals("/app", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/app/", StringComparison.OrdinalIgnoreCase)))
             {
@@ -487,6 +497,63 @@ internal sealed class PluginHub : IDisposable
         }
     }
 
+    private async Task StreamAudioTranscodedAsync(HttpListenerResponse response, string hash, int fileId)
+    {
+        if (!File.Exists(AppPaths.FfmpegExecutable))
+        {
+            await WriteErrorAsync(response, HttpStatusCode.ServiceUnavailable, "ffmpeg ещё не установлен.");
+            return;
+        }
+
+        var inputUrl = $"http://127.0.0.1:{AppPaths.Port}/play/{hash}/{fileId}";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = AppPaths.FfmpegExecutable,
+            WorkingDirectory = AppPaths.InstallDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (var argument in new[]
+        {
+            "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", inputUrl,
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            "pipe:1"
+        })
+            startInfo.ArgumentList.Add(argument);
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Не удалось запустить ffmpeg.");
+        var errorTask = process.StandardError.ReadToEndAsync(cancellation.Token);
+        response.ContentType = "video/mp4";
+        response.SendChunked = true;
+        try
+        {
+            await process.StandardOutput.BaseStream.CopyToAsync(response.OutputStream, cancellation.Token);
+        }
+        catch (IOException) { /* The browser/player closed the stream. */ }
+        catch (HttpListenerException) { /* The browser/player disconnected. */ }
+        finally
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch { }
+            try { await process.WaitForExitAsync(cancellation.Token); }
+            catch { }
+        }
+
+        var error = await errorTask;
+        if (process.ExitCode != 0 && !string.IsNullOrWhiteSpace(error))
+            AppLog.Write($"ffmpeg audio transcode failed for {hash}/{fileId}: {error.Trim()}");
+    }
+
     private async Task WriteCachedPluginAsync(HttpListenerRequest request, HttpListenerResponse response, string path)
     {
         var filePart = path["/plugins/".Length..];
@@ -568,6 +635,38 @@ internal sealed class PluginHub : IDisposable
             var domain = $"{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/app";
             var text = (await File.ReadAllTextAsync(fullPath, cancellation.Token)).Replace("{domain}", domain, StringComparison.Ordinal);
             await WriteTextAsync(response, text, "application/json; charset=utf-8");
+            return;
+        }
+
+        // TorrServer HLS segments can legitimately take longer than hls.js's stock 20-second
+        // fragment timeout while a torrent is acquiring a peer. Lampa displays every non-fatal
+        // FRAG_LOAD_TIMEOUT as a scary player error even though hls.js is still retrying. Patch the
+        // hosted app response (not the downloaded/generated app) so slow-but-live torrent segments
+        // get time to arrive and non-fatal retries stay invisible to the viewer.
+        if (relativePath.Replace('\\', '/').Equals("app.min.js", StringComparison.OrdinalIgnoreCase))
+        {
+            var text = await File.ReadAllTextAsync(fullPath, cancellation.Token);
+            text = text
+                .Replace(
+                    "fragLoadingTimeOut:2e4,fragLoadingMaxRetry:6,fragLoadingRetryDelay:1e3,fragLoadingMaxRetryTimeout:64e3",
+                    "fragLoadingTimeOut:6e4,fragLoadingMaxRetry:12,fragLoadingRetryDelay:2e3,fragLoadingMaxRetryTimeout:300e3",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "if (data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) {",
+                    "if (data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT && !data.fatal) return; if (data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) {",
+                    StringComparison.Ordinal);
+            await WriteTextAsync(response, text, "application/javascript; charset=utf-8");
+            return;
+        }
+
+        if (relativePath.Replace('\\', '/').Equals("vender/hls/hls.js", StringComparison.OrdinalIgnoreCase))
+        {
+            var text = await File.ReadAllTextAsync(fullPath, cancellation.Token);
+            text = text.Replace(
+                "fragLoadingTimeOut:2e4,fragLoadingMaxRetry:6,fragLoadingRetryDelay:1e3,fragLoadingMaxRetryTimeout:64e3",
+                "fragLoadingTimeOut:6e4,fragLoadingMaxRetry:12,fragLoadingRetryDelay:2e3,fragLoadingMaxRetryTimeout:300e3",
+                StringComparison.Ordinal);
+            await WriteTextAsync(response, text, "application/javascript; charset=utf-8");
             return;
         }
 

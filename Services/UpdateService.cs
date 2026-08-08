@@ -17,7 +17,7 @@ internal sealed record ReleaseInfo(
 internal sealed partial class UpdateService : IDisposable
 {
     private const string LatestReleaseApi = "https://api.github.com/repos/YouROK/TorrServer/releases/latest";
-    private const string AssetName = "TorrServer-windows-amd64.exe";
+    private const string AssetName = "TorrServer-gst-windows-amd64.exe";
     private readonly HttpClient httpClient;
     private readonly ServerController controller;
 

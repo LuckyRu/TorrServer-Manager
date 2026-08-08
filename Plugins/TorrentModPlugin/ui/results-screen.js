@@ -16,13 +16,12 @@
     // against the previous and calls whichever of its own DOM-update functions the diff implies.
     // Local/global waiting states and dependency (staleness) resolution live in the domain's own
     // status/generation fields (domain/results-state.js) — this file just renders whatever they say.
-    import { escapeHtml, cancelSearch } from '../shared/utils.js';
+    import { escapeHtml } from '../shared/utils.js';
     import { baseTitles } from '../search/query-building.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
-    import { candidateBadgeText, candidateSubtitleText, searchQueryText, isSeriesWithSeasons, candidateIdentity } from '../domain/results-core.js';
+    import { candidateBadgeText, candidateSubtitleText, searchQueryText, candidateIdentity } from '../domain/results-core.js';
     import { selectFilterChipData, selectFilterItems, selectEpisodeBadges } from '../domain/results-selectors.js';
-    import { createResultsDomain } from '../domain/results-domain.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -35,7 +34,10 @@
     // that part needed at all). Toolbar controls use Lampa's own real
     // `.simple-button.simple-button--filter` markup (also confirmed live) instead of custom
     // CSS, so they inherit native styling for free.
-    function createResultsView(options) {
+    // Shared Explorer/Scroll/Filter chrome. Movie and series enter through their own View modules
+    // (movie-results-view.js / series-results-view.js), but the low-level row, focus and picker
+    // primitives stay shared so the TV navigation contract cannot drift between modes.
+    export function createResultsView(options) {
         var object = options.object;
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
@@ -599,23 +601,5 @@
                 try { scroll.destroy(); } catch (e) {}
                 try { explorer.destroy(); } catch (e) {}
             }
-        };
-    }
-
-    export function TorrentModComponent(object) {
-        var movie = object.movie || {};
-        var hasSeasons = isSeriesWithSeasons(movie);
-        var domain = createResultsDomain({ object: object, movie: movie, hasSeasons: hasSeasons });
-        var view = createResultsView({ object: object, movie: movie, hasSeasons: hasSeasons, domain: domain });
-
-        this.create = function () { return view.create(); };
-        this.render = function (js) { return view.render(js); };
-        this.start = function () { view.start(); domain.start(); };
-        this.pause = function () {};
-        this.stop = function () {};
-        this.destroy = function () {
-            cancelSearch();
-            domain.destroy();
-            view.destroy();
         };
     }

@@ -34,16 +34,15 @@
     // patching of Lampa.Player.play / Torserver.stream (ADR-0003).
     import { parseSignals } from '../search/release-parsing.js';
     import { notify, field, previousController } from '../shared/utils.js';
+    import { hubBase } from '../shared/state.js';
+    import { isPlayableFile, pickBestFile as pickBestPlayableFile } from './file-selection.js';
+    import { buildMoviePlayerData } from './movie-player.js';
+    import { buildSeriesPlayerData } from './series-player.js';
 
     var currentSession = null;
     var sessionSeq = 0;
-
-    var PLAYABLE_FORMATS = ['asf', 'wmv', 'divx', 'avi', 'mp4', 'm4v', 'mov', '3gp', '3g2', 'mkv', 'trp', 'tp', 'mts', 'mpg', 'mpeg', 'dat', 'vob', 'rm', 'rmvb', 'm2ts', 'ts'];
-
-    function isPlayableFile(file) {
-        var exe = String((file && file.path) || '').split('.').pop().toLowerCase();
-        return PLAYABLE_FORMATS.indexOf(exe) >= 0;
-    }
+    var REGISTERED_HASH_CACHE = 'torrent_mod_registered_hashes';
+    var REGISTERED_HASH_CACHE_MAX = 200;
 
     // Video codecs the browser/WebOS cannot decode without TorrServer transcoding (the raw-DVDRip
     // class). This is the ffprobe-level arbiter: the title heuristic (release-parsing compatibility)
@@ -57,21 +56,16 @@
         return BAD_VIDEO_CODECS.indexOf(codec) >= 0 ? 'bad' : 'good';
     }
 
-    function preloadFileScore(element, target) {
-        var path = String((element && (element.path || element.title)) || '');
-        var signals = parseSignals(path);
-        var score = 0;
-        if (target.episode) {
-            if (signals.explicitEpisode && target.episode >= signals.episodeFrom && target.episode <= signals.episodeTo) score += 100;
-            else if (signals.explicitEpisode) score -= 100;
-        }
-        if (signals.explicitSeason) score += signals.seasons.indexOf(target.season) >= 0 ? 30 : -100;
-        // Format as a TIE-BREAKER only: the right episode/season always wins, but between two
-        // equally-matching files prefer a streamable container over "древнее говно".
-        var ext = path.toLowerCase().split('.').pop();
-        if (['mp4', 'mkv', 'm4v', 'mov', 'webm', 'ts', 'm2ts', 'mts'].indexOf(ext) >= 0) score += 5;
-        else if (['avi', 'mpg', 'mpeg', 'vob', 'wmv', 'asf', 'flv', 'rm', 'rmvb', 'divx'].indexOf(ext) >= 0) score -= 5;
-        return score;
+    function needsAudioTranscode(streams) {
+        var audio = (streams || []).filter(function (stream) { return stream.codec_type === 'audio'; });
+        if (!audio.length) return false;
+        // These codecs are accepted by the browser/WebOS HTML5 player in the containers we emit.
+        // AC-3/E-AC-3/DTS/TrueHD tracks are common in Russian BDRips but are not decodable by the
+        // target browser; Plugin Hub's ffmpeg route converts the first audio track to stereo AAC.
+        var browserCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac'];
+        return audio.every(function (stream) {
+            return browserCodecs.indexOf(String(stream.codec_name || '').toLowerCase()) < 0;
+        });
     }
 
     // The stream URL built by Lampa.Torserver.stream() ends with `&play` (or `&preload` when the
@@ -87,6 +81,16 @@
         return preloadUrl;
     }
 
+    function streamUrlFor(session, file) {
+        if (session.useGst) {
+            var base = torrServerBase();
+            if (base) return base + '/gst/' + encodeURIComponent(session.hash) + '/master.m3u8?index=' + encodeURIComponent(file.id) + '&audio=0';
+        }
+        if (session.transcodeAudio)
+            return hubBase + '/transcode/' + encodeURIComponent(session.hash) + '/' + encodeURIComponent(file.id);
+        return Lampa.Torserver.stream(file.path, session.hash, file.id);
+    }
+
     function firePreload(url) {
         if (!url) return;
         try {
@@ -100,30 +104,146 @@
         return '';
     }
 
-    // Registers the torrent with TorrServer directly (POST /torrents action:add, same payload the
-    // native screen sends — Torserver.hash). Accepts a magnet OR an HTTP .torrent link: TorrServer
-    // downloads and parses the .torrent itself, so a hash arrives in both cases.
+    function registeredHashKey(item) {
+        // Jackett's protected /dl URL can change between searches while the torrent itself stays
+        // identical. Use release identity rather than the ephemeral URL so selecting the same
+        // movie again does not make TorrServer add the same infohash a second time.
+        return [item.tracker || '', item.title || '', item.size || ''].join('|');
+    }
+
+    function readRegisteredHash(item) {
+        try {
+            var all = Lampa.Storage.cache(REGISTERED_HASH_CACHE, REGISTERED_HASH_CACHE_MAX, {}) || {};
+            return all[registeredHashKey(item)] || '';
+        } catch (e) { return ''; }
+    }
+
+    function rememberRegisteredHash(item, hash) {
+        if (!hash) return;
+        try {
+            var all = Lampa.Storage.cache(REGISTERED_HASH_CACHE, REGISTERED_HASH_CACHE_MAX, {}) || {};
+            all[registeredHashKey(item)] = hash;
+            Lampa.Storage.set(REGISTERED_HASH_CACHE, all);
+        } catch (e) {}
+    }
+
+    // Registers the torrent with TorrServer directly (POST /torrents action:add). We intentionally
+    // do NOT call Lampa.Torserver.hash here: this Lampa build passes its JSON string with jQuery's
+    // default application/x-www-form-urlencoded content type (visible in DevTools), while
+    // TorrServer's endpoint only accepts application/json. Series happened to work on paths where
+    // the request was not exercised in the same way; movie selection exposed the malformed request
+    // reliably. Keep the native payload shape, but send it with the correct content type ourselves.
     function registerTorrent(session) {
         var item = session.item;
         var target = session.target;
-        try {
-            Lampa.Torserver.hash({
-                title: item.title,
-                link: item.magnet || item.link,
-                poster: (target.movie && (target.movie.img || target.movie.poster_path)) || ''
-            }, function (json) {
-                if (!session.alive || session.clicked) return;
-                session.hash = json && json.hash;
-                if (session.hash) pollFiles(session);
-                else { notify('Не удалось получить hash раздачи'); session.dispose(); }
-            }, function () {
-                if (!session.alive) return;
-                notify('Не удалось зарегистрировать раздачу в TorrServer');
-                session.dispose();
-            });
-        } catch (e) {
+        var source = item.magnet ? 'magnet' : 'torrent-link';
+        var base = torrServerBase();
+        if (!base) {
+            console.warn('Torrent Mod: TorrServer URL не настроен', { mode: session.mode });
             notify('TorrServer недоступен');
             session.dispose();
+            return;
+        }
+        var saveToDb = false;
+        try { saveToDb = Lampa.Storage.get('torrserver_savedb', 'false'); } catch (e) {}
+        var title = '[LAMPA] ' + String(item.title || '').replace('??', '?');
+        var payload = {
+            action: 'add',
+            link: item.magnet || item.link,
+            title: title,
+            poster: (target.movie && (target.movie.img || target.movie.poster_path)) || '',
+            data: '',
+            save_to_db: saveToDb
+        };
+
+        function useRegisteredHash(hash) {
+            if (!session.alive || !hash) return;
+            session.hash = hash;
+            pollFiles(session);
+        }
+
+        function addTorrent() {
+            try {
+                $.ajax({
+                    url: base + '/torrents',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(payload),
+                    dataType: 'json',
+                    timeout: source === 'torrent-link' ? 65000 : 30000
+                }).done(function (json) {
+                    if (!session.alive || session.clicked) return;
+                    session.hash = json && json.hash;
+                    if (session.hash) {
+                        rememberRegisteredHash(item, session.hash);
+                        pollFiles(session);
+                    } else {
+                        console.warn('Torrent Mod: action:add вернул пустой hash', json);
+                        notify('Не удалось получить hash раздачи');
+                        session.dispose();
+                    }
+                }).fail(function (xhr, status, error) {
+                    if (!session.alive) return;
+                    console.warn('Torrent Mod: /torrents action:add fail', {
+                        mode: session.mode,
+                        source: source,
+                        title: item.title,
+                        status: status,
+                        error: error,
+                        response: xhr && xhr.responseText
+                    });
+                    notify('Не удалось зарегистрировать раздачу в TorrServer');
+                    session.dispose();
+                });
+            } catch (e) {
+                console.warn('Torrent Mod: /torrents action:add бросил', e);
+                notify('TorrServer недоступен');
+                session.dispose();
+            }
+        }
+
+        function findExistingTorrent(onMissing) {
+            // The persisted hash cache is the fast path. The list fallback covers a fresh browser
+            // profile, a cleared Lampa storage, and a URL token that changed since the last search.
+            // Match the exact Lampa title first; the fallback without the prefix handles torrents
+            // created by the native Lampa screen.
+            $.ajax({
+                url: base + '/torrents',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ action: 'list' }),
+                dataType: 'json',
+                timeout: 5000
+            }).done(function (list) {
+                var plainTitle = title.replace(/^\[LAMPA\]\s*/i, '');
+                var found = (Array.isArray(list) ? list : []).filter(function (entry) {
+                    var entryTitle = String(entry && entry.title || '');
+                    return entry && entry.hash && (entryTitle === title || entryTitle === plainTitle || entryTitle.replace(/^\[LAMPA\]\s*/i, '') === plainTitle);
+                })[0];
+                if (found) useRegisteredHash(found.hash);
+                else onMissing();
+            }).fail(onMissing);
+        }
+
+        var knownHash = readRegisteredHash(item);
+        if (knownHash) {
+            // Validate the cached hash first. If TorrServer was restarted and the torrent is no
+            // longer available, fall back to one normal add; never blindly reuse stale state.
+            $.ajax({
+                url: base + '/torrents',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ action: 'get', hash: knownHash }),
+                dataType: 'json',
+                timeout: 5000
+            }).done(function (json) {
+                if (session.alive && json && (json.hash || json.title)) useRegisteredHash(knownHash);
+                else if (session.alive) addTorrent();
+            }).fail(function () {
+                if (session.alive) addTorrent();
+            });
+        } else {
+            findExistingTorrent(addTorrent);
         }
     }
 
@@ -133,7 +253,7 @@
     function pollFiles(session) {
         var attempts = 0;
         var maxAttempts = 45;
-        session.filesTimer = setInterval(function () {
+        function attempt() {
             if (!session.alive || session.clicked) { clearInterval(session.filesTimer); return; }
             attempts++;
             try {
@@ -145,6 +265,7 @@
                         if (attempts >= maxAttempts) {
                             clearInterval(session.filesTimer);
                             notify('Не удалось получить файлы раздачи');
+                            console.warn('Torrent Mod: metadata не пришли за ' + (maxAttempts * 2) + 'с, hash=' + session.hash);
                             session.dispose();
                         }
                         return;
@@ -155,21 +276,32 @@
                     session.files = plays;
                     pickBestFile(session);
                 });
-            } catch (e) {}
+            } catch (e) { console.warn('Torrent Mod: Torserver.files бросил', e); }
             if (attempts >= maxAttempts) clearInterval(session.filesTimer);
-        }, 2000);
+        }
+        session.filesTimer = setInterval(attempt, 2000);
+        // Do not deliberately sleep for the first interval: metadata is usually already available
+        // when action:add returns, and this exact 2-second gap was visible before the player appeared.
+        attempt();
     }
 
     function pickBestFile(session) {
         if (!session.alive || session.clicked || !session.files || !session.files.length) return;
-        var scored = [];
-        for (var i = 0; i < session.files.length; i++) {
-            scored.push({ f: session.files[i], score: preloadFileScore(session.files[i], session.target) });
-        }
-        scored.sort(function (a, b) { return b.score - a.score; });
-        session.bestFile = scored[0].f;
+        session.bestFile = pickBestPlayableFile(session.files, session.target, parseSignals);
+        if (!session.bestFile) return;
+        console.log('Torrent Mod: выбран файл', {
+            mode: session.mode,
+            torrent: session.item.title,
+            file: session.bestFile.path,
+            size: session.bestFile.length || session.bestFile.size || 0
+        });
         // Silent nudge: ask TorrServer to warm this file before the player's stream request lands.
         firePreload(preloadUrlFor(session.bestFile, session.hash));
+        // Playback is not gated on ffprobe. The player/HLS pipeline can start immediately; ffprobe
+        // continues in the background for diagnostics and codec warnings. Waiting here made a
+        // perfectly playable torrent sit behind /torrents + /ffp timeouts before showing anything.
+        session.useGst = true;
+        startDirectPlayback(session);
         probeSelectedFile(session);
     }
 
@@ -184,18 +316,23 @@
         session.probed = true;
         $.ajax({
             url: base + '/torrents', method: 'POST',
+            // contentType matters: jQuery defaults POST bodies to application/x-www-form-urlencoded,
+            // which TorrServer answers with 400 — the ffprobe gate silently fell back to direct
+            // playback (or worse) on real devices (found by the user via DevTools network tab).
+            contentType: 'application/json',
             data: JSON.stringify({ action: 'get', hash: session.hash }),
             dataType: 'json', timeout: 4000
         }).done(function (json) {
             if (!session.alive) return;
             var files = (json && json.file_stats) || [];
             var match = files.filter(function (f) { return String(f.id) === String(session.bestFile.id); })[0];
-            if (!match || match.id == null) { startDirectPlayback(session); return; }
+            if (!match || match.id == null) { startWithPreferredTransport(session); return; }
             $.ajax({ url: base + '/ffp/' + session.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
                 .done(function (probe) {
                     if (!session.alive) return;
                     var streams = probe && probe.streams;
-                    if (!streams || !streams.length) { startDirectPlayback(session); return; }
+                    if (!streams || !streams.length) { startWithPreferredTransport(session); return; }
+                    session.transcodeAudio = needsAudioTranscode(streams);
                     var video = streams.filter(function (s) { return s.codec_type === 'video'; })[0];
                     var verdict = video ? classifyVideoCodec(video.codec_name) : 'no-video';
                     if (verdict === 'bad') {
@@ -208,9 +345,27 @@
                         session.dispose();
                         return;
                     }
-                    startDirectPlayback(session);
-                }).fail(function () { if (session.alive) startDirectPlayback(session); });
-        }).fail(function () { if (session.alive) startDirectPlayback(session); });
+                    startWithPreferredTransport(session);
+                }).fail(function () {
+                    console.warn('Torrent Mod: /ffp запрос не удался — играем без проверки формата');
+                    if (session.alive) startWithPreferredTransport(session);
+                });
+        }).fail(function () {
+            console.warn('Torrent Mod: /torrents get не удался — играем без проверки формата');
+            if (session.alive) startWithPreferredTransport(session);
+        });
+    }
+
+    function startWithPreferredTransport(session) {
+        if (!session.alive || session.clicked) return;
+        var base = torrServerBase();
+        if (!base) { startDirectPlayback(session); return; }
+        // Do not wait for the manifest here. HLS.js must own that loading state: waiting for the
+        // first master/init segment before opening Player made every launch look frozen for up to
+        // 60 seconds. The player opens immediately, shows its native loader, and HLS.js updates the
+        // duration/seek bar as soon as the VOD manifest arrives.
+        session.useGst = true;
+        startDirectPlayback(session);
     }
 
     // Builds the player playlist from ALL playable files of the pack — the native torrent screen
@@ -229,7 +384,7 @@
                 title: file.path_human || file.path,
                 first_title: movie.name || movie.title,
                 card: movie,
-                url: Lampa.Torserver.stream(file.path, hash, file.id),
+                url: streamUrlFor(session, file),
                 season: info.season,
                 episode: info.episode,
                 path: file.path,
@@ -250,25 +405,12 @@
         var hash = session.hash;
         if (!hash || !file) { session.dispose(); return; }
 
-        var files = session.files || [];
-        var info = {};
-        try { info = Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }); } catch (e) {}
-
         // Compensated native side effect #1: continue-watch card (torrent.js:437).
         try { if (movie.id) Lampa.Favorite.add('history', movie, 100); } catch (e) {}
 
-        var data = {
-            url: Lampa.Torserver.stream(file.path, hash, file.id),
-            torrent_hash: hash,
-            title: file.path_human || file.path,
-            first_title: movie.name || movie.title,
-            card: movie,
-            season: info.season,
-            episode: info.episode,
-            path: file.path,
-            timeline: Lampa.Timeline.view(info.hash),
-            playlist: buildPlaylist(session)
-        };
+        var data = session.mode === 'movie'
+            ? buildMoviePlayerData(session)
+            : buildSeriesPlayerData(session, buildPlaylist, function (file) { return streamUrlFor(session, file); });
 
         // Which controller the Torrent Mod screen had before playback — the player's Back should
         // return there, not to a 'modal' that may not exist (native torrent.js routes to modal
@@ -346,6 +488,7 @@
         var session = {
             id: ++sessionSeq,
             alive: true,
+            mode: target.mode || 'series',
             hash: '',
             item: item,
             target: target,
@@ -354,6 +497,8 @@
             bestFile: null,
             clicked: false,
             probed: false,
+            transcodeAudio: false,
+            useGst: false,
             filesTimer: null,
             nextCleanup: [],
             dispose: function () {

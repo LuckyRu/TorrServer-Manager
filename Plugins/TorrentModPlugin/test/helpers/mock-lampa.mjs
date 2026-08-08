@@ -36,7 +36,16 @@ export function setupMockLampa() {
             done(fn) { this._done = fn; return this; },
             fail(fn) { this._fail = fn; return this; }
         };
-        setTimeout(() => { if (req._done) req._done({}); }, 0);
+        setTimeout(() => {
+            if (!req._done) return;
+            let body = {};
+            try { body = typeof opts.data === 'string' ? JSON.parse(opts.data) : (opts.data || {}); } catch {}
+            if (opts.url && opts.url.includes('/gst/echo')) req._done('ok');
+            else if (opts.url && opts.url.includes('/gst/') && opts.url.includes('master.m3u8')) req._done('#EXTM3U\n');
+            else if (body.action === 'add' || body.action === 'get') req._done({ hash: 'mock-torrent-hash', file_stats: [] });
+            else if (body.action === 'list') req._done([]);
+            else req._done({});
+        }, 0);
         return req;
     };
 

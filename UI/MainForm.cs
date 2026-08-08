@@ -26,6 +26,8 @@ internal sealed class MainForm : Form
     }
 
     private readonly ServerController controller = new();
+    private readonly FfprobeService ffprobeService = new();
+    private readonly GStreamerService gStreamerService = new();
     private readonly JackettController jackettController = new();
     private readonly UpdateService updateService;
     private readonly PluginHub pluginHub = new();
@@ -314,11 +316,17 @@ internal sealed class MainForm : Form
                 trayIcon.ShowBalloonTip(5000, "Lampa Plugin Hub не запущен", exception.Message, ToolTipIcon.Error);
             }
 
-            try { await controller.StartAsync(lifetime.Token); }
+            try
+            {
+                await ffprobeService.EnsureInstalledAsync(lifetime.Token);
+                await gStreamerService.EnsureInstalledAsync(lifetime.Token);
+                await controller.StartAsync(lifetime.Token);
+                await gStreamerService.ConfigureAsync(lifetime.Token);
+            }
             catch (Exception exception)
             {
                 AppLog.Write(exception);
-                trayIcon.ShowBalloonTip(5000, "TorrServer не запущен", exception.Message, ToolTipIcon.Error);
+                trayIcon.ShowBalloonTip(7000, "TorrServer/GStreamer не запущен", exception.Message, ToolTipIcon.Error);
             }
 
             try { await jackettController.StartAsync(lifetime.Token); }
@@ -808,6 +816,8 @@ internal sealed class MainForm : Form
         jackettController.Dispose();
         pluginHub.Dispose();
         controller.Dispose();
+        ffprobeService.Dispose();
+        gStreamerService.Dispose();
         refreshLock.Dispose();
         lifetime.Dispose();
     }

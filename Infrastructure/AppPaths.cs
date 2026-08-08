@@ -13,6 +13,9 @@ internal static class AppPaths
     public static readonly string DataDirectory = Path.Combine(StateDirectory, "data");
     public static readonly string LogsDirectory = Path.Combine(StateDirectory, "logs");
     public static readonly string ServerExecutable = Path.Combine(InstallDirectory, "TorrServer.exe");
+    public static readonly string FfprobeExecutable = Path.Combine(InstallDirectory, "ffprobe.exe");
+    public static readonly string FfmpegExecutable = Path.Combine(InstallDirectory, "ffmpeg.exe");
+    public static readonly string GStreamerDirectory = Path.Combine(InstallDirectory, "gstreamer", "1.0", "mingw_x86_64");
     public static readonly string ManagerExecutable = Path.Combine(InstallDirectory, "TorrServerManager.exe");
     public static readonly string ServerLog = Path.Combine(LogsDirectory, "server.log");
     public static readonly string ManagerLog = Path.Combine(LogsDirectory, "manager.log");

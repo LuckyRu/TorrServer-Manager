@@ -8,6 +8,10 @@ import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { parseRelease } from '../search/release-parsing.js';
 import { baseTitles, defaultSearchName, buildQueries } from '../search/query-building.js';
+import { buildMovieQueries } from '../search/movie-query-building.js';
+import { buildSeriesQueries } from '../search/series-query-building.js';
+import { parseMovieRelease } from '../search/movie-release-parsing.js';
+import { parseSeriesRelease } from '../search/series-release-parsing.js';
 import { scoreCandidate, applyStateFilters } from '../search/scoring.js';
 import {
     createInitialState, isSeriesWithSeasons, searchQueryText, poolValues, currentSeasonLabel,
@@ -21,6 +25,7 @@ import {
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
 import { classifyVideoCodec } from '../playback/smart-preload.js';
+import { pickBestFile } from '../playback/file-selection.js';
 
 const runner = createRunner();
 
@@ -84,6 +89,19 @@ runner.test('buildQueries для customQuery с суффиксом эпизод�
     const q = buildQueries({ movie: tvMovie, season: 2, episode: 7, customQuery: 'Брат 2' });
     // точный SxxExx + сезонный Sxx — оба валидны для ручного запроса
     if (q.indexOf('Брат 2 S02E07') < 0 || q.indexOf('Брат 2 S02') < 0) throw new Error(JSON.stringify(q));
+});
+runner.test('режимы поиска: фильм не получает season/episode suffix, сериал получает', () => {
+    const movieQueries = buildMovieQueries({ movie, season: 4, episode: 2 });
+    if (movieQueries.length !== 1 || /S\d+E\d+/i.test(movieQueries[0])) throw new Error(JSON.stringify(movieQueries));
+    const seriesQueries = buildSeriesQueries({ movie: tvMovie, season: 2, episode: 7 });
+    if (seriesQueries.indexOf('Futurama S02E07') < 0) throw new Error(JSON.stringify(seriesQueries));
+});
+runner.test('режимы парсинга: фильм не экспортирует season/episode signals, сериал экспортирует', () => {
+    const title = 'Название / Title S02E07 1080p WEB-DL';
+    const movieRelease = parseMovieRelease(title);
+    const seriesRelease = parseSeriesRelease(title);
+    if (movieRelease.explicitSeason || movieRelease.explicitEpisode) throw new Error(JSON.stringify(movieRelease));
+    if (!seriesRelease.explicitSeason || !seriesRelease.explicitEpisode) throw new Error(JSON.stringify(seriesRelease));
 });
 runner.test('baseTitles возвращает оба названия', () => {
     const t = baseTitles(tvMovie);
@@ -244,6 +262,30 @@ runner.test('classifyVideoCodec: ffprobe-гейт для непросматри�
     // нет видеопотока
     if (classifyVideoCodec('') !== 'no-video') throw new Error('пустой кодек = no-video');
     if (classifyVideoCodec(undefined) !== 'no-video') throw new Error('undefined = no-video');
+});
+
+runner.test('выбор файла: фильм не использует episode/season scoring и выбирает основной файл', () => {
+    const files = [
+        { id: 1, path: 'sample.mkv', length: 50_000_000 },
+        { id: 2, path: 'Dune.Part.Two.2024.mkv', length: 12_000_000_000 },
+        { id: 3, path: 'bonus-trailer.mp4', length: 500_000_000 }
+    ];
+    const chosen = pickBestFile(files, { mode: 'movie', season: 0, episode: 0 }, () => ({
+        explicitSeason: true, seasons: [99], explicitEpisode: true, episodeFrom: 1, episodeTo: 1
+    }));
+    if (!chosen || chosen.id !== 2) throw new Error('фильм выбрал не основной файл: ' + JSON.stringify(chosen));
+});
+
+runner.test('выбор файла: сериал сохраняет episode-aware выбор', () => {
+    const files = [
+        { id: 1, path: 'Show.S02E08.mkv', length: 10_000_000_000 },
+        { id: 2, path: 'Show.S02E07.mkv', length: 1_000_000_000 }
+    ];
+    const chosen = pickBestFile(files, { mode: 'series', season: 2, episode: 7 }, (path) => ({
+        explicitSeason: true, seasons: [2], explicitEpisode: true,
+        episodeFrom: path.indexOf('E08') >= 0 ? 8 : 7, episodeTo: path.indexOf('E08') >= 0 ? 8 : 7
+    }));
+    if (!chosen || chosen.id !== 2) throw new Error('сериал потерял выбор по эпизоду: ' + JSON.stringify(chosen));
 });
 
 await runner.run();

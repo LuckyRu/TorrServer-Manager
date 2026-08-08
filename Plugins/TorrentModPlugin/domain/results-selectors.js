@@ -33,9 +33,10 @@
 
     // Same target shape every interactor that needs one builds — kept in one place so the shape
     // itself only has to agree with candidatesForEpisode's own expectations in a single spot.
-    export function buildEpisodeTarget(object, state, number) {
+    export function buildEpisodeTarget(object, state, number, mode) {
         return {
             movie: object.movie,
+            mode: mode || 'series',
             season: state.season,
             episode: number,
             seasonEpisodeCount: state.seasonEpisodeCount,
@@ -43,8 +44,8 @@
         };
     }
 
-    export function selectCandidatesForEpisode(object, state, number) {
-        var target = buildEpisodeTarget(object, state, number);
+    export function selectCandidatesForEpisode(object, state, number, mode) {
+        var target = buildEpisodeTarget(object, state, number, mode);
         return candidatesForEpisode(state.pool, target, state);
     }
 

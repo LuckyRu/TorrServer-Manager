@@ -11,7 +11,8 @@
     // purely a state.season flip with zero network traffic. See
     // docs/system-design/torrent-mod-unified-pool.md (Этап 1).
     import { fetchSeason, episodeCounts } from '../metadata/tmdb.js';
-    import { searchTorrentMod } from '../search/search-backend.js';
+    import { searchMovieTorrents } from '../search/movie-search.js';
+    import { searchSeriesTorrents } from '../search/series-search.js';
     import { compact } from '../shared/utils.js';
 
     var SEASON_CACHE_KEY = 'torrent_mod_last_season';
@@ -92,12 +93,14 @@
             var generation = state.poolGeneration;
             var target = {
                 movie: object.movie,
+                mode: hasSeasons ? 'series' : 'movie',
                 season: 0,
                 episode: 0,
                 customQuery: state.customQuery
             };
             store.patch({ poolStatus: 'loading' });
-            searchTorrentMod(target).then(function (response) {
+            var search = hasSeasons ? searchSeriesTorrents : searchMovieTorrents;
+            search(target).then(function (response) {
                 if (isDestroyed() || store.get().poolGeneration !== generation) return;
                 store.patch({
                     pool: response.failed ? [] : response.results,
@@ -152,7 +155,7 @@
             store.patch({ seasonLoads: loads });
 
             var target = { movie: object.movie, season: season, episode: 0 };
-            searchTorrentMod(target).then(function (response) {
+            searchSeriesTorrents(target).then(function (response) {
                 if (isDestroyed() || store.get().poolGeneration !== generation) return;
                 var current = store.get();
                 var merged = mergePools(current.pool || [], response.failed ? [] : response.results);

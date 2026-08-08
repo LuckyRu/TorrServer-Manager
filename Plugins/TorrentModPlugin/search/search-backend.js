@@ -3,11 +3,10 @@
     // orchestration (searchTorrentMod) — the two functions that talk to /api/torrent-search.
     // Scoring/gating of the results this returns lives in scoring.js, not here.
     import { hubBase } from '../shared/state.js';
-    import { buildQueries } from './query-building.js';
-    import { parseRelease } from './release-parsing.js';
+    import { buildQueries as buildQueriesForTarget } from './query-building.js';
     import { compact, unique, request } from '../shared/utils.js';
 
-    function mapTorrent(raw) {
+    function mapTorrent(raw, parseReleaseForMode) {
         // A single malformed entry (raw is null/undefined) used to throw here, and since this runs
         // inside allResults.map() with no per-item try/catch, that exception propagated all the way
         // out to searchTorrentMod's own outer .catch() — silently discarding *every* query's
@@ -32,12 +31,12 @@
             publishedAt: isNaN(published) ? 0 : published,
             magnet: magnet,
             link: link,
-            release: parseRelease(title)
+            release: parseReleaseForMode ? parseReleaseForMode(title) : null
         };
     }
 
-    export function searchTorrentMod(target) {
-        var queries = buildQueries(target);
+    export function searchTorrentMod(target, parseReleaseForMode, buildQueriesForMode) {
+        var queries = (buildQueriesForMode || buildQueriesForTarget)(target);
         if (!queries.length) return Promise.resolve({ results: [], indexers: [], failed: true });
 
         var calls = queries.map(function (text) {
@@ -61,7 +60,7 @@
                 });
             });
 
-            var mapped = allResults.map(mapTorrent).filter(Boolean);
+            var mapped = allResults.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean);
             var results = unique(mapped, function (item) {
                 return compact(item.magnet || item.link || (item.title + '|' + item.size));
             });

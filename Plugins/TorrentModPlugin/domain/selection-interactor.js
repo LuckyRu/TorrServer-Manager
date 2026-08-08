@@ -4,7 +4,8 @@
     // finishSelection (candidate list or auto-play) or a direct startDownload; all populate
     // candidates/stage/searchGeneration. searchWithQuery is the manual name-override path — it
     // re-fetches data under the new name instead of starting playback, see its own comment below.
-    import { searchTorrentMod } from '../search/search-backend.js';
+    import { searchMovieTorrents } from '../search/movie-search.js';
+    import { searchSeriesTorrents } from '../search/series-search.js';
     import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
     import { startDownload } from '../playback/smart-preload.js';
     import { enabled, notify, debugLogCandidates } from '../shared/utils.js';
@@ -118,7 +119,7 @@
                 return;
             }
             var target = buildMovieTarget();
-            var candidates = selectCandidatesForEpisode(object, state, 0);
+            var candidates = selectCandidatesForEpisode(object, state, 0, 'movie');
             if (!candidates.length) {
                 store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
                 return;
@@ -133,6 +134,7 @@
             var state = store.get();
             return {
                 movie: object.movie,
+                mode: 'movie',
                 season: 0,
                 episode: 0,
                 seasonEpisodeCount: 0,
@@ -145,6 +147,7 @@
             var state = store.get();
             var target = {
                 movie: object.movie,
+                mode: hasSeasons ? 'series' : 'movie',
                 season: state.season,
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
@@ -163,7 +166,7 @@
             // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
             if (!hasSeasons) {
                 if (state.poolStatus === 'loading' || state.poolStatus === 'idle') { notify('Раздачи ещё загружаются…'); return; }
-                var movieCandidates = selectCandidatesForEpisode(object, state, 0);
+                var movieCandidates = selectCandidatesForEpisode(object, state, 0, 'movie');
                 if (movieCandidates.length) { finishSelection(movieCandidates, target, pickerOnly); return; }
                 store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
                 return;
@@ -225,6 +228,7 @@
             if (episode === undefined) episode = state.activeEpisode || state.lastEpisode || 0;
             var target = {
                 movie: object.movie,
+                mode: hasSeasons ? 'series' : 'movie',
                 season: state.season,
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
@@ -269,6 +273,7 @@
             var state = store.get();
             return {
                 movie: object.movie,
+                mode: hasSeasons ? 'series' : 'movie',
                 season: state.season,
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
@@ -299,7 +304,8 @@
                 statusText: 'Ищем по названию…'
             });
 
-            searchTorrentMod(target).then(function (response) {
+            var search = target.mode === 'movie' ? searchMovieTorrents : searchSeriesTorrents;
+            search(target).then(function (response) {
                 // Screen closed, or a newer selectEpisode()/season switch has since taken over —
                 // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
                 // this exact request being the one cancelSearch() just cancelled on destroy, not by
