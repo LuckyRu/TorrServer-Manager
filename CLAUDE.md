@@ -829,16 +829,20 @@ entry-point/build-config layer above all of them.
       the source file's actual audio codec, so once a file needs the reserve at all, GST already
       handles its audio too. Removed the route and the method; `hubBase`'s import in
       `smart-preload.js` was dropped since nothing else in that file used it.
-    - **Left alone, flagged for a separate decision**: `Services/FfprobeService.cs` still downloads
-      and verifies `ffprobe.exe`+`ffmpeg.exe` on every startup (`MainForm.cs`, alongside
-      `GStreamerService`). `ffprobe.exe` backs TorrServer's own `/ffp` endpoint (unrelated to GST —
-      `GStreamerService.cs` has no ffmpeg/ffprobe dependency of its own), which nothing in this
-      plugin calls anymore; `ffmpeg.exe` now has zero callers anywhere in the codebase after this
-      change. Not removed here — stopping that installer step is a separate, easily-reversible-later
-      decision (keep `/ffp` available for a future diagnostic feature vs. fully decommission it) that
-      wasn't part of what was actually asked for in this pass.
     - Verified: all 92 remaining tests (`npm run test:plugin`, one dropped —
       `classifyVideoCodec`'s own test, for a function that no longer exists) pass unchanged.
+  - **`ffmpeg.exe` installation removed as a follow-up** once it was confirmed to have zero callers
+    anywhere in the codebase (the only one, Plugin Hub's `/transcode/` endpoint, was removed in the
+    `url_reserve` change above). `Services/FfprobeService.cs` downloads a single BtbN FFmpeg-Builds
+    zip that happens to contain both `ffprobe.exe` and `ffmpeg.exe` — `EnsureInstalledAsync` now
+    extracts and verifies only `ffprobe.exe` from it, since that one still backs TorrServer's own
+    `/ffp` endpoint (unrelated to GST — `Services/GStreamerService.cs` has no ffmpeg/ffprobe
+    dependency of its own). `AppPaths.FfmpegExecutable` removed too, its only reader. `/ffp` itself is
+    left installed and working even though nothing in this plugin calls it right now — it stays
+    available as TorrServer's own diagnostic endpoint (e.g. for the `data.ffprobe` native track-picker
+    path documented in `docs/reference/lampa-player-api.md`, if that's ever built) at effectively zero
+    ongoing cost, unlike `ffmpeg.exe`, which had no plausible future caller once its one consumer was
+    gone.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

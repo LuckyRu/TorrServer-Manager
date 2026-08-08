@@ -25,13 +25,11 @@ internal sealed class FfprobeService : IDisposable
     public async Task EnsureInstalledAsync(CancellationToken cancellationToken = default)
     {
         AppPaths.EnsureDirectories();
-        if (await IsUsableAsync(AppPaths.FfprobeExecutable, cancellationToken) &&
-            await IsUsableAsync(AppPaths.FfmpegExecutable, cancellationToken))
+        if (await IsUsableAsync(AppPaths.FfprobeExecutable, cancellationToken))
             return;
 
         var temporaryZip = Path.Combine(AppPaths.StateDirectory, $"ffprobe.{Guid.NewGuid():N}.zip");
         var temporaryExe = Path.Combine(AppPaths.InstallDirectory, $"ffprobe.{Guid.NewGuid():N}.exe");
-        var temporaryFfmpeg = Path.Combine(AppPaths.InstallDirectory, $"ffmpeg.{Guid.NewGuid():N}.exe");
 
         try
         {
@@ -51,30 +49,29 @@ internal sealed class FfprobeService : IDisposable
             if (!actualSha256.Equals(DownloadSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Контрольная сумма ffprobe не совпала.");
 
+            // The archive also contains ffmpeg.exe — only ffprobe.exe is extracted. ffmpeg.exe used
+            // to back Plugin Hub's own /transcode/ audio endpoint; that endpoint was removed once
+            // GST's own HLS output turned out to already declare AAC audio regardless of the source
+            // file's codec (see CLAUDE.md, the url_reserve entry), leaving ffmpeg.exe with no caller
+            // anywhere in the codebase.
             using (var archive = ZipFile.OpenRead(temporaryZip))
             {
                 await ExtractExecutableAsync(archive, "ffprobe.exe", temporaryExe, cancellationToken);
-                await ExtractExecutableAsync(archive, "ffmpeg.exe", temporaryFfmpeg, cancellationToken);
             }
 
             if (!await IsUsableAsync(temporaryExe, cancellationToken))
                 throw new InvalidDataException("Скачанный ffprobe не запускается.");
-            if (!await IsUsableAsync(temporaryFfmpeg, cancellationToken))
-                throw new InvalidDataException("Скачанный ffmpeg не запускается.");
 
             File.Move(temporaryExe, AppPaths.FfprobeExecutable, overwrite: true);
-            File.Move(temporaryFfmpeg, AppPaths.FfmpegExecutable, overwrite: true);
         }
         finally
         {
             TryDelete(temporaryZip);
             TryDelete(temporaryExe);
-            TryDelete(temporaryFfmpeg);
         }
 
-        if (!await IsUsableAsync(AppPaths.FfprobeExecutable, cancellationToken) ||
-            !await IsUsableAsync(AppPaths.FfmpegExecutable, cancellationToken))
-            throw new InvalidDataException("Установленные ffprobe/ffmpeg не запускаются.");
+        if (!await IsUsableAsync(AppPaths.FfprobeExecutable, cancellationToken))
+            throw new InvalidDataException("Установленный ffprobe не запускается.");
     }
 
     private static async Task ExtractExecutableAsync(
