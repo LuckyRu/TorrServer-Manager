@@ -349,4 +349,118 @@ runner.test('панель: openPicker строит кандидатов, playPic
     if (state.stage === 'candidates') throw new Error('клик не должен показывать список');
 });
 
+runner.test('TMDB сезон недоступен: ошибка retryable, повтор восстанавливает', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    // Нарочно НЕ регистрируем хендлер для /season/ — mock Reguest.native вызывает fail-колбэк на
+    // непойманном URL, что даёт ровно тот же путь, что и реальный сетевой сбой (request() резолвит
+    // null; fetchSeason теперь возвращает err('network', ...)).
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
+        indexers: []
+    });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    let state = domain.store.get();
+    if (state.episodesStatus !== 'error') throw new Error('ожидал episodesStatus=error, получил ' + state.episodesStatus);
+    if (state.stage !== 'message') throw new Error('ожидал stage=message, получил ' + state.stage);
+    if (typeof state.message.retry !== 'function') throw new Error('retry должен быть функцией: ' + JSON.stringify(state.message));
+
+    // Регистрируем хендлер и вызываем сохранённый retry — должен повторно запросить и восстановиться
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
+    });
+    state.message.retry();
+    await flushMicrotasks();
+
+    state = domain.store.get();
+    if (state.episodesStatus !== 'ready') throw new Error('повтор не восстановил список серий: ' + state.episodesStatus);
+    if (state.stage !== 'episodes') throw new Error('после повтора ожидал stage=episodes, получил ' + state.stage);
+});
+
+runner.test('freshSearch: Jackett недоступен при активном customQuery — retryable, повтор восстанавливает', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
+        indexers: []
+    });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    // ручной поиск по имени — успешный requery, сериал остаётся на списке серий
+    domain.selection.searchWithQuery('Futurama');
+    await flushMicrotasks();
+    if (domain.store.get().customQuery !== 'Futurama') throw new Error('customQuery не сохранился');
+
+    // убираем torrent-search хендлер — клик по серии уходит в freshSearch (customQuery активен) и
+    // не находит ответа, mock Reguest.native вызывает fail-колбэк на непойманном URL — тот же путь,
+    // что и реальная недоступность Jackett
+    globalThis.__clearReguest();
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
+    });
+    domain.selection.selectEpisode(7);
+    await flushMicrotasks();
+
+    let state = domain.store.get();
+    if (state.searchStatus !== 'error') throw new Error('ожидал searchStatus=error, получил ' + state.searchStatus);
+    if (state.stage !== 'message') throw new Error('ожидал stage=message, получил ' + state.stage);
+    if (typeof state.message.retry !== 'function') throw new Error('retry должен быть функцией: ' + JSON.stringify(state.message));
+
+    // регистрируем хендлер снова и вызываем сохранённый retry — переиздаёт идентичный поиск и
+    // восстанавливается
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
+        indexers: []
+    });
+    state.message.retry();
+    await flushMicrotasks();
+
+    state = domain.store.get();
+    if (state.searchStatus !== 'ready') throw new Error('повтор не восстановил поиск: ' + state.searchStatus);
+});
+
+runner.test('destroy() мид-флайт: поздний ответ после domain.destroy() не трогает стор', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    // Задерживаем оба сетевых ответа (сезон + пул), чтобы успеть вызвать destroy() до того, как
+    // хоть один из них резолвится — это единственный путь, которым сейчас проверяется isDestroyed()
+    // (найдено при плане: ни domain.destroy()/isDestroyed(), ни playback/smart-preload.js вообще не
+    // покрыты тестами до этого прохода).
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
+    }, 50);
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
+        indexers: []
+    }, 50);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    const stateBeforeDestroy = domain.store.get();
+    if (stateBeforeDestroy.episodesStatus !== 'loading') throw new Error('ожидал episodesStatus=loading до ответа, получил ' + stateBeforeDestroy.episodesStatus);
+    if (stateBeforeDestroy.poolStatus !== 'loading') throw new Error('ожидал poolStatus=loading до ответа, получил ' + stateBeforeDestroy.poolStatus);
+
+    domain.destroy();
+    await new Promise((r) => setTimeout(r, 100)); // оба задержанных ответа успевают прийти
+
+    const stateAfter = domain.store.get();
+    if (stateAfter.episodesStatus !== 'loading') throw new Error('поздний TMDB-ответ изменил стор после destroy(): episodesStatus=' + stateAfter.episodesStatus);
+    if (stateAfter.poolStatus !== 'loading') throw new Error('поздний torrent-search-ответ изменил стор после destroy(): poolStatus=' + stateAfter.poolStatus);
+    if (stateAfter.episodesCache !== null) throw new Error('episodesCache не должен был заполниться после destroy()');
+    if (stateAfter.pool !== null) throw new Error('pool не должен был заполниться после destroy()');
+});
+
 await runner.run();

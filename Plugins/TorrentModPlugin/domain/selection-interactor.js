@@ -12,6 +12,7 @@
     import { searchQueryText, isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
     import { selectCandidatesForEpisode } from './results-selectors.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
+    import { isCurrentGeneration } from '../shared/core/generation-guard.js';
 
     var DEFAULT_KEY = 'torrent_mod_default_torrent';
     var LAST_EPISODE_KEY = 'torrent_mod_last_episode';
@@ -42,7 +43,13 @@
                 if (pendingSelection && (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
                     var pending = pendingSelection;
                     pendingSelection = null;
-                    if (pending.movie) startMovie();
+                    // startMovie() and showMoviePool() are different selection policies (startMovie
+                    // only auto-plays a persisted default, never on confidence alone; showMoviePool
+                    // can auto-play via finishSelection's normal confidence check unless pickerOnly
+                    // forces the list) — 'pickerOnly' in pending distinguishes which one this deferred
+                    // intent actually came from, so replaying it doesn't silently switch policy.
+                    if (pending.movie && 'pickerOnly' in pending) showMoviePool(pending.pickerOnly);
+                    else if (pending.movie) startMovie();
                     else if (pending.picker) openPicker(pending.episode);
                     else selectEpisode(pending.episode, pending.pickerOnly);
                 } else if (pendingSelection) {
@@ -153,7 +160,17 @@
         // (found in review).
         function showMoviePool(pickerOnly) {
             var state = store.get();
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') { notify('Раздачи ещё загружаются…'); return; }
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                // startMovie() (above) already schedules a retry for this exact condition and
+                // message; this call site didn't, silently leaving the screen stuck if the pool
+                // hadn't finished loading yet when a manual name search landed here (found during the
+                // generation-guard migration — the two functions handle the same precondition
+                // differently for no principled reason).
+                pendingSelection = { season: 0, episode: 0, movie: true, pickerOnly: pickerOnly };
+                notify('Раздачи ещё загружаются…');
+                schedulePendingRetry();
+                return;
+            }
             var target = buildMovieTarget();
             var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
             if (!candidates.length) { store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } }); return; }
@@ -318,22 +335,28 @@
             });
 
             var search = target.mode === MODE_MOVIE ? searchMovieTorrents : searchSeriesTorrents;
+            // The generation check alone is not enough here: setSeason() bumps only seasonGeneration
+            // (freshSearch's own searchGeneration stays put), so a late response also has to be
+            // re-checked against the season/query it was actually made for — otherwise a late
+            // season-2 search response could surface candidates for season 2 on a screen now showing
+            // season 3 (found in review). isStillValid carries exactly that extra check.
+            var stillTargeted = function (state) { return state.season === target.season && state.customQuery === target.customQuery; };
             search(target).then(function (response) {
                 // Screen closed, or a newer selectEpisode()/season switch has since taken over —
                 // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
                 // this exact request being the one cancelSearch() just cancelled on destroy, not by
-                // an actual Jackett problem) over whatever the user is looking at now. The generation
-                // check alone is not enough: setSeason() bumps only seasonGeneration (the search's
-                // own generation stays put), so also re-check that the season/query this request was
-                // made for are still the current ones — otherwise a late season-2 search response
-                // could surface candidates for season 2 on a screen now showing season 3 (found in
-                // review).
-                if (isDestroyed() || store.get().searchGeneration !== generation) return;
-                var current = store.get();
-                if (current.season !== target.season || current.customQuery !== target.customQuery) return;
+                // an actual Jackett problem) over whatever the user is looking at now.
+                if (!isCurrentGeneration(store, 'searchGeneration', generation, isDestroyed, stillTargeted)) return;
                 if (response.failed) {
-                    notify('Jackett недоступен или не ответил');
-                    store.patch({ searchStatus: 'idle', statusText: '' });
+                    // Was a bare notify() toast that just faded away — now the same retryable-message
+                    // pattern loadEpisodes' TMDB failure already uses (results-state.js's
+                    // message.retry), so two failures that are the same thing to the user ("couldn't
+                    // load data, try again") get the same UX instead of one having a real "Повторить"
+                    // affordance and the other just a disappearing toast (found in review).
+                    store.patch({
+                        searchStatus: 'error', stage: 'message',
+                        message: { text: 'Jackett недоступен или не ответил', retry: function () { freshSearch(target, pickerOnly); } }
+                    });
                     return;
                 }
                 var pool = applyStateFilters(response.results, store.get());

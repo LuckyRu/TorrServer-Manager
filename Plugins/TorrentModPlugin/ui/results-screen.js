@@ -541,7 +541,7 @@
                 state.candidates !== previous.candidates || state.message !== previous.message) {
                 if (state.stage === 'episodes') renderEpisodes(state.episodesCache, state.season);
                 else if (state.stage === 'candidates') renderCandidateList(state.candidates.items, state.candidates.target, state.candidates.canReturnToEpisodeList);
-                else if (state.stage === 'message') showMessage(state.message.text, state.message.retry ? domain.episodes.loadEpisodes : null);
+                else if (state.stage === 'message') showMessage(state.message.text, state.message.retry);
             }
             if (state.pool !== previous.pool || state.episodesCache !== previous.episodesCache) {
                 updateEpisodeBadges(selectEpisodeBadges(object, state));

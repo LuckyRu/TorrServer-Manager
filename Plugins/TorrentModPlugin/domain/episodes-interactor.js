@@ -15,6 +15,7 @@
     import { searchSeriesTorrents } from '../search/series-search.js';
     import { compact } from '../shared/utils.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
+    import { isCurrentGeneration } from '../shared/core/generation-guard.js';
 
     var PER_MOVIE_CACHE_MAX = 200;
 
@@ -39,18 +40,19 @@
             var generation = state.seasonGeneration;
             store.patch({ episodesStatus: 'loading', statusText: 'Загрузка списка серий…' });
 
-            fetchSeason(movie, requestedSeason).catch(function (error) {
-                console.warn('Torrent Mod: TMDB season fetch failed', error);
-                return [];
-            }).then(function (episodes) {
-                // Generation check closes a gap plain value comparison can't: switching season
-                // 2 -> 3 -> 2 again quickly, the *first* season-2 request's late response would pass
-                // a naive "season !== requestedSeason" check (season really is 2 again) even though a
-                // second, newer season-2 fetch is also in flight and should win. The counter
-                // distinguishes "same season number, asked a second time" from "still waiting on the
-                // first ask" in a way a value comparison structurally cannot.
-                if (isDestroyed() || store.get().seasonGeneration !== generation) return;
-                episodes = episodes || [];
+            fetchSeason(movie, requestedSeason).then(function (result) {
+                if (!isCurrentGeneration(store, 'seasonGeneration', generation, isDestroyed)) return;
+
+                // fetchSeason now returns a Result (shared/core/result.js): a network failure and a
+                // legitimately empty TMDB season used to be indistinguishable here (fetchSeason's own
+                // request() never rejects), both silently producing an empty array. A real failure now
+                // surfaces as its own retryable message instead of falling through to the synthetic
+                // fallback-episode-count branch below, which is for the genuinely-empty case only.
+                if (!result.ok) {
+                    store.patch({ episodesStatus: 'error', stage: 'message', message: { text: result.error.message, retry: result.error.retryable ? loadEpisodes : null } });
+                    return;
+                }
+                var episodes = result.value;
                 var runtimes = episodes.map(function (e) { return parseInt(e.runtime, 10) || 0; }).filter(Boolean);
                 var seasonEpisodeCount = episodes.length || (episodeCounts(movie)[requestedSeason] || 0);
                 var avgRuntimeMinutes = runtimes.length ? runtimes.reduce(function (a, b) { return a + b; }, 0) / runtimes.length : 0;
@@ -60,7 +62,7 @@
                     for (var i = 1; i <= fallbackCount; i++) episodes.push({ episode_number: i, name: 'Серия ' + i });
                 }
                 if (!episodes.length) {
-                    store.patch({ episodesStatus: 'error', stage: 'message', message: { text: 'Список серий недоступен', retry: true } });
+                    store.patch({ episodesStatus: 'error', stage: 'message', message: { text: 'Список серий недоступен', retry: loadEpisodes } });
                     return;
                 }
                 store.patch({
@@ -101,7 +103,7 @@
             store.patch({ poolStatus: 'loading' });
             var search = hasSeasons ? searchSeriesTorrents : searchMovieTorrents;
             search(target).then(function (response) {
-                if (isDestroyed() || store.get().poolGeneration !== generation) return;
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
                 store.patch({
                     pool: response.failed ? [] : response.results,
                     poolStatus: response.failed ? 'error' : 'ready'
@@ -156,7 +158,7 @@
 
             var target = { movie: object.movie, season: season, episode: 0 };
             searchSeriesTorrents(target).then(function (response) {
-                if (isDestroyed() || store.get().poolGeneration !== generation) return;
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
                 var current = store.get();
                 var merged = mergePools(current.pool || [], response.failed ? [] : response.results);
                 var loads2 = Object.assign({}, current.seasonLoads || {});

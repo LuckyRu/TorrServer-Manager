@@ -46,7 +46,13 @@
             // "whichever render function was last called wins" with an explicit, renderable value.
             stage: 'episodes',        // 'episodes' | 'candidates' | 'message'
             candidates: null,         // { items, target, canReturnToEpisodeList } | null
-            message: null,            // { text, retry: boolean } | null
+            message: null,            // { text, retry: Function|null } | null — retry, when present, is
+                                       // called directly by the View on the retry row's hover:enter
+                                       // (not a boolean flag dispatched to a hardcoded function — a
+                                       // plain function reference here is fine, this is the same kind
+                                       // of value onLoaded/onComplete callbacks already carry through
+                                       // this codebase; the "plain data only" rule above is about
+                                       // never storing a live Promise, not about banning functions)
 
             statusText: '',           // head status line ("Ищем S03E03…", "Загрузка списка серий…")
             searchText: '',           // toolbar search box text

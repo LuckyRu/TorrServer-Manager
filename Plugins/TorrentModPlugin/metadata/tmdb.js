@@ -1,5 +1,6 @@
     // ---------- TMDB season/episode data ----------
     import { field, request } from '../shared/utils.js';
+    import { ok, err } from '../shared/core/result.js';
 
     export function canonicalTimeline(movie, season, episode) {
         if (!movie || !season || !episode || !Lampa.Timeline || !Lampa.Timeline.watchedEpisode) return null;
@@ -66,10 +67,17 @@
         return list;
     }
 
+    // Returns a Result (shared/core/result.js), not a bare array — request() (shared/utils.js) is
+    // built on a Promise that never rejects (a network failure resolves to `null`, same shape as "no
+    // data"), so without this, a TMDB network error and a legitimately empty season were structurally
+    // indistinguishable to the caller. `data === null` is specifically the network-failure case;
+    // `data` present but with no `episodes` array (or an empty one) is a real, successful "this
+    // season has no episodes" answer, not an error — ok([]) is returned for that, not err(...).
     export function fetchSeason(movie, season) {
         var language = field('tmdb_lang', 'ru');
         var path = 'tv/' + movie.id + '/season/' + season + '?api_key=' + Lampa.TMDB.key() + '&language=' + encodeURIComponent(language);
         return request(Lampa.TMDB.api(path), 15000).then(function (data) {
-            return data && Array.isArray(data.episodes) ? data.episodes : [];
+            if (data === null) return err('network', 'Список серий недоступен', { retryable: true });
+            return ok(Array.isArray(data.episodes) ? data.episodes : []);
         });
     }

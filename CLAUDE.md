@@ -865,6 +865,75 @@ entry-point/build-config layer above all of them.
     (`buildPlaylist`), for the same reason `url_reserve` itself needed to be on every entry — playlist
     navigation re-enters `play()` per item and reassigns `work`, so a per-item field is the only kind
     that survives an episode switch.
+  - **`shared/core/` — a small set of genuinely reusable reliability primitives, introduced after the
+    user rejected another round of point fixes as "местячковое мероприятие" and asked for real
+    architecture: domain-level error handling with retry/fallback as first-class concepts, not
+    scattered `if`s across files ("лапшекод"). Preceded by a verified-live inventory of every
+    error/retry/fallback pattern already in the plugin (read in full, not guessed), then a four-role
+    design council (architect/product/designer/lead-programmer, same pattern as the earlier
+    movie/series composition consilium) evaluating the target shape before any code was written —
+    the plan itself lives at the top of a Claude Code plan file this session used, referenced here for
+    anyone continuing the work.** Found: four near-identical, hand-rolled staleness-guard sites
+    (generation-counter bump → patch loading → await → `isDestroyed()||generation mismatch` guard →
+    commit) in `domain/episodes-interactor.js`/`domain/selection-interactor.js`; two independently
+    invented lifecycle-guard mechanisms doing the same job (`results-domain.js`'s `isDestroyed()` vs.
+    `playback/smart-preload.js`'s `session.alive`); no structured error type anywhere — `notify()`
+    (`shared/utils.js`) takes a bare string, and retryability was decided ad hoc per call site,
+    **already inconsistently**: `startMovie()` and `showMoviePool()` showed the identical "раздачи ещё
+    загружаются" message for the identical precondition, but only one of them scheduled a retry
+    (fixed as part of this pass). Also found, while migrating: `metadata/tmdb.js`'s `fetchSeason` had
+    a `.catch(() => [])` that was **dead code** — `shared/utils.js`'s `request()` is built on a
+    Promise that never rejects (a network failure resolves to `null`, same shape as "no data"), so a
+    TMDB network error and a legitimately empty season were structurally indistinguishable, not just
+    inconvenient to tell apart.
+    - **`shared/core/result.js`** — `ok(value)`/`err(kind, message, {retryable, cause})`, a Result
+      shape applied only where it actually closes a gap (`fetchSeason`, above) — deliberately **not**
+      applied to `search/search-backend.js`'s `{results, indexers, failed}`, which is already
+      informationally equivalent to a two-outcome Result for its three current callers; converting it
+      would be churn with no bug fixed.
+    - **`shared/core/generation-guard.js`** — one function, `isCurrentGeneration(store, generationKey,
+      generation, isDestroyed, isStillValid)`, replacing the four hand-rolled checks above verbatim
+      (`loadEpisodes`, `loadAllTorrents`, `ensureSeasonLoaded`, `selection-interactor.js`'s
+      `freshSearch` — the only one of the four that needs the optional `isStillValid` hook, since a
+      generation match alone isn't enough there: `setSeason()` bumps `seasonGeneration` but not
+      `searchGeneration`, so a customQuery search made for the old season could otherwise still pass).
+      Deliberately **not** a bigger "guarded task" wrapper bundling the bump/patch/commit steps too —
+      what each site actually commits to the store on success differs too much (a flat status field vs.
+      a `seasonLoads[season]` map entry vs. `loadAllTorrents`'s own separate in-flight dedup unrelated
+      to generations at all) to force through one `onStart`/`onResult` shape without adding indirection
+      over code that already read fine inline.
+    - **`message.retry` widened from `boolean` to `Function|null`** (`domain/results-state.js`) — the
+      one place in the whole codebase that already did retryable-error UX correctly (`stage:'message'`
+      + `showMessage()`'s real "Повторить" row, `ui/results-screen.js`) hardcoded WHICH function a
+      `true` meant (`domain.episodes.loadEpisodes`, unconditionally) rather than carrying the actual
+      function to call — meaning only one producer could ever exist. Widening it (a plain function
+      reference is no different in kind from the `onLoaded`/`onComplete` callbacks already flowing
+      through this codebase everywhere — the state shape's own "plain data only" rule was about never
+      storing a *live Promise*, not about banning functions) let `freshSearch`'s Jackett-failure branch
+      become a second producer, replacing a bare `notify()` toast that just faded away with the same
+      retry affordance `loadEpisodes`'s TMDB failure already had — two failures that are the same thing
+      to the user ("couldn't load data, try again") now get the same UX.
+    - **`shared/core/lifecycle.js`** — `createLifecycle()` → `{isAlive, dispose}`, unifying the *shape*
+      of `isDestroyed()`/`session.alive`, not their lifetimes (`results-domain.js`'s own header
+      comment already explains why playback deliberately outlives the results screen — that stays
+      true). Migrated `results-domain.js`'s `destroyed` flag onto it in this pass; `playback/
+      smart-preload.js`'s half is deliberately **not** touched here — see below.
+    - **Why `playback/smart-preload.js` (`session.alive`, `pollFiles`'s bounded retry, `registerTorrent`'s
+      unabstracted 3-level fallback chain) was left alone this pass, not forgotten**: it has no open
+      bug today (this is architectural symmetry, not a fix), it has **zero** automated test coverage
+      (confirmed by grep) and is named in this file as "verified live" territory, and the actual
+      user-motivating problem — inconsistent retry/error UX — lived entirely in `domain/`, which *is*
+      test-covered. When it's done, do it as one pass (`shared/core/poll.js` + the `playback/` half of
+      `lifecycle.js` + a `registerTorrent` readability refactor to flat Promise steps, together, not
+      three separate changes), with a full manual playback smoke pass at the end, matching how every
+      other touch to this file has been verified in this project.
+    - Verified: `npm run test:plugin` green throughout (new file `test/core.test.mjs` — 13 unit tests
+      for `result.js`/`generation-guard.js`/`lifecycle.js` against a real `createStore()`, no Lampa
+      mocks needed; two new `smoke.test.mjs` cases exercising the TMDB-failure and Jackett-failure
+      retryable-message paths end to end including calling the stored `retry()` and confirming
+      recovery; one new `smoke.test.mjs` case — previously entirely uncovered — calling `destroy()`
+      mid-flight against two deliberately delayed mock responses and confirming neither one mutates
+      the store after teardown).
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

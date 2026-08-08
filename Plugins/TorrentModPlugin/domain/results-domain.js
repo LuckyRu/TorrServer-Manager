@@ -22,14 +22,15 @@
     import { createEpisodesInteractor } from './episodes-interactor.js';
     import { createSelectionInteractor } from './selection-interactor.js';
     import { createFiltersInteractor } from './filters-interactor.js';
+    import { createLifecycle } from '../shared/core/lifecycle.js';
 
     export function createResultsDomain(options) {
         var object = options.object;
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
 
-        var destroyed = false;
-        function isDestroyed() { return destroyed; }
+        var lifecycle = createLifecycle();
+        function isDestroyed() { return !lifecycle.isAlive(); }
 
         var store = createStore(createInitialResultsState(object));
         applyPersistedPreferences(store, movie); // one initial patch, before anyone subscribes
@@ -54,9 +55,12 @@
         }
 
         function destroy() {
-            destroyed = true;
-            // Cancel interactor timers (pending-retry) that would otherwise outlive the screen.
-            if (selection.destroy) selection.destroy();
+            // Idempotent via lifecycle.dispose() — a second destroy() call is a no-op instead of
+            // re-running teardown.
+            lifecycle.dispose(function () {
+                // Cancel interactor timers (pending-retry) that would otherwise outlive the screen.
+                if (selection.destroy) selection.destroy();
+            });
         }
 
         return {
