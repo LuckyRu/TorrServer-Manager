@@ -32,9 +32,9 @@
     // Plus, still silent: an initial fire-and-forget `&preload` nudge (starts the download before
     // the player asks) and next-episode preloading near the end of the current file. No global
     // patching of Lampa.Player.play / Torserver.stream (ADR-0003).
-    import { parseSignals } from '../search/release-parsing.js';
+    import { parseSignals } from '../shared/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
-    import { hubBase } from '../shared/state.js';
+    import { hubBase, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
     import { isPlayableFile, pickBestFile as pickBestPlayableFile } from './file-selection.js';
     import { buildMoviePlayerData } from './movie-player.js';
     import { buildSeriesPlayerData } from './series-player.js';
@@ -305,14 +305,20 @@
         probeSelectedFile(session);
     }
 
-    // ffprobe gate — the final arbiter for "древнее говно": the title heuristic only suspects,
-    // this confirms from the actual file. A CONFIRMED-bad video codec (or no video stream) blocks
-    // playback with an honest toast — black screen instead of the series is worse. 'unavailable'
-    // (no ffprobe on this TorrServer build) is NOT proof of bad — play anyway.
+    // ffprobe runs purely for DIAGNOSTICS now, not as a gate: pickBestFile() already calls
+    // startDirectPlayback() before this ever runs (GST transcodes on the fly, so the player must
+    // not sit behind /torrents + /ffp round trips before showing anything — see the comment there).
+    // That means session.clicked is already true by the time any callback below fires: a verdict of
+    // 'bad'/'no-video' used to notify()+dispose() the session regardless, which showed a false
+    // "unsupported format" toast and tore down cleanup (next-episode preload) on top of video that
+    // was already playing correctly through GST. Log only; never touch a session already in flight.
+    // (session.transcodeAudio is still set for streamUrlFor's non-GST fallback branch, though in
+    // practice useGst is always true by the time streamUrlFor runs, so that branch — and this whole
+    // codec verdict — is dormant unless GST itself becomes unreachable mid-session.)
     function probeSelectedFile(session) {
         if (!session.alive || session.probed || !session.bestFile) return;
         var base = torrServerBase();
-        if (!base) { startDirectPlayback(session); return; }
+        if (!base) return;
         session.probed = true;
         $.ajax({
             url: base + '/torrents', method: 'POST',
@@ -326,46 +332,26 @@
             if (!session.alive) return;
             var files = (json && json.file_stats) || [];
             var match = files.filter(function (f) { return String(f.id) === String(session.bestFile.id); })[0];
-            if (!match || match.id == null) { startWithPreferredTransport(session); return; }
+            if (!match || match.id == null) return;
             $.ajax({ url: base + '/ffp/' + session.hash + '/' + match.id, dataType: 'json', timeout: 6000 })
                 .done(function (probe) {
                     if (!session.alive) return;
                     var streams = probe && probe.streams;
-                    if (!streams || !streams.length) { startWithPreferredTransport(session); return; }
+                    if (!streams || !streams.length) return;
                     session.transcodeAudio = needsAudioTranscode(streams);
                     var video = streams.filter(function (s) { return s.codec_type === 'video'; })[0];
                     var verdict = video ? classifyVideoCodec(video.codec_name) : 'no-video';
-                    if (verdict === 'bad') {
-                        notify('Формат видео ' + String(video.codec_name || '').toUpperCase() + ' не поддерживается на этом устройстве — выберите другую раздачу');
-                        session.dispose();
-                        return;
+                    if (verdict !== 'good') {
+                        console.warn('Torrent Mod: ffprobe нашёл проблемный формат уже во время воспроизведения (GST транскодирует)', {
+                            verdict: verdict, codec: video && video.codec_name, hash: session.hash
+                        });
                     }
-                    if (verdict === 'no-video') {
-                        notify('В раздаче не найден видеопоток — выберите другую раздачу');
-                        session.dispose();
-                        return;
-                    }
-                    startWithPreferredTransport(session);
                 }).fail(function () {
-                    console.warn('Torrent Mod: /ffp запрос не удался — играем без проверки формата');
-                    if (session.alive) startWithPreferredTransport(session);
+                    console.warn('Torrent Mod: /ffp запрос не удался — диагностика формата недоступна');
                 });
         }).fail(function () {
-            console.warn('Torrent Mod: /torrents get не удался — играем без проверки формата');
-            if (session.alive) startWithPreferredTransport(session);
+            console.warn('Torrent Mod: /torrents get не удался — диагностика формата недоступна');
         });
-    }
-
-    function startWithPreferredTransport(session) {
-        if (!session.alive || session.clicked) return;
-        var base = torrServerBase();
-        if (!base) { startDirectPlayback(session); return; }
-        // Do not wait for the manifest here. HLS.js must own that loading state: waiting for the
-        // first master/init segment before opening Player made every launch look frozen for up to
-        // 60 seconds. The player opens immediately, shows its native loader, and HLS.js updates the
-        // duration/seek bar as soon as the VOD manifest arrives.
-        session.useGst = true;
-        startDirectPlayback(session);
     }
 
     // Builds the player playlist from ALL playable files of the pack — the native torrent screen
@@ -408,8 +394,8 @@
         // Compensated native side effect #1: continue-watch card (torrent.js:437).
         try { if (movie.id) Lampa.Favorite.add('history', movie, 100); } catch (e) {}
 
-        var data = session.mode === 'movie'
-            ? buildMoviePlayerData(session)
+        var data = session.mode === MODE_MOVIE
+            ? buildMoviePlayerData(session, function (file) { return streamUrlFor(session, file); })
             : buildSeriesPlayerData(session, buildPlaylist, function (file) { return streamUrlFor(session, file); });
 
         // Which controller the Torrent Mod screen had before playback — the player's Back should
@@ -488,7 +474,7 @@
         var session = {
             id: ++sessionSeq,
             alive: true,
-            mode: target.mode || 'series',
+            mode: target.mode || MODE_SERIES,
             hash: '',
             item: item,
             target: target,

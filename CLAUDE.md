@@ -58,7 +58,15 @@ For a user-visible change, the full loop is commit → publish → deploy → re
    `TorrServer.exe`/`JackettConsole.exe` are independent processes and don't need restarting for a manager
    deploy.
 
-There is no test suite and no linter configured in this repo.
+There is no linter configured in this repo. There IS now a small hand-rolled test suite for
+`TorrentModPlugin.js` (`npm run test:plugin` — `Plugins/TorrentModPlugin/test/{parsing,domain,smoke}.test.mjs`,
+plain Node `assert`, no test framework dependency; `npm run test:e2e` separately runs a Playwright
+browser test). It covers the pure parsing/scoring/domain functions and a few full domain-flow smoke
+scenarios (movie vs. series entry, season switching, lazy per-season loading, the picker) — grew out
+of the same review-driven-hardening habit documented throughout this file: a real bug found by review
+gets a regression test alongside its fix when the bug was in one of these pure/domain functions. It
+does not cover the C# side (`TorrServerManager.csproj` itself still has no test project) or DOM/Lampa
+API integration (`ui/`, `playback/`) — those stay verified live, as documented throughout this file.
 
 ## Architecture
 
@@ -564,7 +572,9 @@ entry-point/build-config layer above all of them.
       search was still in flight let the stale `.then()` fire `notify('Jackett недоступен или не
       ответил')` after the fact — a false, confusing message, since the request wasn't rejected by
       Jackett, it was cancelled by `cancelSearch()` on `destroy()`. Added a `destroyed` flag to
-      `results-viewmodel.js`, set by a new `destroy()` on its returned API, checked first thing in
+      `results-viewmodel.js` (this file was later replaced by `domain/results-domain.js` +
+      interactors, see the "domain: Store/State/Interactors" bullet below — the `destroyed` flag
+      itself carried straight over as `isDestroyed()`), set by a new `destroy()` on its returned API, checked first thing in
       every async continuation (`loadEpisodes`, `ensureSeasonPool`, `selectEpisode`'s fresh-search
       branch) — `TorrentModComponent.destroy()` now calls `viewModel.destroy()` before `view.destroy()`.
       Verified live: clicked an episode, backed out immediately, watched the console — no spurious
@@ -597,7 +607,9 @@ entry-point/build-config layer above all of them.
       the function already uses for entries with no usable magnet/link.
     - **`scoreCandidate()` mutates its `item` argument** (`item.bitrateMbps = bitrateMbps`) — `item`
       is a long-lived, shared `state.seasonPool` entry, called once per episode per candidate
-      (`results-viewmodel.js`'s `getEpisodeBadges`/`candidatesFor`), so `item.bitrateMbps` only ever
+      (`results-viewmodel.js`'s `getEpisodeBadges`/`candidatesFor` at the time this was found — the
+      equivalent call sites today are `domain/results-selectors.js`'s `selectEpisodeBadges`/
+      `selectCandidatesForEpisode`), so `item.bitrateMbps` only ever
       reflects whichever episode this function was *last* called with for that item. Confirmed
       dormant — nothing reads it back off the pool today, only the freshly-returned score object's
       own `.bitrateMbps` is used — documented in place rather than refactored away, since fixing it
@@ -692,6 +704,91 @@ entry-point/build-config layer above all of them.
       episode pick resolving to the candidate list, and "К списку серий" back navigation — no new
       console errors beyond the same pre-existing, unrelated noise (`modification.js`, third-party
       cub.rip 500s) seen throughout every prior verification pass this session.
+  - **A GST-transcoding audio-track picker was attempted, shipped, and reverted within the same
+    day (v1.17.23 → v1.17.24)** — worth recording so it isn't re-attempted blindly. The idea:
+    `Services/PluginHub.cs` would proxy TorrServer's own `/gst/{hash}/master.m3u8`, rewrite it into
+    HLS with `#EXT-X-MEDIA` alternate-audio renditions (built from an `/ffp` ffprobe call), and hand
+    that to the player instead of the direct TorrServer URL. It hung, then crashed, the actual
+    TorrServer.exe process. Root cause, confirmed live: TorrServer's own `/gst/.../master.m3u8` takes
+    **~20 seconds** to respond (it warms the real GStreamer pipeline synchronously before answering)
+    — but `PluginHub`'s shared `httpClient.Timeout` is 25s (sized for quick proxy calls elsewhere in
+    that file, not for this), and the new code did that fetch *and then* a sequential `/ffp` call
+    before responding, regularly exceeding 25s and throwing inside our own code. Even when it snuck
+    under the timeout, the added latency was enough to make the player's own HLS client abort/retry
+    — and TorrServer's GStreamer pipeline-reuse was *already* visibly fragile in `server.log`
+    (`gstreamer state change timed out`, `master init failed: segment is not ready`, `seek ... while
+    reusing pipeline` — present even for torrents that never touched this new code), so the resulting
+    overlapping requests wedged and eventually killed the whole process. Reverted rather than patched
+    around (a longer timeout would not have fixed TorrServer's own pipeline-reuse fragility, only
+    hidden the symptom) — commit `6c54515`. If audio-track selection is revisited, that server-side
+    pipeline-reuse fragility needs its own investigation first, independent of anything in this repo.
+  - **The ffprobe codec gate broke in the same GST-introduction commit (`8c0f3a3`) that made GST the
+    default transport, found via the review below.** `pickBestFile()` (playback/smart-preload.js)
+    now calls `startDirectPlayback()` — which sets `session.clicked = true` synchronously — *before*
+    `probeSelectedFile()` even starts its async `/ffp` round trip, so by the time that probe's
+    callback resolves, playback has always already begun. The probe's `'bad'`/`'no-video'` verdict
+    branches still unconditionally called `notify(...)` + `session.dispose()`, regardless — showing a
+    false "формат не поддерживается" toast and tearing down cleanup (killing next-episode preload)
+    **on top of video that was already playing correctly through GST**, which transcodes exactly the
+    codec class this gate exists to catch. Fixed by making `probeSelectedFile` pure diagnostics
+    (`console.warn` only) — consistent with the comment already sitting right above the call site in
+    `pickBestFile` ("Playback is not gated on ffprobe"), which this code had silently stopped
+    honoring. `startWithPreferredTransport` — the function these branches used to call to *start*
+    playback — became dead code once playback was guaranteed to have already started, and was removed.
+  - **Two independent review agents (architect on module structure/import graph, lead-programmer on
+    runtime races) both read the actual current source** — 37 files at this point, up from 14 at the
+    last review pass, having grown through the movie/series split, the whole-work-pool rewrite, and
+    GST transcoding (none of which had been written up in this file yet — the gap itself is noted
+    above under "no test suite", now corrected, and applies here too: this file's TorrentModPlugin
+    section lagged the code by ~9 commits). Findings, fixed:
+    - **`customQuery` wasn't threaded into the targets `selectEpisodeBadges`/`openPicker` build**
+      (`domain/results-selectors.js`'s `buildEpisodeTarget`, `domain/selection-interactor.js`'s
+      `openPicker`/`buildPickerTarget`) — only `selectEpisode`'s own target included it.
+      `passesMatchGate` (search/scoring.js) reads `target.customQuery` specifically to skip the
+      title-similarity gate once the user has typed a disambiguating name; without it, episode
+      badges and the side picker kept gating on the original (possibly mismatched) TMDB title even
+      after a customQuery search had already found real matches under the new name — a plain click
+      on the episode found them (it goes through `selectEpisode`), but the badge above it said
+      "раздачи не найдены" and the picker said the same, visibly contradicting each other. Fixed by
+      threading `state.customQuery` into all three target-builders the same way `selectEpisode`
+      already did.
+    - **A movie customQuery search fired two identical Jackett round trips.**
+      `searchWithQuery`'s movie branch called `requery(...)` to refetch the whole-work pool under the
+      new name, then its callback called `selectEpisode(0, true)` — which, since `customQuery` was
+      now set, unconditionally took the fresh-search branch and searched *again* with the exact same
+      query `requery` had just fetched. Extracted `showMoviePool(pickerOnly)` — reads the
+      already-fetched pool directly, no network call — and pointed both the post-requery callback and
+      `selectEpisode`'s own non-customQuery movie branch at it (a simplification: the two were
+      duplicating the same four lines before).
+    - **`playback/movie-player.js` re-implemented the GST/transcode-audio/direct URL branching
+      inline** instead of receiving it injected the way `series-player.js`'s `buildSeriesPlayerData`
+      already does from `smart-preload.js`'s own `streamUrlFor` — including a second, separate
+      `Lampa.Torserver.ip()` call. A future change to the real transport logic (GST URL shape, audio
+      handling) could silently miss the movie copy. Made `buildMoviePlayerData` accept the same
+      injected `streamUrl(file)` callback; `smart-preload.js` is now the single place that decides
+      transport for both modes.
+    - **`playback/` depended on `search/`** (`smart-preload.js` imported `parseSignals` from
+      `search/release-parsing.js` for file-selection scoring), breaking the `shared` →
+      `{search,metadata,playback}` → `domain` → `ui` tier symmetry the rest of the codebase holds to
+      (`metadata/` has zero edges to/from `search/`, confirmed by the architect; `playback/` should
+      be the same). `parseSignals` is pure and self-contained — moved to
+      `shared/release-signals.js`; `search/release-parsing.js` now imports and re-exports it (nothing
+      importing it from there needed to change) and `playback/smart-preload.js` imports the shared
+      copy directly.
+    - **`'torrent_mod_last_season'` was a named constant in `episodes-interactor.js` (write side)
+      but a separate inline string literal in `filters-interactor.js` (read side)** — nothing enforced
+      they stayed in sync; renaming one would have silently broken per-movie season memory with no
+      error anywhere. Moved to `shared/state.js` as `SEASON_CACHE_KEY`, imported by both.
+    - **`'movie'`/`'series'` mode strings were untyped literals duplicated across ~10 call sites**
+      (search/, playback/, domain/) with no shared source of truth — a typo silently falls into
+      whichever branch is the `else` rather than erroring (no TypeScript/lint in this project by
+      choice). Added `MODE_MOVIE`/`MODE_SERIES` to `shared/state.js`, replaced every literal.
+    - **No circular dependencies, and the movie/series domain+view split is not duplicated logic**
+      (both explicitly checked and confirmed by the architect): `domain/movie-results-viewmodel.js`/
+      `series-results-viewmodel.js` are 22-line pass-throughs to the one `createResultsDomain`, and
+      `ui/movie-results-view.js`/`series-results-view.js` are 9-line pass-throughs to the one
+      `createResultsView` — `hasSeasons` is a plain branch parameter, not a second mechanism.
+    - All 93 existing tests (`npm run test:plugin`) still pass unchanged after every fix above.
   - **Fast JS-only iteration without rebuilding the .NET app**: `npm run dev:plugin`
     (`scripts/watch-plugin.mjs`, esbuild's watch API) rebuilds on every save under
     `Plugins/TorrentModPlugin/` and writes straight to

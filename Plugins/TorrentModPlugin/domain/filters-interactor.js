@@ -11,6 +11,8 @@
     // only *reads* (and prunes down to `max` entries if over) — confirmed against the real source,
     // core/storage/storage.js — it does not auto-persist further mutations, so every write still
     // needs its own explicit Storage.set() call, same as Online Mod's own read-mutate-set sequence.
+    import { SEASON_CACHE_KEY } from '../shared/state.js';
+
     var VOICE_DEFAULT_KEY = 'torrent_mod_voice';
     var VOICE_CACHE_KEY = 'torrent_mod_last_voice';
     var QUALITY_DEFAULT_KEY = 'torrent_mod_quality';
@@ -88,7 +90,7 @@
     export function applyPersistedPreferences(store, movie) {
         try {
             var state = store.get();
-            var lastSeason = Lampa.Storage.cache('torrent_mod_last_season', PER_MOVIE_CACHE_MAX, {});
+            var lastSeason = Lampa.Storage.cache(SEASON_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
             var season = lastSeason[movie.id] ? lastSeason[movie.id] : state.season;
 
             var voiceType = Lampa.Storage.get(VOICE_DEFAULT_KEY, 'any');

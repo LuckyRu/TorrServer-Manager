@@ -14,8 +14,8 @@
     import { searchMovieTorrents } from '../search/movie-search.js';
     import { searchSeriesTorrents } from '../search/series-search.js';
     import { compact } from '../shared/utils.js';
+    import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
 
-    var SEASON_CACHE_KEY = 'torrent_mod_last_season';
     var PER_MOVIE_CACHE_MAX = 200;
 
     function rememberSeason(movie, season) {
@@ -93,7 +93,7 @@
             var generation = state.poolGeneration;
             var target = {
                 movie: object.movie,
-                mode: hasSeasons ? 'series' : 'movie',
+                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
                 season: 0,
                 episode: 0,
                 customQuery: state.customQuery

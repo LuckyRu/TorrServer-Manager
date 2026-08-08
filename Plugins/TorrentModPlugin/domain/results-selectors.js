@@ -8,6 +8,7 @@
     // construction and costs nothing worth avoiding to recompute on each render.
     import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeText } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
+    import { MODE_SERIES } from '../shared/state.js';
 
     export function selectBusy(state) {
         return state.episodesStatus === 'loading' || state.poolStatus === 'loading' || state.searchStatus === 'loading';
@@ -33,14 +34,21 @@
 
     // Same target shape every interactor that needs one builds — kept in one place so the shape
     // itself only has to agree with candidatesForEpisode's own expectations in a single spot.
+    // customQuery must travel with the target: passesMatchGate (search/scoring.js) skips the
+    // title-similarity gate when it's set, since a manual name override means the original TMDB
+    // title is known to mismatch real torrent titles. Omitting it here re-gated episode badges and
+    // the side picker against the stale title even after the user searched under a better name,
+    // while a plain click on the same episode (selectEpisode, which always included it) found
+    // matches fine — the UI visibly contradicted itself (found in review).
     export function buildEpisodeTarget(object, state, number, mode) {
         return {
             movie: object.movie,
-            mode: mode || 'series',
+            mode: mode || MODE_SERIES,
             season: state.season,
             episode: number,
             seasonEpisodeCount: state.seasonEpisodeCount,
-            avgRuntimeMinutes: state.avgRuntimeMinutes
+            avgRuntimeMinutes: state.avgRuntimeMinutes,
+            customQuery: state.customQuery
         };
     }
 

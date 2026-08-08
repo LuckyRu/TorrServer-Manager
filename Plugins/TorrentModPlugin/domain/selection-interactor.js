@@ -11,6 +11,7 @@
     import { enabled, notify, debugLogCandidates } from '../shared/utils.js';
     import { searchQueryText, isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
     import { selectCandidatesForEpisode } from './results-selectors.js';
+    import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
 
     var DEFAULT_KEY = 'torrent_mod_default_torrent';
     var LAST_EPISODE_KEY = 'torrent_mod_last_episode';
@@ -119,7 +120,7 @@
                 return;
             }
             var target = buildMovieTarget();
-            var candidates = selectCandidatesForEpisode(object, state, 0, 'movie');
+            var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
             if (!candidates.length) {
                 store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
                 return;
@@ -134,7 +135,7 @@
             var state = store.get();
             return {
                 movie: object.movie,
-                mode: 'movie',
+                mode: MODE_MOVIE,
                 season: 0,
                 episode: 0,
                 seasonEpisodeCount: 0,
@@ -143,11 +144,27 @@
             };
         }
 
+        // Shows the movie candidate list straight from the already-fetched whole-work pool — no
+        // network call. Shared by selectEpisode's non-customQuery movie branch and by
+        // searchWithQuery's post-requery callback, which used to call selectEpisode(0, true) instead:
+        // since customQuery was already set by then, that re-entered selectEpisode's customQuery
+        // branch and fired a second, identical freshSearch on top of the requery() that just ran —
+        // every manual-name movie search cost two full Jackett round trips for the same query
+        // (found in review).
+        function showMoviePool(pickerOnly) {
+            var state = store.get();
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') { notify('Раздачи ещё загружаются…'); return; }
+            var target = buildMovieTarget();
+            var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
+            if (!candidates.length) { store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } }); return; }
+            finishSelection(candidates, target, pickerOnly);
+        }
+
         function selectEpisode(episode, pickerOnly) {
             var state = store.get();
             var target = {
                 movie: object.movie,
-                mode: hasSeasons ? 'series' : 'movie',
+                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
                 season: state.season,
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
@@ -164,13 +181,7 @@
             if (state.customQuery) { freshSearch(target, pickerOnly); return; }
 
             // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
-            if (!hasSeasons) {
-                if (state.poolStatus === 'loading' || state.poolStatus === 'idle') { notify('Раздачи ещё загружаются…'); return; }
-                var movieCandidates = selectCandidatesForEpisode(object, state, 0, 'movie');
-                if (movieCandidates.length) { finishSelection(movieCandidates, target, pickerOnly); return; }
-                store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
-                return;
-            }
+            if (!hasSeasons) { showMoviePool(pickerOnly); return; }
 
             // Series click = PLAY NOW: the saved season default if it's still a valid candidate,
             // otherwise the top-ranked one. No full-screen candidate list anymore.
@@ -228,11 +239,12 @@
             if (episode === undefined) episode = state.activeEpisode || state.lastEpisode || 0;
             var target = {
                 movie: object.movie,
-                mode: hasSeasons ? 'series' : 'movie',
+                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
                 season: state.season,
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes
+                avgRuntimeMinutes: state.avgRuntimeMinutes,
+                customQuery: state.customQuery
             };
             store.patch({ picker: { open: true, episode: episode, items: [], target: target, status: 'loading', selectedId: null } });
             if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
@@ -273,11 +285,12 @@
             var state = store.get();
             return {
                 movie: object.movie,
-                mode: hasSeasons ? 'series' : 'movie',
+                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
                 season: state.season,
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes
+                avgRuntimeMinutes: state.avgRuntimeMinutes,
+                customQuery: state.customQuery
             };
         }
 
@@ -304,7 +317,7 @@
                 statusText: 'Ищем по названию…'
             });
 
-            var search = target.mode === 'movie' ? searchMovieTorrents : searchSeriesTorrents;
+            var search = target.mode === MODE_MOVIE ? searchMovieTorrents : searchSeriesTorrents;
             search(target).then(function (response) {
                 // Screen closed, or a newer selectEpisode()/season switch has since taken over —
                 // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
@@ -365,8 +378,10 @@
             } else {
                 // Movie: no episode list, the candidate list IS the primary content — re-fetch the
                 // pool under the new name, then show the local candidate pick (picker-only: no
-                // auto-play while the user is actively searching).
-                if (requery) requery(function () { selectEpisode(0, true); });
+                // auto-play while the user is actively searching). showMoviePool reads the pool
+                // requery() just populated directly — it must NOT go through selectEpisode, whose
+                // customQuery branch would fire a second, identical network search on top of it.
+                if (requery) requery(function () { showMoviePool(true); });
             }
         }
 
