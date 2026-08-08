@@ -61,6 +61,22 @@
         picker.append(pickerScroll.render());
         var focusedEpisodeNumber = null;
         var viewDestroyed = false;
+        // The row that last actually had real focus, tracked for EVERY row row() builds (episode
+        // AND candidate) — a plain UI concern, not domain state. `Controller.toggle('content')`
+        // (called on: returning from the player, closing a Filter/Select panel via
+        // restoreContentFocus, refreshGrid while 'content' is already active) always used to land
+        // on the FIRST row (`collectionFocus(false, ...)`) — correct for the very first entry into
+        // this screen, wrong every other time: reported directly by the user ("список постоянный
+        // сброс на первую идет") after confirming the actually-selected episode DOES play
+        // correctly, so this is purely a focus-restoration bug, not a wrong-content one. Valid only
+        // while still attached to the CURRENT grid — a season switch or a fresh candidate list
+        // replaces every row, so a stale reference must not win (checked in restoreFocus below).
+        var lastFocusedNode = null;
+        // Same season as the last renderEpisodes() call, or null before the first one — lets
+        // renderEpisodes tell "returned to the same season's list" (restore to activeEpisode, the
+        // reactive last-focused-episode tracker) apart from "switched to a different season"
+        // (restore to the per-season persisted last-watched episode instead, existing behaviour).
+        var lastEpisodeGridSeason = null;
 
         function openPickerPanel() {
             if (viewDestroyed) return;
@@ -288,7 +304,20 @@
             );
             var rowScroll = targetScroll || scroll;
             el.on('hover:focus', function (e) { rowScroll.update($(e.target), true); });
+            if (rowScroll === scroll) el.on('hover:focus', function () { lastFocusedNode = el; });
             return el;
+        }
+
+        // Replaces a blind "focus the first row" with "focus whichever row last actually had
+        // focus, if it's still part of the CURRENT main grid" — see lastFocusedNode's own comment.
+        // Picker rows use their own targetScroll (pickerScroll), so they never set lastFocusedNode
+        // and never fight this restoration; this only ever concerns the main list.
+        function restoreFocus() {
+            var node = lastFocusedNode;
+            if (node && node[0] && node[0].offsetParent && $.contains(grid[0], node[0])) {
+                try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); return; } catch (e) {}
+            }
+            try { Lampa.Controller.collectionFocus(false, scroll.render(true)); } catch (e2) {}
         }
 
         function renderEpisodes(episodes, season) {
@@ -313,19 +342,40 @@
                 episodeRows[number] = node;
             });
             refreshGrid();
-            // First render only: move focus into the list (Lampa starts on the left Explorer card)
-            // and restore it to the last-watched episode of this season, or the first one.
-            if (!initialFocusDone && hasSeasons && firstNumber != null) {
+            if (!hasSeasons || firstNumber == null) return;
+
+            // First render only: move focus into the list (Lampa starts on the left Explorer
+            // card). Every later rebuild of this list (season switch, or "← К списку серий"
+            // returning here from the candidate list) rebuilds fresh DOM row nodes, so
+            // restoreFocus()'s own lastFocusedNode (a stale reference to a now-removed node) can't
+            // help here — refreshGrid() above already fell back to focusing the FIRST row. The
+            // block below always corrects that to wherever the user should actually land.
+            if (!initialFocusDone) {
                 initialFocusDone = true;
                 try { Lampa.Controller.toggle('content'); } catch (e) {}
+            }
+            var state = domain.store.get();
+            var focusNumber = firstNumber;
+            if (season === lastEpisodeGridSeason && state.activeEpisode && episodeRows[state.activeEpisode]) {
+                // Same season as this list's previous render — activeEpisode is the reactive
+                // last-focused-episode tracker (kept live by every row's own hover:focus below),
+                // so it's exactly the episode the user was on right before whatever rebuilt this
+                // list (found in review: reported directly by the user — going back always reset
+                // to the first episode of the season instead of staying on the one they picked).
+                focusNumber = state.activeEpisode;
+            } else {
+                // Season actually changed (or this is the very first render): activeEpisode may
+                // still hold a stale number from the OLD season, coincidentally valid in the new
+                // one too — not a meaningful position there. Restore the per-season persisted
+                // last-watched episode instead (existing behaviour), or just the first episode.
                 var saved = null;
                 try { saved = domain.selection.getSavedEpisode(movie); } catch (e2) {}
-                var focusNumber = firstNumber;
                 if (saved && saved.season === season && episodeRows[saved.episode]) focusNumber = saved.episode;
-                var node = episodeRows[focusNumber];
-                if (node && node[0] && node[0].offsetParent) {
-                    try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e3) {}
-                }
+            }
+            lastEpisodeGridSeason = season;
+            var node = episodeRows[focusNumber];
+            if (node && node[0] && node[0].offsetParent) {
+                try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e3) {}
             }
         }
 
@@ -377,7 +427,7 @@
                 var current = Lampa.Controller.enabled();
                 if (current && current.name === 'content') {
                     Lampa.Controller.collectionSet(scroll.render(true), toolbar);
-                    Lampa.Controller.collectionFocus(false, scroll.render(true));
+                    restoreFocus();
                 }
             } catch (e) {}
             // Lampa.Layer's own internal .layer--wheight sweep (what actually turns scroll.minus()'s
@@ -425,7 +475,7 @@
                 link: this,
                 toggle: function () {
                     Lampa.Controller.collectionSet(scroll.render(true), toolbar);
-                    Lampa.Controller.collectionFocus(false, scroll.render(true));
+                    restoreFocus();
                     removePosterFromNavigation();
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },

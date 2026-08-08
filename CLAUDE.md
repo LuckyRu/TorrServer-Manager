@@ -1002,6 +1002,46 @@ entry-point/build-config layer above all of them.
     'select'`, a genuine `.selectbox` in the DOM — not a lookalike), then called `back()` and
     confirmed focus correctly returns to `'content'` with the same candidate row still focused (no
     dead-focus regression of the kind documented earlier in this section for `Lampa.Select`).
+  - **Returning to the episode list — from the player, from closing a Filter/Select panel, or via
+    "← К списку серий" — used to always reset focus to the FIRST episode of the season**, reported
+    directly by the user ("захожу в сезон, пролистываю ниже... возвращаюсь назад. Меня всегда
+    сбрасывает на первую серию... список постоянный сброс на первую идет. Бесит.") — first suspected
+    as a wrong-episode-playback bug, but the user's own follow-up correction confirmed the actually
+    selected episode DOES play correctly (`pickSeriesFile`'s episode-aware file scoring inside a
+    season pack works, real per-file names from a live-registered torrent carry explicit `S01 E0X`
+    markers — checked directly against a real torrent's `file_stats` on this project's own
+    TorrServer, not assumed); this was purely a focus-restoration bug in `ui/results-screen.js`.
+    Root cause: `Lampa.Controller.toggle(name)` (confirmed by reading `vendor/lampa-source/src/core/
+    controller.js`) unconditionally re-runs the controller's own `toggle()` callback on every call,
+    even when that controller is already active — and this screen's own `'content'` controller's
+    `toggle()`, plus `refreshGrid()`'s direct fallback, both called the blind
+    `Controller.collectionFocus(false, scroll.render(true))` ("focus the first row"), correct only
+    for the very first entry into the screen. Every later trigger of `Controller.toggle('content')`
+    — the player's own `Lampa.Player.callback` returning here, `restoreContentFocus()` after closing
+    Lampa.Filter's Select overlay, `refreshGrid()` running while 'content' was already active — reset
+    the same way, with nothing to restore the real position afterward (unlike the picker's own
+    close path, `hidePickerDom`, which already explicitly restored focus via `activeEpisode` — the
+    one path that was NOT broken). Fixed with two complementary mechanisms, since the two situations
+    differ in whether the DOM rows survive: **(1) `lastFocusedNode`** — a plain UI-local variable
+    (not domain state) set by `row()`'s own `hover:focus` handler for every row (episode AND
+    candidate), consumed by a new `restoreFocus()` helper that both `refreshGrid()` and `'content'`'s
+    `toggle()` now call instead of the blind focus-first — covers every case where the grid's DOM
+    nodes are untouched (return from the player, closing a Filter panel), validated live: focused
+    episode 8 via real `Navigator.move('down')` presses (not a synthetic focus call), called
+    `Lampa.Controller.toggle('content')` directly (the exact call the player's own callback makes),
+    confirmed focus stayed on episode 8. **(2) `lastEpisodeGridSeason`** — `renderEpisodes` rebuilds
+    every row as a fresh DOM node on every call (season switch, or "← К списку серий"), so
+    `lastFocusedNode` can't help there; compares the season being rendered against the season of the
+    PREVIOUS `renderEpisodes` call — same season (rebuilt for another reason, DOM replaced but the
+    episode NUMBERS are the same) restores to `state.activeEpisode` (the reactive last-focused-episode
+    tracker every row already dispatches via its own `hover:focus`, previously only used to open/
+    restore the side picker); season actually changed falls back to the existing per-season
+    `getSavedEpisode` restoration (unchanged) so a stale `activeEpisode` number from the OLD season
+    can't be misread as a meaningful position in the new one. Verified live: switching Season 2 →
+    Season 3 correctly landed on episode 1 (not a coincidentally-numbered leftover), switching back
+    to Season 2 correctly used the existing per-movie last-episode memory (unaffected, pre-existing
+    behaviour, not per-season — a separate, not-yet-raised design question, see `readSeasonDefault`'s
+    own comment on the picker's "Выбрано" marker being per-season for the same reason).
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
