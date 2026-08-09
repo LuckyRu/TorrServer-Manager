@@ -27,8 +27,8 @@
         var requery = options.requery;
         var ensureSeasonLoaded = options.ensureSeasonLoaded;
         // Shared lifecycle scope (shared/core/lifecycle.js, results-domain.js) — the watcher
-        // subscription and the pending-retry timer below register into it instead of each keeping
-        // its own destroy()-method bookkeeping (see the scope's own header comment for why: two
+        // subscription below registers into it instead of each interactor keeping its own
+        // destroy()-method bookkeeping (see the scope's own header comment for why: two
         // separately hand-written destroy() methods across this file and episodes-interactor.js
         // were exactly the kind of thing a future timer is one missed edit away from outliving its
         // screen — this happened for real, twice).
@@ -41,9 +41,19 @@
         // just below).
         var pendingClick = null; // { season, episode, pickerOnly }
 
-        // Pending click while the whole-work pool is still loading: replay it once ready.
+        // Pending click while the progressive whole-work pool has no matching candidate yet.
+        // Re-evaluated on EVERY pool growth, not only once poolStatus becomes ready: `loading`
+        // means slower trackers are still running, not that already-merged results are unusable.
         var pendingSelection = null;
-        var pendingRetryTimer = null;
+        var replayingPendingSelection = false;
+
+        // Movie candidate lists are the movie screen's primary content. Keep the presentation
+        // intent alive while the pool grows so the first fast tracker can open the list and later
+        // tracker responses can extend it without waiting for the whole job to settle.
+        // `{autoPlaySaved, allowConfidenceAutoplay}` preserves the two existing policies:
+        // initial entry only auto-plays an explicitly saved default; a non-picker explicit select
+        // may auto-play a confident result; manual search (`pickerOnly`) always shows the list.
+        var moviePresentation = null;
 
         // ---------- reactive watcher: replaces the old callback-threading pattern ----------
         //
@@ -61,9 +71,8 @@
         // minute at most — see store.js's own header comment) since both checks below are a handful
         // of property reads, `ensureSeasonLoaded` itself is idempotent, and this only matters at all
         // while a picker is open or a click is pending.
-        scope.subscribe(store, function () {
+        scope.subscribe(store, function (state, previous) {
             if (isDestroyed()) return;
-            var state = store.get();
             // Picker open with nothing to show for its episode yet — make sure that season's lazy
             // fetch is running. Safe to call unconditionally: ensureSeasonLoaded no-ops once it's
             // already loading or settled.
@@ -81,28 +90,32 @@
                 pendingClick = null;
                 if (state.season === pending.season) selectEpisode(pending.episode, pending.pickerOnly);
             }
-        });
 
-        function schedulePendingRetry() {
-            if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
-            pendingRetryTimer = scope.setTimeout(function () {
-                var state = store.get();
-                if (pendingSelection && (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
-                    var pending = pendingSelection;
-                    pendingSelection = null;
-                    // startMovie() and showMoviePool() are different selection policies (startMovie
-                    // only auto-plays a persisted default, never on confidence alone; showMoviePool
-                    // can auto-play via finishSelection's normal confidence check unless pickerOnly
-                    // forces the list) — 'pickerOnly' in pending distinguishes which one this deferred
-                    // intent actually came from, so replaying it doesn't silently switch policy.
-                    if (pending.movie && 'pickerOnly' in pending) showMoviePool(pending.pickerOnly);
-                    else if (pending.movie) startMovie();
-                    else selectEpisode(pending.episode, pending.pickerOnly);
-                } else if (pendingSelection) {
-                    schedulePendingRetry();
+            // A series click made before its candidate arrived. Pool updates are the wake-up
+            // signal; a 400ms polling timer used to wait for poolStatus=ready and therefore ignored
+            // perfectly usable results until the slowest tracker finished. Consume before replay
+            // to make nested store.patch calls re-entrancy-safe; selectEpisode puts it back only if
+            // the new pool still has no match and is still settling. A changed season/query drops
+            // the stale intent instead of launching it in a different context.
+            if (pendingSelection && (state.pool !== previous.pool || state.poolStatus !== previous.poolStatus)) {
+                var selection = pendingSelection;
+                pendingSelection = null;
+                if (state.season === selection.season && state.poolGeneration === selection.poolGeneration) {
+                    replayingPendingSelection = true;
+                    try { selectEpisode(selection.episode, selection.pickerOnly); }
+                    finally { replayingPendingSelection = false; }
                 }
-            }, 400);
-        }
+            }
+
+            // The movie list is a live projection of the progressively growing pool. Also refresh
+            // on filters: storing one snapshot of candidates made a movie list stale as soon as a
+            // later tracker or a user filter changed the source pool.
+            if (!hasSeasons && moviePresentation && (
+                state.pool !== previous.pool || state.poolStatus !== previous.poolStatus ||
+                state.voiceType !== previous.voiceType || state.resolution !== previous.resolution ||
+                state.bitrate !== previous.bitrate
+            )) syncMoviePresentation();
+        });
 
         // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Only the
         // movie/customQuery flows still use it; a series click now plays immediately (see below).
@@ -201,31 +214,44 @@
         // valid candidate; otherwise show the torrent list so the user can actually pick one (the
         // old unconditional auto-play made it impossible to choose on first entry — found by the
         // architect). Reuses the same candidates/persistence/picker primitives as the series flow.
-        function startMovie() {
-            log('selection', 'startMovie()');
+        function syncMoviePresentation() {
+            if (!moviePresentation || isDestroyed()) return;
             var state = store.get();
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                pendingSelection = { season: 0, episode: 0, movie: true };
-                notify('Раздачи ещё загружаются…');
-                schedulePendingRetry();
-                return;
-            }
             var target = buildMovieTarget();
             var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
-            if (!candidates.length) {
-                log('selection', 'startMovie: подходящих раздач не найдено в пуле' + (state.poolStatus === 'error' ? ' (ошибка поиска)' : ''));
-                store.patch({ stage: 'message', message: emptyPoolMessage(function () { startMovie(); }) });
-                return;
-            }
             var saved = readSeasonDefault(object.movie, 0);
-            var chosen = findSavedDefault(candidates, saved);
+            var chosen = moviePresentation.autoPlaySaved ? findSavedDefault(candidates, saved) : null;
             if (chosen) {
                 log('selection', 'startMovie: автозапуск сохранённого дефолта — ' + chosen.title);
+                moviePresentation = null;
                 startDownload(chosen, target);
                 return;
             }
-            log('selection', 'startMovie: показываю список торрентов (' + candidates.length + ' кандидатов), дефолта нет');
-            store.patch({ stage: 'candidates', candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: false } });
+            if (candidates.length && moviePresentation.allowConfidenceAutoplay && isConfidentMatch(candidates[0], candidates[1])) {
+                moviePresentation = null;
+                startDownload(candidates[0], target);
+                return;
+            }
+            if (candidates.length) {
+                log('selection', 'movie pool: показываю ' + candidates.length + ' кандидатов, poolStatus=' + state.poolStatus);
+                store.patch({ stage: 'candidates', candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: false } });
+                return;
+            }
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                // results-domain installs the initial message before search starts; repeat the
+                // shape here for requery/manual-search paths so an empty progressive pool is never
+                // rendered as a blank candidate list.
+                store.patch({ stage: 'message', message: { text: 'Ищем раздачи по всем трекерам…', retry: null } });
+                return;
+            }
+            log('selection', 'movie pool: подходящих раздач не найдено' + (state.poolStatus === 'error' ? ' (ошибка поиска)' : ''));
+            store.patch({ stage: 'message', message: emptyPoolMessage(function () { syncMoviePresentation(); }) });
+        }
+
+        function startMovie() {
+            log('selection', 'startMovie()');
+            moviePresentation = { autoPlaySaved: true, allowConfidenceAutoplay: false };
+            syncMoviePresentation();
         }
 
         function buildMovieTarget() {
@@ -249,26 +275,8 @@
         // every manual-name movie search cost two full Jackett round trips for the same query
         // (found in review).
         function showMoviePool(pickerOnly) {
-            var state = store.get();
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                // startMovie() (above) already schedules a retry for this exact condition and
-                // message; this call site didn't, silently leaving the screen stuck if the pool
-                // hadn't finished loading yet when a manual name search landed here (found during the
-                // generation-guard migration — the two functions handle the same precondition
-                // differently for no principled reason).
-                pendingSelection = { season: 0, episode: 0, movie: true, pickerOnly: pickerOnly };
-                notify('Раздачи ещё загружаются…');
-                schedulePendingRetry();
-                return;
-            }
-            var target = buildMovieTarget();
-            var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
-            if (!candidates.length) {
-                store.patch({ stage: 'message', message: emptyPoolMessage(function () { showMoviePool(pickerOnly); }) });
-                return;
-            }
-            log('selection', 'showMoviePool: ' + candidates.length + ' кандидатов, pickerOnly=' + !!pickerOnly);
-            finishSelection(candidates, target, pickerOnly);
+            moviePresentation = { autoPlaySaved: false, allowConfidenceAutoplay: !pickerOnly };
+            syncMoviePresentation();
         }
 
         function selectEpisode(episode, pickerOnly) {
@@ -288,6 +296,9 @@
                 searchText: state.customQuery || searchQueryText(target)
             });
             saveLastEpisode(object.movie, state.season, episode);
+            // A newer explicit click always supersedes older pending pool/season intents.
+            pendingSelection = null;
+            pendingClick = null;
 
             // Explicit manual query — the ONLY network search left.
             if (state.customQuery) { freshSearch(target, pickerOnly); return; }
@@ -295,14 +306,9 @@
             // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
             if (!hasSeasons) { showMoviePool(pickerOnly); return; }
 
-            // Series click = PLAY NOW: the saved season default if it's still a valid candidate,
-            // otherwise the top-ranked one. No full-screen candidate list anymore.
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                pendingSelection = { season: state.season, episode: episode, pickerOnly: pickerOnly };
-                notify('Раздачи ещё загружаются…');
-                schedulePendingRetry();
-                return;
-            }
+            // Series click = PLAY NOW from whatever the progressive pool already contains. The
+            // pool's settlement status is deliberately checked only AFTER candidates: `loading`
+            // merely says some trackers are still pending, not that merged candidates are invalid.
             var candidates = selectCandidatesForEpisode(object, state, episode);
             if (candidates.length) {
                 var saved = readSeasonDefault(object.movie, state.season);
@@ -314,6 +320,14 @@
                 // silently always "лучший по рейтингу" regardless of which one actually launched.
                 log('selection', 'selectEpisode(' + episode + '): запуск — ' + chosen.title + (savedMatch ? ' (сохранённый дефолт)' : ' (лучший по рейтингу)'));
                 startDownload(chosen, target);
+                return;
+            }
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                pendingSelection = {
+                    season: state.season, episode: episode, pickerOnly: pickerOnly,
+                    poolGeneration: state.poolGeneration
+                };
+                if (!replayingPendingSelection) notify('Раздачи ещё загружаются…');
                 return;
             }
             // Zero candidates. A season already settled with nothing for it → dead end.
@@ -357,6 +371,8 @@
 
         function playPickerCandidate(item, target) {
             log('selection', 'playPickerCandidate: ' + item.title + ' (эпизод ' + target.episode + ', сезон ' + target.season + ')');
+            pendingSelection = null;
+            pendingClick = null;
             saveSeasonDefault(object.movie, target.season, item);
             store.patch({ picker: { open: false, episode: 0 } });
             startDownload(item, target);
@@ -440,6 +456,9 @@
             // customQuery was already active) belongs to the previous query context and must be
             // discarded, not painted over the new one (found in review).
             var current = store.get();
+            pendingSelection = null;
+            pendingClick = null;
+            moviePresentation = null;
             store.patch({ customQuery: value, searchText: value, searchGeneration: current.searchGeneration + 1, searchStatus: 'idle' });
             if (hasSeasons) {
                 // Stay on the episode list (it's TMDB data, independent of the query) and just
@@ -453,7 +472,13 @@
                 // auto-play while the user is actively searching). showMoviePool reads the pool
                 // requery() just populated directly — it must NOT go through selectEpisode, whose
                 // customQuery branch would fire a second, identical network search on top of it.
-                if (requery) requery(function () { showMoviePool(true); });
+                if (requery) {
+                    requery();
+                    // requery() synchronously resets the pool and starts its progressive job;
+                    // register the presentation intent immediately so the first indexer response
+                    // can render, instead of attaching a callback that fires only on final onDone.
+                    showMoviePool(true);
+                }
             }
         }
 
@@ -462,6 +487,9 @@
             // for this season (0 for movies), so the next entry auto-plays it (found by the architect:
             // movie picks from the full list were never remembered before).
             log('selection', 'playCandidate: ' + item.title + ' (сезон ' + (target.season || 0) + ')');
+            moviePresentation = null;
+            pendingSelection = null;
+            pendingClick = null;
             saveSeasonDefault(object.movie, target.season || 0, item);
             startDownload(item, target);
         }

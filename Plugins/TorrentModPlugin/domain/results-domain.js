@@ -55,21 +55,23 @@
             log('domain', 'start(), hasSeasons=' + hasSeasons + ', movie.id=' + movie.id);
             if (hasSeasons) episodes.start();
             else {
-                // Movie: load the whole-work pool, then run the movie flow (auto-play a persisted
-                // pick if any, otherwise show the torrent list). A movie has no episode list to
-                // show meanwhile — until loadAllTorrents resolves, `stage` never leaves its initial
-                // default and the grid stays completely empty, with nothing at all telling the user
-                // a search against every Jackett indexer is even running (can legitimately take
+                // Movie: start the whole-work pool and the movie presentation together. A movie has
+                // no episode list to show meanwhile, and the pool is progressive: the first useful
+                // indexer response must open the candidate list immediately while slower trackers
+                // keep enriching it in the background. Waiting for loadAllTorrents's final callback
+                // here used to discard that progressive property and kept the grid empty until the
+                // slowest tracker completed. Before the first result there is still an explicit
+                // message, so nothing leaves the user guessing whether a search against every
+                // Jackett indexer is even running (it can legitimately take
                 // ~40s on a genuinely cold search — reported directly by the user: "понятная
                 // индикация поиска... очень важна для первых холодных поисков"). Set an explicit,
-                // non-retryable loading message before kicking the search off; startMovie() (called
-                // once loadAllTorrents resolves) always replaces it with the real candidate list or
-                // its own "Раздач не нашлось" message, so this is only ever visible for the
-                // duration of the search itself.
+                // non-retryable loading message before kicking the search off; startMovie() keeps a
+                // reactive presentation intent and replaces it as soon as `pool` gains a candidate.
                 store.patch({ stage: 'message', message: { text: 'Ищем раздачи по всем трекерам…', retry: null } });
                 var runtime = parseInt(movie.runtime, 10) || 0;
                 if (runtime) store.patch({ avgRuntimeMinutes: runtime });
-                episodes.loadAllTorrents(function () { selection.startMovie(); });
+                episodes.loadAllTorrents();
+                selection.startMovie();
             }
         }
 

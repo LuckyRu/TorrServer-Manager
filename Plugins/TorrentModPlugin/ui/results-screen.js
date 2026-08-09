@@ -797,8 +797,16 @@
         // via the already-loaded state.episodesCache — no refetch); for movies it *is* the primary
         // content, there being no episode list to return to.
         function renderCandidateList(candidates, target, canReturnToEpisodeList) {
+            // The movie pool grows while slower trackers are still running. Preserve focus across
+            // those progressive list rebuilds by stable candidate identity; otherwise every new
+            // tracker response removes the focused DOM node and silently jumps the cursor to row 1.
+            var focusedCandidateId = null;
+            if (lastFocusedNode && lastFocusedNode[0] && $.contains(grid[0], lastFocusedNode[0])) {
+                focusedCandidateId = lastFocusedNode.attr('data-candidate-id') || null;
+            }
             grid.empty();
             episodeRows = {};
+            var candidateRows = {};
             if (canReturnToEpisodeList) {
                 var backNode = row('← К списку серий', '');
                 backNode.on('hover:enter', function () { domain.episodes.showEpisodeList(); });
@@ -807,10 +815,14 @@
             candidates.forEach(function (item) {
                 var node = row(item.title, candidateSubtitleText(item));
                 node.addClass('torrent-mod-candidate');
+                var id = candidateIdentity(item);
+                node.attr('data-candidate-id', id);
                 node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
                 node.on('hover:enter', function () { domain.selection.playCandidate(item, target); });
                 grid.append(node);
+                candidateRows[id] = node;
             });
+            lastFocusedNode = (focusedCandidateId && candidateRows[focusedCandidateId]) || null;
             refreshGrid();
             // Movies have no episode list: the candidate list IS the primary content, so give it the
             // same initial focus treatment as the episode list (refreshGrid skips collectionSet when

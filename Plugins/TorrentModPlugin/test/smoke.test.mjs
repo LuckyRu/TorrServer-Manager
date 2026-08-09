@@ -9,6 +9,8 @@ import { createRunner } from './helpers/test-runner.mjs';
 import { flushMicrotasks } from './helpers/mock-lampa.mjs';
 import { createResultsDomain } from '../domain/results-domain.js';
 import { selectPickerData, selectPoolIndexers } from '../domain/results-selectors.js';
+import { parseSeriesRelease } from '../search/series-release-parsing.js';
+import { parseMovieRelease } from '../search/movie-release-parsing.js';
 
 const runner = createRunner();
 
@@ -24,6 +26,20 @@ function jackettRaw(title, seeders, peers, hash) {
         Title: title, Tracker: 'RuTracker', Size: 2500000000, Seeders: seeders, Peers: peers,
         MagnetUri: 'magnet:?xt=urn:btih:' + hash,
         PublishDate: '2026-08-01T00:00:00Z'
+    };
+}
+
+function mappedCandidate(title, hash, mode) {
+    return {
+        title: title,
+        tracker: 'fast',
+        size: 2500000000,
+        seeders: 12,
+        peers: 6,
+        publishedAt: Date.now(),
+        magnet: 'magnet:?xt=urn:btih:' + hash,
+        link: '',
+        release: mode === 'movie' ? parseMovieRelease(title) : parseSeriesRelease(title)
     };
 }
 
@@ -104,6 +120,57 @@ runner.test('сериал: start → пул → смена сезона → фи
     if (requeried.stage !== 'episodes') throw new Error('сериал должен остаться на сериях, stage=' + requeried.stage);
 });
 
+runner.test('сериал: кандидат из частичного пула запускается, пока остальные трекеры ещё loading', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
+    });
+    // Держим реальный progressive job открытым; готовый ответ быстрого трекера моделируется тем
+    // же store.patch, который loadAllTorrents делает в onIndexerResult.
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] }, 200);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+    domain.store.patch({
+        pool: [mappedCandidate('Футурама / Futurama S02E07 1080p WEB-DL', 'partial-series', 'series')]
+    });
+    if (domain.store.get().poolStatus !== 'loading') throw new Error('тест должен оставлять медленные трекеры loading');
+
+    domain.selection.selectEpisode(7);
+    if (!globalThis.__isPreparationShellMounted()) throw new Error('частичный готовый пул не запустил серию сразу');
+
+    globalThis.__invokeControllerBack();
+    domain.destroy();
+});
+
+runner.test('сериал: клик до первого результата просыпается на росте пула, не на завершении поиска', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] }, 200);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+    domain.selection.selectEpisode(7);
+    if (globalThis.__isPreparationShellMounted()) throw new Error('серия запустилась без кандидата');
+
+    domain.store.patch({
+        pool: [mappedCandidate('Футурама / Futurama S02E07 1080p WEB-DL', 'first-series', 'series')]
+    });
+    if (domain.store.get().poolStatus !== 'loading') throw new Error('поиск неожиданно завершился до проверки');
+    if (!globalThis.__isPreparationShellMounted()) throw new Error('pending-клик не проснулся на первом кандидате');
+
+    globalThis.__invokeControllerBack();
+    domain.destroy();
+});
+
 runner.test('фильм: вход → список торрентов (без автоплея), выбор сохраняется как дефолт', async () => {
     globalThis.__clearReguest();
     globalThis.__clearStorage();
@@ -140,6 +207,38 @@ runner.test('фильм: вход → список торрентов (без а
     await flushMicrotasks();
     const requeried = domain.store.get();
     if (requeried.stage !== 'candidates') throw new Error('после смены названия фильм должен показать кандидатов');
+});
+
+runner.test('фильм: список появляется и растёт до завершения всех трекеров', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] }, 200);
+
+    const domain = createResultsDomain({ object: { movie: movie, season: 0 }, movie: movie, hasSeasons: false });
+    domain.start();
+    if (domain.store.get().stage !== 'message') throw new Error('до первого кандидата нужен loading message');
+
+    const first = mappedCandidate('Дюна / Dune (2024) 1080p WEB-DL', 'partial-movie-1', 'movie');
+    const second = mappedCandidate('Дюна / Dune (2024) 2160p Remux', 'partial-movie-2', 'movie');
+    domain.store.patch({ pool: [first] });
+    let state = domain.store.get();
+    if (state.poolStatus !== 'loading') throw new Error('тест должен оставлять медленные трекеры loading');
+    if (state.stage !== 'candidates' || !state.candidates || state.candidates.items.length !== 1) {
+        throw new Error('первый фильм не появился из частичного пула: ' + JSON.stringify(state.candidates));
+    }
+
+    domain.store.patch({ pool: [first, second] });
+    state = domain.store.get();
+    if (state.stage !== 'candidates' || state.candidates.items.length !== 2) {
+        throw new Error('список фильма не вырос со вторым tracker result');
+    }
+    domain.filters.setResolutionFilter('2160p');
+    state = domain.store.get();
+    if (state.candidates.items.length !== 1 || !/2160p/i.test(state.candidates.items[0].title)) {
+        throw new Error('progressive movie projection не обновилась после фильтра');
+    }
+    domain.destroy();
 });
 
 runner.test('фильм: вход с сохранённым дефолтом — автозапуск выбранного торрента', async () => {
