@@ -502,7 +502,15 @@
                     restoreFocus();
                     removePosterFromNavigation();
                 },
-                left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('explorer'); },
+                // Straight to the global menu, not 'explorer' — same reasoning `back` below already
+                // documents: the card's only .selector (the poster) is deliberately stripped by
+                // removePosterFromNavigation, so 'explorer' is a dead stop in this screen with
+                // nothing to focus. Explorer's own left handler goes straight to 'menu' too
+                // (confirmed by reading vendor/lampa-source/src/interaction/explorer.js), so this
+                // matches what a single Left already does one level up — landing on 'explorer'
+                // first just cost an extra press for zero benefit (reported directly by the user:
+                // "чтобы левое глобальное меню открылось надо 2 раза влево нажать из списка серий").
+                left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
                 right: function () {
                     // Right-arrow on an EPISODE row opens the side picker (series) — an episode row
                     // has no torrent info of its own yet, the picker is the only way to see
@@ -529,7 +537,9 @@
                     }
                     Navigator.move('right');
                 },
-                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('explorer'); },
+                // Same dead-end reasoning as `left` above — 'explorer' has nothing to focus in
+                // this screen, so skip straight to the menu instead of costing an extra press.
+                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('menu'); },
                 down: function () { Navigator.move('down'); },
                 // One press exits the screen (native torrents.js and Online Mod both close the
                 // Activity from the content controller directly) — routing through

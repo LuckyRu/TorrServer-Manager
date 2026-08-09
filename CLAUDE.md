@@ -1138,6 +1138,30 @@ entry-point/build-config layer above all of them.
     reload (`navigate`, not a simulated re-render), reopened the same series — season chip read
     "Сезон 2" and the focused row was genuinely `data-episode="5"`, with `localStorage` still
     intact and unclobbered afterward.
+  - **Left/Up from the episode list required TWO presses to reach Lampa's global sidebar menu**,
+    reported directly by the user right after the focus-persistence fixes above ("чтобы левое
+    глобальное меню открылось надо 2 раза влево нажать из списка серий"). Root cause: `'content'`'s
+    own `left`/`up` fallbacks (when there's nothing to move to spatially) routed to
+    `Controller.toggle('explorer')` — but this screen's own `removePosterFromNavigation()`
+    deliberately strips the ONE `.selector` element the Explorer card template has at all (the
+    poster, confirmed by reading `vendor/lampa-source/src/templates/explorer/main.js` — no other
+    focusable element exists in the card), so `'explorer'` is a genuine dead stop here with nothing
+    to land on, costing an extra press to escape either back to content or on to the actual menu.
+    This is the exact same bug class the `back` handler right below already documents having been
+    fixed for ("routing through toggle('explorer') first made Back require two presses... a dead
+    stop") — `left`/`up` were simply missed in that pass. Fixed by routing both straight to
+    `Controller.toggle('menu')` instead — matches `Lampa.Explorer`'s own `'explorer'` controller,
+    whose `left` handler already does exactly this (confirmed live in `interaction/explorer.js`:
+    `left: () => Controller.toggle('menu')`), so this only removes the now-pointless intermediate
+    stop, it doesn't invent new behavior. After this change `Controller.toggle('explorer')` is not
+    called anywhere in this screen's own code anymore — `'explorer'` still exists (Lampa's
+    `explorer.toggle()` activates it once at screen startup, before content takes over) but nothing
+    in the plugin ever routes back to it. Verified live: one `left()` call from a focused episode
+    row moved the controller straight from `'content'` to `'menu'` with real DOM focus landing on
+    the "Главная" menu item (not just the controller name); `right()` from there correctly returned
+    to `'content'` with focus restored on the previously-focused episode (confirming no regression
+    to the earlier focus-persistence fix); `up()` from the toolbar (top of the combined
+    collection) reached `'menu'` the same way.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
