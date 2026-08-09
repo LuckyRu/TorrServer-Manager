@@ -130,6 +130,19 @@
             } catch (e) { return null; }
         }
 
+        // Shared by startMovie/showMoviePool's zero-candidates branch: a genuinely FAILED
+        // whole-work search (Jackett 502/timeout) used to show the exact same "Раздач не нашлось"
+        // as a search that ran cleanly and found nothing — reported directly by the user testing
+        // this live. When it's the pool that actually failed (not just empty), offer a real retry
+        // via requery() (the same re-fetch searchWithQuery already uses) instead of a dead end.
+        function emptyPoolMessage(onRetryComplete) {
+            var state = store.get();
+            if (state.poolStatus === 'error') {
+                return { text: 'Не удалось получить раздачи — Jackett не ответил', retry: requery ? function () { requery(onRetryComplete); } : null };
+            }
+            return { text: 'Раздач не нашлось', retry: null };
+        }
+
         // MOVIE flow — a movie's primary content IS its torrents (no episode list). On entry:
         // auto-play ONLY a previously picked (persisted season-0 default) torrent if it's still a
         // valid candidate; otherwise show the torrent list so the user can actually pick one (the
@@ -147,8 +160,8 @@
             var target = buildMovieTarget();
             var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
             if (!candidates.length) {
-                log('selection', 'startMovie: подходящих раздач не найдено в пуле');
-                store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } });
+                log('selection', 'startMovie: подходящих раздач не найдено в пуле' + (state.poolStatus === 'error' ? ' (ошибка поиска)' : ''));
+                store.patch({ stage: 'message', message: emptyPoolMessage(function () { startMovie(); }) });
                 return;
             }
             var saved = readSeasonDefault(object.movie, 0);
@@ -197,7 +210,10 @@
             }
             var target = buildMovieTarget();
             var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
-            if (!candidates.length) { store.patch({ stage: 'message', message: { text: 'Раздач не нашлось' } }); return; }
+            if (!candidates.length) {
+                store.patch({ stage: 'message', message: emptyPoolMessage(function () { showMoviePool(pickerOnly); }) });
+                return;
+            }
             log('selection', 'showMoviePool: ' + candidates.length + ' кандидатов, pickerOnly=' + !!pickerOnly);
             finishSelection(candidates, target, pickerOnly);
         }

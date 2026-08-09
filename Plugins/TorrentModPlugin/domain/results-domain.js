@@ -49,7 +49,17 @@
             if (hasSeasons) episodes.start();
             else {
                 // Movie: load the whole-work pool, then run the movie flow (auto-play a persisted
-                // pick if any, otherwise show the torrent list).
+                // pick if any, otherwise show the torrent list). A movie has no episode list to
+                // show meanwhile — until loadAllTorrents resolves, `stage` never leaves its initial
+                // default and the grid stays completely empty, with nothing at all telling the user
+                // a search against every Jackett indexer is even running (can legitimately take
+                // ~40s on a genuinely cold search — reported directly by the user: "понятная
+                // индикация поиска... очень важна для первых холодных поисков"). Set an explicit,
+                // non-retryable loading message before kicking the search off; startMovie() (called
+                // once loadAllTorrents resolves) always replaces it with the real candidate list or
+                // its own "Раздач не нашлось" message, so this is only ever visible for the
+                // duration of the search itself.
+                store.patch({ stage: 'message', message: { text: 'Ищем раздачи по всем трекерам…', retry: null } });
                 var runtime = parseInt(movie.runtime, 10) || 0;
                 if (runtime) store.patch({ avgRuntimeMinutes: runtime });
                 episodes.loadAllTorrents(function () { selection.startMovie(); });

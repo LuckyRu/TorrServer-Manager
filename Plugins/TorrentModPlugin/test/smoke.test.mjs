@@ -463,4 +463,42 @@ runner.test('destroy() мид-флайт: поздний ответ после d
     if (stateAfter.pool !== null) throw new Error('pool не должен был заполниться после destroy()');
 });
 
+runner.test('крах после провала поиска: открытие панели после ошибки пула не уходит в бесконечную рекурсию', async () => {
+    // Реальный краш, пойманный пользователем вживую: RangeError "Maximum call stack size exceeded"
+    // при открытии боковой панели (right-arrow на серии) сразу после того, как основной поиск по
+    // всем трекерам провалился (Jackett 502/таймаут). Причина: ensureSeasonLoaded безусловно
+    // выходило через onComplete() при poolStatus !== 'ready' — включая 'error' — НИКОГДА не
+    // трогая seasonLoads[season], так что fillPicker → ensureSeasonLoaded → onComplete (=fillPicker
+    // снова) зацикливались синхронно без базового случая. Не мокаем /api/torrent-search вообще —
+    // необработанный URL в mock-Reguest вызывает fail-колбэк, тот же путь, что и реальная
+    // недоступность Jackett.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }, { episode_number: 2, name: 'Эпизод 2', runtime: 22 }]
+    });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    const afterPoolFail = domain.store.get();
+    if (afterPoolFail.poolStatus !== 'error') throw new Error('ожидал poolStatus=error, получил ' + afterPoolFail.poolStatus);
+
+    // right-arrow на серии 1 — тот самый пользовательский сценарий, приводивший к краху
+    domain.selection.setActiveEpisode(1);
+    domain.selection.openPicker();
+    await flushMicrotasks();
+    // /api/torrent-search всё ещё не замокан — ленивая дозагрузка сезона (ensureSeasonLoaded)
+    // тоже проваливается, но КОРРЕКТНО (без рекурсии), помечая сезон как 'error'
+    await new Promise((r) => setTimeout(r, 10));
+
+    const state = domain.store.get();
+    if (!state.seasonLoads || state.seasonLoads[2] !== 'error') {
+        throw new Error('ожидал seasonLoads[2]=error (без этого — риск рекурсии), получил ' + JSON.stringify(state.seasonLoads));
+    }
+    if (state.picker.status !== 'error') throw new Error('ожидал picker.status=error, получил ' + state.picker.status);
+});
+
 await runner.run();

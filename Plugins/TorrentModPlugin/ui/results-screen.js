@@ -21,7 +21,7 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
     import { candidateBadgeText, candidateSubtitleText, searchQueryText, candidateIdentity } from '../domain/results-core.js';
-    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges } from '../domain/results-selectors.js';
+    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText } from '../domain/results-selectors.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -428,6 +428,16 @@
                 var retryNode = row('Повторить', '');
                 retryNode.on('hover:enter', retry);
                 grid.append(retryNode);
+            } else {
+                // A pure informational message (no retry — e.g. the movie flow's own cold-search
+                // placeholder) used to leave the grid completely empty, with only the small dim
+                // status line at the very top of the screen saying anything at all — easy to miss
+                // entirely on a TV, and visually indistinguishable from the screen being broken
+                // (reported directly by the user: "понятная индикация поиска... очень важна для
+                // первых холодных поисков"). Reuses the picker panel's own empty-state class — same
+                // visual language already established for "nothing to show yet" elsewhere in this
+                // screen, not a new one-off style.
+                grid.append($('<div class="torrent-mod-picker__empty">' + escapeHtml(message) + '</div>'));
             }
             refreshGrid();
         }
@@ -667,7 +677,13 @@
                 refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));
             }
             if (state.searchText !== previous.searchText) setSearchText(state.searchText);
-            if (state.statusText !== previous.statusText) setStatus(state.statusText);
+            // selectStatusText derives the head line rather than reading state.statusText raw —
+            // the interactor-managed field is empty for the WHOLE-WORK POOL search specifically
+            // (it runs silently in the background by design), which used to leave the head line
+            // blank for however long that search took with nothing else on screen saying so either
+            // (see selectEpisodeBadges' own comment on the same underlying report).
+            var statusTextNow = selectStatusText(state);
+            if (statusTextNow !== selectStatusText(previous)) setStatus(statusTextNow);
             // Side picker panel: open/close on the flag, re-render its list when it fills or errors.
             // Closing is DOM-only here — domain.closePicker already patched open:false (this render
             // IS that patch's notification); calling closePicker again would re-enter render.

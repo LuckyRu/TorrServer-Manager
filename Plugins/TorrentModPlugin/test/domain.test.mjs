@@ -20,7 +20,7 @@ import {
 } from '../domain/results-core.js';
 import {
     selectBusy, selectFilterChipData, selectFilterItems, buildEpisodeTarget,
-    selectCandidatesForEpisode, selectEpisodeBadges
+    selectCandidatesForEpisode, selectEpisodeBadges, selectStatusText
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
@@ -180,6 +180,35 @@ runner.test('selectEpisodeBadges прокидывает seasonDefault в каж�
     const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
     const badges = selectEpisodeBadges({ movie: tvMovie }, state, saved);
     if (badges[7].indexOf(String(single.seeders)) < 0) throw new Error('серия 7 должна показывать saved-дефолт: ' + JSON.stringify(badges));
+});
+runner.test('selectEpisodeBadges: "поиск…" вместо пустой строки, пока пул/сезон грузятся', () => {
+    // Раньше пустой pool (или poolStatus:'loading') давал ПУСТОЙ бейдж — неотличимо от
+    // "ничего не искали" и "искали и не нашли". Первый холодный поиск против всех трекеров
+    // Jackett может идти ~40с — на это время бейдж обязан явно сказать "поиск…".
+    const loadingByNullPool = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: null }));
+    if (loadingByNullPool[7] !== 'поиск…') throw new Error('pool=null должен давать "поиск…": ' + JSON.stringify(loadingByNullPool));
+
+    const loadingByStatus = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading' }));
+    if (loadingByStatus[7] !== 'поиск…') throw new Error('poolStatus=loading должен давать "поиск…": ' + JSON.stringify(loadingByStatus));
+
+    const loadingBySeason = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { seasonLoads: { 2: 'loading' } }));
+    if (loadingBySeason[7] !== 'поиск…') throw new Error('seasonLoads[season]=loading должен давать "поиск…": ' + JSON.stringify(loadingBySeason));
+
+    // Пул реально готов и пуст (а не всё ещё грузится) — должно остаться настоящее
+    // "раздачи не найдены" от badgeText, не "поиск…".
+    const genuinelyEmpty = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: [] }));
+    if (genuinelyEmpty[7] !== 'раздачи не найдены') throw new Error('пустой готовый пул должен давать "раздачи не найдены": ' + JSON.stringify(genuinelyEmpty));
+});
+runner.test('selectStatusText: статус пула — fallback, не перебивает statusText интеракторов', () => {
+    if (selectStatusText(Object.assign({}, state, { statusText: 'Загрузка списка серий…', poolStatus: 'loading' })) !== 'Загрузка списка серий…') {
+        throw new Error('statusText интерактора должен побеждать');
+    }
+    if (selectStatusText(Object.assign({}, state, { statusText: '', poolStatus: 'loading' })) !== 'Ищем раздачи по всем трекерам…') {
+        throw new Error('fallback на poolStatus=loading не сработал');
+    }
+    if (selectStatusText(Object.assign({}, state, { statusText: '', poolStatus: 'ready' })) !== '') {
+        throw new Error('пустой statusText при готовом пуле должен остаться пустым');
+    }
 });
 runner.test('isConfidentMatch — высокий availability даёт уверенный матч', () => {
     const best = { _score: { availabilityScore: 18, value: 30 }, seeders: 12 };

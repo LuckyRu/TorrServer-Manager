@@ -1181,6 +1181,73 @@ entry-point/build-config layer above all of them.
     contents (Сбросить фильтр/Сезон/Перевод/Качество/Битрейт); back → controller `content` with
     focus correctly still on episode 1; right a third time → `torrent_mod_picker` again, confirming
     the cycle actually closes rather than landing somewhere new.
+  - **Clear search-state indication — badges/status text now distinguish "still searching",
+    "genuinely empty", and "search failed"; found alongside a real crash sharing the same root
+    cause.** Prompted directly by the user ("Понятная индикация поиска. Она очень важна для первых
+    холодных поисков") — investigated first, not guessed: before the whole-work pool ever resolves
+    (`state.pool === null`), every episode badge came back as an empty string (`selectEpisodeBadges`
+    returned `{}` outright) — visually indistinguishable from "haven't looked yet" on a screen whose
+    first cold search against every Jackett indexer can legitimately take ~40s (PluginHub's own 45s
+    `CancelAfter`), and for a MOVIE specifically the entire grid stayed blank the whole time (`stage`
+    never left its default until `loadAllTorrents` resolved, so `renderEpisodes`/`renderCandidateList`
+    /`showMessage` never ran at all). Fixed with a layered set of changes, all pure `results-selectors.js`
+    derivations over already-stored fields (matching this file's own established `selectBusy`
+    pattern) rather than new ad hoc stored flags:
+    - `selectEpisodeBadges` (`domain/results-selectors.js`) now returns `'поиск…'` per episode while
+      `!state.pool || poolStatus==='loading'` or this season's own lazy `ensureSeasonLoaded` fetch is
+      `'loading'` — `badgeText`'s real `'раздачи не найдены'` only shows once a search has actually
+      settled, never mid-flight.
+    - `selectStatusText` (new) derives the head status line: the interactor-managed `state.statusText`
+      (episode-list loading, manual search) always wins when set; the whole-work pool search has no
+      message of its own by design (it runs silently in the background per the season-pool docs, and
+      stomping the episode-list's own loading message the instant `loadAllTorrents` also starts would
+      just replace one loading message with another for no reason) — it only surfaces as a fallback,
+      `'Ищем раздачи по всем трекерам…'` while loading.
+    - `showMessage` (`ui/results-screen.js`) used to leave the grid completely empty for any
+      non-retryable message — the text only ever reached the small, `opacity:.7` head status line,
+      easy to miss entirely on a TV. Now appends a visible info block into the grid too, reusing the
+      picker panel's own `.torrent-mod-picker__empty` class (same "nothing to show yet" visual
+      language already established elsewhere on this screen, not a new one-off style). `results-domain.js`'s
+      movie `start()` uses this immediately, before `loadAllTorrents` even begins, so a movie's first
+      cold search shows an explicit message instead of a blank screen for the whole wait.
+    - **A genuinely FAILED search (Jackett 502/timeout) used to be silently indistinguishable from a
+      clean search that found nothing** — `loadAllTorrents`'s failure branch only ever logged a
+      `warn()`, setting `pool: []`/`poolStatus: 'error'` with zero user-facing signal. Now: an explicit
+      `notify()` toast fires the moment the FIRST whole-work search fails (the lazy per-season retry's
+      own failure stays silent as before — a narrower, expected-to-sometimes-fail path, not the
+      primary "did the search even work" signal); badges show `'ошибка поиска'` instead of the
+      misleading `'раздачи не найдены'` when `poolStatus`/this season's `seasonLoads` is `'error'`;
+      the movie flow's zero-candidates branch (`startMovie`/`showMoviePool`, both routed through a new
+      shared `emptyPoolMessage()` helper) now offers a real **"Повторить"** row wired to `requery()`
+      (the same re-fetch `searchWithQuery` already uses) instead of the same dead-end
+      `'Раздач не нашлось'` a truly empty result shows.
+    - **Found live while testing this exact path, not by inspection — a real, serious, pre-existing
+      crash sharing the identical root cause**: opening the side picker (right-arrow on an episode
+      row) right after the whole-work pool search failed threw
+      `RangeError: Maximum call stack size exceeded`. Root cause, confirmed live: `ensureSeasonLoaded`
+      (`domain/episodes-interactor.js`) unconditionally bailed out via its own `onComplete()` callback
+      whenever `poolStatus !== 'ready'` — including `'error'` — WITHOUT ever touching
+      `seasonLoads[season]`. Both of its callers (`fillPicker`'s and `selectEpisode`'s own lazy-load
+      retry) call `ensureSeasonLoaded(season, () => tryAgain())` expecting it to eventually either
+      populate candidates or mark the season `'ready'`/`'error'` so the retry has a base case — with
+      `poolStatus:'error'`, nothing about the state ever changed between calls, so
+      `fillPicker → ensureSeasonLoaded → onComplete(=fillPicker) → …` recursed synchronously forever.
+      Fixed by only bailing for the genuinely not-yet-settled states (`'idle'`/`'loading'`) —
+      `'error'` is a SETTLED state with a well-defined (empty) pool array, and a narrower single-season
+      query is also a legitimate, independently-useful retry on its own merits (the aggregate query
+      timing out doesn't guarantee a smaller one will too), not a reason to skip the attempt entirely.
+      New `test/smoke.test.mjs` case reproduces the exact live sequence (whole-work search fails →
+      `openPicker()` on a focused episode) and asserts it resolves to `seasonLoads[season]==='error'`
+      and `picker.status==='error'` without throwing — this is the one regression test in this whole
+      section that would have caught a real crash, not just a display/wording gap.
+    - Verified live end to end, the exact reported scenario, via a `Lampa.Reguest` constructor-wrapper
+      (patching `.prototype.native` directly turned out not to work — this build's own `native` is set
+      as an instance property inside the constructor, not the prototype, confirmed by trial) forcing
+      `/api/torrent-search` to fail: badges read `'ошибка поиска'` and the head line read
+      `'Не удалось получить раздачи — Jackett не ответил'`; pressing right on episode 1 opened the
+      picker with **no crash** (confirmed by wrapping the call in try/catch and checking for a thrown
+      error, not just "the page didn't visibly break"); for a movie, the same failure produced a
+      `'Повторить'` row whose click correctly re-searched and recovered to 15 real candidates.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

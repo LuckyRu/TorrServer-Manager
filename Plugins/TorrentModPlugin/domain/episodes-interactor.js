@@ -13,7 +13,7 @@
     import { fetchSeason, episodeCounts } from '../metadata/tmdb.js';
     import { searchMovieTorrents } from '../search/movie-search.js';
     import { searchSeriesTorrents } from '../search/series-search.js';
-    import { compact } from '../shared/utils.js';
+    import { compact, notify } from '../shared/utils.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
     import { log, warn } from '../shared/core/log.js';
@@ -117,8 +117,22 @@
                     log('episodes', 'loadAllTorrents отброшен как устаревший, generation=' + generation);
                     return;
                 }
-                if (response.failed) warn('episodes', 'loadAllTorrents: поиск не удался');
-                else log('episodes', 'loadAllTorrents успех, раздач в пуле=' + response.results.length);
+                // A silent warn() log used to be the ONLY signal a failed whole-work search ever
+                // produced — pool just became [] and poolStatus 'error', visually identical to a
+                // search that genuinely ran and found nothing (badges/messages downstream couldn't
+                // tell the two apart either, see their own comments). Reported directly by the
+                // user testing this exact path live: a Jackett 502/timeout on the aggregate
+                // all-indexers query left them with no idea anything had gone wrong at all. An
+                // explicit toast the moment the FIRST-ever whole-work search fails is cheap and
+                // immediate — the lazy per-season retry (ensureSeasonLoaded) stays silent on its
+                // own failure as before, that one's a narrower, expected-to-sometimes-fail path,
+                // not the primary "did the search even work" signal.
+                if (response.failed) {
+                    warn('episodes', 'loadAllTorrents: поиск не удался');
+                    notify('Не удалось получить раздачи — проверьте Jackett или повторите позже');
+                } else {
+                    log('episodes', 'loadAllTorrents успех, раздач в пуле=' + response.results.length);
+                }
                 store.patch({
                     pool: response.failed ? [] : response.results,
                     poolStatus: response.failed ? 'error' : 'ready'
@@ -161,7 +175,24 @@
         function ensureSeasonLoaded(season, onComplete) {
             var state = store.get();
             if (!hasSeasons || state.customQuery) { if (typeof onComplete === 'function') onComplete(); return; }
-            if (state.poolStatus !== 'ready') { if (typeof onComplete === 'function') onComplete(); return; }
+            // Only bail for the genuinely NOT-YET-SETTLED states — 'idle'/'loading' — where there's
+            // nothing sensible to check zero-candidates against yet and the caller (openPicker
+            // already defers via schedulePendingRetry while poolStatus is loading/idle) will retry
+            // once it resolves. 'error' is a SETTLED state with a well-defined (empty) pool array,
+            // not a reason to skip a narrower retry — a real, serious bug (not just a UX gap):
+            // bailing out here unconditionally, without ever touching seasonLoads[season], meant
+            // this function's own onComplete callback (always "try the exact same thing again" —
+            // fillPicker/selectEpisode's lazy-load retry) looped back into an identical call with
+            // nothing having changed, a tight *synchronous* recursion with no base case —
+            // confirmed live by the user hitting a real `RangeError: Maximum call stack size
+            // exceeded` crash from opening the side picker right after the whole-work pool search
+            // itself failed (a Jackett 502/timeout on the aggregate all-indexers query). A narrower
+            // single-season query is also a legitimate, independently-useful retry on its own
+            // merits — the aggregate query timing out doesn't guarantee a smaller one will too.
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+                if (typeof onComplete === 'function') onComplete();
+                return;
+            }
             var status = state.seasonLoads && state.seasonLoads[season];
             if (status === 'loading' || status === 'ready' || status === 'error') {
                 if (typeof onComplete === 'function') onComplete();

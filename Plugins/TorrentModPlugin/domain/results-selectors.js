@@ -61,12 +61,49 @@
     // Lampa.Storage, since this module stays framework-agnostic) is threaded through to badgeText
     // so every episode's badge reflects what a click would actually start playing, not just the
     // top-ranked candidate.
+    //
+    // Before the whole-work pool has ever resolved (state.pool === null) every badge used to come
+    // back as an empty string — visually indistinguishable from "haven't looked at this yet" and
+    // from "searched and found nothing", on a screen whose FIRST cold search against every Jackett
+    // indexer can legitimately take up to ~40s (see PluginHub's own 45s CancelAfter). Same problem,
+    // narrower: a season the pool came back empty for (ensureSeasonLoaded's own lazy per-season
+    // fetch) shows the identical blank state while that fetch is in flight. Both now show an
+    // explicit "поиск…" placeholder instead — reported directly by the user ("понятная индикация
+    // поиска... очень важна для первых холодных поисков"); once the real search resolves,
+    // badgeText's own existing "раздачи не найдены" text (genuinely empty result, not a race) takes
+    // back over exactly as before.
     export function selectEpisodeBadges(object, state, seasonDefault) {
-        if (!state.pool) return {};
+        var poolLoading = !state.pool || state.poolStatus === 'loading';
+        var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
+        // A genuinely FAILED search (Jackett 502/timeout on the aggregate query, or this season's
+        // own lazy per-season retry failing too) used to be visually identical to "searched
+        // cleanly, found nothing" — badgeText's own "раздачи не найдены" doesn't know the
+        // difference, it just sees an empty candidates array either way. Reported directly by the
+        // user testing this exact path live, alongside a real crash the same root cause enabled
+        // (see ensureSeasonLoaded's own comment) — badges now say so explicitly instead of quietly
+        // implying "confirmed empty".
+        var poolFailed = state.poolStatus === 'error';
+        var seasonFailed = !!(state.seasonLoads && state.seasonLoads[state.season] === 'error');
         var map = {};
         (state.episodesCache || []).forEach(function (episode) {
             var number = parseInt(episode.episode_number, 10);
-            map[number] = badgeText(selectCandidatesForEpisode(object, state, number), seasonDefault);
+            if (poolLoading || seasonLoading) map[number] = 'поиск…';
+            else if (poolFailed || seasonFailed) map[number] = 'ошибка поиска';
+            else map[number] = badgeText(selectCandidatesForEpisode(object, state, number), seasonDefault);
         });
         return map;
+    }
+
+    // Head status line, derived: state.statusText (set directly by the episode-list/manual-search
+    // interactors — "Загрузка списка серий…", "Ищем <query>…") always wins when present; the
+    // whole-work pool search has no interactor-managed message of its own (deliberately — it runs
+    // silently in the background per season-pool design docs, and stomping the episode-list message
+    // the instant loadAllTorrents() also starts would just replace one loading message with another
+    // for no reason), so it only surfaces here, as a fallback shown once nothing more specific is
+    // already saying something.
+    export function selectStatusText(state) {
+        if (state.statusText) return state.statusText;
+        if (state.poolStatus === 'loading') return 'Ищем раздачи по всем трекерам…';
+        if (state.poolStatus === 'error') return 'Не удалось получить раздачи — Jackett не ответил';
+        return '';
     }
