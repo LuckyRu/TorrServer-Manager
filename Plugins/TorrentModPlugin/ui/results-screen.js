@@ -115,7 +115,25 @@
                     },
                     left: requestClosePicker,
                     back: requestClosePicker,
-                    right: function () { if (!viewDestroyed) Navigator.move('right'); },
+                    // Right again while already inside the torrents panel switches this same
+                    // right-hand side over to the Фильтр panel instead — asked for directly by the
+                    // user ("смена правой панели между фильтром и торрентами при навигации
+                    // вправо"), picking the "cycle on the episode row" design over unifying it with
+                    // the candidate row's own right-arrow (which already opens Фильтр directly,
+                    // since a candidate row has no picker of its own to cycle through). Closing the
+                    // picker first (requestClosePicker) restores focus to the episode row via the
+                    // existing activeEpisode-based mechanism before the chip is triggered, so the
+                    // Фильтр panel's own onBack/onSelect (which always calls
+                    // restoreContentFocus/toggle('content')) has a valid, correctly-focused
+                    // 'content' to return to — and once it closes, that same episode row's own
+                    // right-arrow (registerContentController's handler) reopens the torrents panel
+                    // again, completing the cycle without needing a third state here.
+                    right: function () {
+                        if (viewDestroyed) return;
+                        requestClosePicker();
+                        var filterChip = toolbar.find('.filter--filter');
+                        if (filterChip.length) filterChip.trigger('hover:enter');
+                    },
                     up: function () { if (!viewDestroyed) Navigator.move('up'); },
                     down: function () { if (!viewDestroyed) Navigator.move('down'); }
                 });

@@ -1162,6 +1162,25 @@ entry-point/build-config layer above all of them.
     to `'content'` with focus restored on the previously-focused episode (confirming no regression
     to the earlier focus-persistence fix); `up()` from the toolbar (top of the combined
     collection) reached `'menu'` the same way.
+  - **Right-arrow, pressed a second time while already inside the episode row's own torrents
+    picker, now switches that same slide-in panel over to the Фильтр panel** — requested directly
+    by the user ("смена правой панели между фильтром и торрентами при навигации вправо"), with the
+    exact cycle shape ("цикл на строке серии") picked from an explicit menu of options rather than
+    guessed: right on an episode row still opens the torrents picker unchanged; right again while
+    the picker is focused now closes it (`requestClosePicker()`, the same call `left`/`back` already
+    used) and immediately triggers the toolbar's `.filter--filter` chip — the identical mechanism
+    the CANDIDATE row's own right-arrow already used (see the earlier "right-arrow on a candidate
+    row" entry above), just invoked from inside the picker's controller instead. Deliberately not a
+    third explicit state to track: `requestClosePicker()` already restores focus to the episode row
+    via the existing `activeEpisode`-based mechanism before the chip fires, so once the Фильтр panel
+    itself closes (via its own Back/pick, `restoreContentFocus`/`toggle('content')`), that same
+    episode row's own right-arrow handler (`registerContentController`) reopens the torrents picker
+    on its own — the cycle closes itself for free instead of needing a second custom close-path.
+    Verified live end to end: right on episode 1 → controller `torrent_mod_picker` (torrents);
+    right again → controller `select` with a genuine `.selectbox` containing the real Фильтр
+    contents (Сбросить фильтр/Сезон/Перевод/Качество/Битрейт); back → controller `content` with
+    focus correctly still on episode 1; right a third time → `torrent_mod_picker` again, confirming
+    the cycle actually closes rather than landing somewhere new.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
