@@ -8,6 +8,7 @@ import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { flushMicrotasks } from './helpers/mock-lampa.mjs';
 import { createResultsDomain } from '../domain/results-domain.js';
+import { selectPickerData } from '../domain/results-selectors.js';
 
 const runner = createRunner();
 
@@ -24,6 +25,13 @@ function jackettRaw(title, seeders, peers, hash) {
         MagnetUri: 'magnet:?xt=urn:btih:' + hash,
         PublishDate: '2026-08-01T00:00:00Z'
     };
+}
+
+// The side picker's own items/status/target/selectedId are no longer stored (state.picker only
+// carries open/episode) — selectPickerData derives them fresh, same as the real View does.
+function pickerData(domain, object) {
+    const state = domain.store.get();
+    return selectPickerData(object, state, domain.selection.getSeasonDefault(state.season));
 }
 
 runner.test('сериал: start → пул → смена сезона → фильтр → клик серии → кандидаты', async () => {
@@ -311,7 +319,8 @@ runner.test('панель: openPicker строит кандидатов, playPic
         indexers: []
     });
 
-    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    const object = { movie: tvMovie, season: 2 };
+    const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
     domain.start();
     await flushMicrotasks();
 
@@ -319,11 +328,12 @@ runner.test('панель: openPicker строит кандидатов, playPic
     domain.selection.openPicker();
     await flushMicrotasks();
     let state = domain.store.get();
+    let picker = pickerData(domain, object);
     if (!state.picker.open) throw new Error('панель не открылась');
-    if (state.picker.items.length !== 2) throw new Error('ожидал 2 кандидата в панели, получил ' + state.picker.items.length);
+    if (picker.items.length !== 2) throw new Error('ожидал 2 кандидата в панели, получил ' + picker.items.length);
 
-    const chosen = state.picker.items[1]; // второй — выберем его вручную
-    domain.selection.playPickerCandidate(chosen, state.picker.target);
+    const chosen = picker.items[1]; // второй — выберем его вручную
+    domain.selection.playPickerCandidate(chosen, picker.target);
     state = domain.store.get();
     if (state.picker.open) throw new Error('панель не закрылась после выбора');
 
@@ -332,14 +342,15 @@ runner.test('панель: openPicker строит кандидатов, playPic
     if (!seasonDefault) throw new Error('дефолт сезона не сохранён: ' + JSON.stringify(saved));
     if (seasonDefault.title !== chosen.title) throw new Error('сохранён не тот кандидат');
 
-    // повторное открытие панели для той же серии — в state.picker.selectedId должен быть дефолт
+    // повторное открытие панели для той же серии — selectPickerData должен вернуть дефолт как selectedId
     domain.selection.setActiveEpisode(7);
     domain.selection.openPicker();
     await flushMicrotasks();
     state = domain.store.get();
+    picker = pickerData(domain, object);
     if (!state.picker.open) throw new Error('панель не открылась повторно');
-    if (state.picker.selectedId !== seasonDefault.id) {
-        throw new Error('selectedId в панели не совпадает с дефолтом: ' + state.picker.selectedId + ' vs ' + seasonDefault.id);
+    if (picker.selectedId !== seasonDefault.id) {
+        throw new Error('selectedId в панели не совпадает с дефолтом: ' + picker.selectedId + ' vs ' + seasonDefault.id);
     }
 
     // следующий клик по серии этого сезона использует сохранённый дефолт (его id — из пула)
@@ -479,7 +490,8 @@ runner.test('крах после провала поиска: открытие �
         episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }, { episode_number: 2, name: 'Эпизод 2', runtime: 22 }]
     });
 
-    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    const object = { movie: tvMovie, season: 2 };
+    const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
     domain.start();
     await flushMicrotasks();
 
@@ -490,7 +502,8 @@ runner.test('крах после провала поиска: открытие �
     domain.selection.setActiveEpisode(1);
     domain.selection.openPicker();
     await flushMicrotasks();
-    // /api/torrent-search всё ещё не замокан — ленивая дозагрузка сезона (ensureSeasonLoaded)
+    // /api/torrent-search всё ещё не замокан — ленивая дозагрузка сезона (ensureSeasonLoaded,
+    // теперь запускаемая реактивным watcher'ом внутри selection-interactor, а не самим openPicker)
     // тоже проваливается, но КОРРЕКТНО (без рекурсии), помечая сезон как 'error'
     await new Promise((r) => setTimeout(r, 10));
 
@@ -498,7 +511,8 @@ runner.test('крах после провала поиска: открытие �
     if (!state.seasonLoads || state.seasonLoads[2] !== 'error') {
         throw new Error('ожидал seasonLoads[2]=error (без этого — риск рекурсии), получил ' + JSON.stringify(state.seasonLoads));
     }
-    if (state.picker.status !== 'error') throw new Error('ожидал picker.status=error, получил ' + state.picker.status);
+    const picker = pickerData(domain, object);
+    if (picker.status !== 'error') throw new Error('ожидал picker.status=error, получил ' + picker.status);
 });
 
 runner.test('дедлок при переоткрытии панели для другой серии, пока идёт дозагрузка сезона', async () => {
@@ -527,7 +541,8 @@ runner.test('дедлок при переоткрытии панели для д
         indexers: []
     }, 60);
 
-    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    const object = { movie: tvMovie, season: 2 };
+    const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
     domain.start();
     await flushMicrotasks();
 
@@ -558,8 +573,9 @@ runner.test('дедлок при переоткрытии панели для д
     if (state.seasonLoads[2] !== 'ready') throw new Error('ожидал seasonLoads[2]=ready, получил ' + state.seasonLoads[2]);
     if (!state.picker.open) throw new Error('ожидал открытую панель');
     if (state.picker.episode !== 6) throw new Error('ожидал панель для серии 6, получил ' + state.picker.episode);
-    if (state.picker.status !== 'ready' || !state.picker.items.length) {
-        throw new Error('ожидал готовые кандидаты для серии 6, получил status=' + state.picker.status + ' items=' + state.picker.items.length);
+    const picker = pickerData(domain, object);
+    if (picker.status !== 'ready' || !picker.items.length) {
+        throw new Error('ожидал готовые кандидаты для серии 6, получил status=' + picker.status + ' items=' + picker.items.length);
     }
 });
 

@@ -27,14 +27,54 @@
         var requery = options.requery;
         var ensureSeasonLoaded = options.ensureSeasonLoaded;
 
-        // The LAST episode the user picked while a season fetch was in flight ('loading'). The
-        // fetch's own onComplete only knows the FIRST pick; replaying that one would ignore a
-        // newer pick made during loading (found in review). Reset once replayed.
-        var pendingEpisode = null;
+        // A click made while its season's lazy fetch was still in flight — replayed by the watcher
+        // below once seasonLoads[season] settles. The LAST such click wins (a newer pick made while
+        // still waiting overwrites an earlier one — replaying the first would ignore it). Not domain
+        // state: it's an internal retry intent, not renderable UI (same reasoning as pendingSelection
+        // just below).
+        var pendingClick = null; // { season, episode, pickerOnly }
 
         // Pending click while the whole-work pool is still loading: replay it once ready.
         var pendingSelection = null;
         var pendingRetryTimer = null;
+
+        // ---------- reactive watcher: replaces the old callback-threading pattern ----------
+        //
+        // ensureSeasonLoaded (episodes-interactor.js) is fire-and-forget now — it only ever writes
+        // seasonLoads[season]/pool to the store, it has no idea pickers or pending clicks exist.
+        // This is the ONE place that reacts to that write to decide what UI-facing thing, if any,
+        // needs to happen next — subscribing to state changes, not being threaded a "call me back"
+        // callback. This directly closes the bug class documented in CLAUDE.md (two separate
+        // `RangeError: Maximum call stack size exceeded` crashes, both from a caller's retry-via-
+        // callback assumption that "the callback fired" always means "something changed" — an
+        // assumption that broke whenever ensureSeasonLoaded's own early-bail branches fired the
+        // callback with nothing having changed). A task that only ever writes state, plus a watcher
+        // that only ever reacts to state, cannot recurse into itself — there is no callback chain
+        // left to loop. Cheap to run on every state change (a TV remote UI, a few transitions a
+        // minute at most — see store.js's own header comment) since both checks below are a handful
+        // of property reads, `ensureSeasonLoaded` itself is idempotent, and this only matters at all
+        // while a picker is open or a click is pending.
+        var unsubscribeWatcher = store.subscribe(function () {
+            if (isDestroyed()) return;
+            var state = store.get();
+            // Picker open with nothing to show for its episode yet — make sure that season's lazy
+            // fetch is running. Safe to call unconditionally: ensureSeasonLoaded no-ops once it's
+            // already loading or settled.
+            if (state.picker.open && hasSeasons && !state.customQuery && ensureSeasonLoaded &&
+                (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
+                var pickerCandidates = selectCandidatesForEpisode(object, state, state.picker.episode);
+                if (!pickerCandidates.length) ensureSeasonLoaded(state.season);
+            }
+            // A click made while its season was still loading — replay it now that it settled.
+            // Dropped (not replayed) if the user has since switched to a different season, same as
+            // the old pendingEpisode's own season check.
+            if (pendingClick && state.seasonLoads &&
+                (state.seasonLoads[pendingClick.season] === 'ready' || state.seasonLoads[pendingClick.season] === 'error')) {
+                var pending = pendingClick;
+                pendingClick = null;
+                if (state.season === pending.season) selectEpisode(pending.episode, pending.pickerOnly);
+            }
+        });
 
         function schedulePendingRetry() {
             if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
@@ -51,7 +91,6 @@
                     // intent actually came from, so replaying it doesn't silently switch policy.
                     if (pending.movie && 'pickerOnly' in pending) showMoviePool(pending.pickerOnly);
                     else if (pending.movie) startMovie();
-                    else if (pending.picker) openPicker(pending.episode);
                     else selectEpisode(pending.episode, pending.pickerOnly);
                 } else if (pendingSelection) {
                     schedulePendingRetry();
@@ -263,28 +302,17 @@
                 startDownload(chosen, target);
                 return;
             }
-            // Zero candidates → lazy season fetch → retry the click.
+            // Zero candidates. A season already settled with nothing for it → dead end.
             var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
-            if (loadStatus === 'loading') {
-                log('selection', 'selectEpisode(' + episode + '): дозагрузка сезона уже идёт, откладываю выбор');
-                pendingEpisode = { season: state.season, episode: episode, pickerOnly: pickerOnly };
-                notify('Ищем раздачи для сезона…');
-                return;
-            }
             if (loadStatus === 'ready' || loadStatus === 'error') { notify('Раздач не нашлось'); return; }
-            if (ensureSeasonLoaded) {
-                log('selection', 'selectEpisode(' + episode + '): в пуле пусто — запускаю дозагрузку сезона ' + state.season);
-                ensureSeasonLoaded(state.season, function () {
-                    var current = store.get();
-                    var pending = pendingEpisode;
-                    pendingEpisode = null;
-                    if (current.season !== state.season) return;
-                    var pick = pending || { episode: episode, pickerOnly: pickerOnly };
-                    selectEpisode(pick.episode, pick.pickerOnly);
-                });
-            } else {
-                notify('Раздач не нашлось');
-            }
+            // Not yet settled (undefined, or already 'loading' from an earlier click/picker open) —
+            // make sure the lazy fetch is running (ensureSeasonLoaded is idempotent, safe to call
+            // either way) and remember to replay this click once it does; the reactive watcher above
+            // does the replay, not a callback threaded through ensureSeasonLoaded itself.
+            log('selection', 'selectEpisode(' + episode + '): раздач в пуле нет для сезона ' + state.season + ', жду дозагрузки');
+            pendingClick = { season: state.season, episode: episode, pickerOnly: pickerOnly };
+            notify('Ищем раздачи для сезона…');
+            if (ensureSeasonLoaded) ensureSeasonLoaded(state.season);
         }
 
         // The episode currently under focus — dispatched by the view on row focus. This is the
@@ -300,110 +328,29 @@
         // Side picker panel: right-arrow on an episode row shows the candidate list for THAT episode
         // in a slide-in panel. The episode normally comes from reactive state (activeEpisode, set by
         // the row's hover:focus before the picker opens); an explicit `episode` argument is used by
-        // the deferred path (panel requested while the pool was still loading).
+        // the deferred path (panel requested while the pool was still loading). Its actual content
+        // (items/status/target/selectedId) is NOT computed here — selectPickerData
+        // (results-selectors.js) derives it fresh from state.pool/seasonLoads on every render, the
+        // same way selectEpisodeBadges already does for the row badges. This function's only job is
+        // recording the UI intent (open, for which episode); the watcher above independently makes
+        // sure that episode's season actually gets loaded if needed.
         function openPicker(episode) {
             var state = store.get();
             if (episode === undefined) episode = state.activeEpisode || state.lastEpisode || 0;
             log('selection', 'openPicker(' + episode + ')');
-            var target = {
-                movie: object.movie,
-                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
-                season: state.season,
-                episode: episode,
-                seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery
-            };
-            store.patch({ picker: { open: true, episode: episode, items: [], target: target, status: 'loading', selectedId: null } });
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                // Pool not ready yet — replay the picker once it is.
-                pendingSelection = { season: state.season, episode: episode, picker: true };
-                schedulePendingRetry();
-                return;
-            }
-            fillPicker(episode);
-        }
-
-        function fillPicker(episode) {
-            var state = store.get();
-            var candidates = selectCandidatesForEpisode(object, state, episode);
-            // The manually-chosen season default (persisted, if any) — the panel marks it so the
-            // user sees exactly which torrent a plain click will start.
-            var saved = readSeasonDefault(object.movie, state.season);
-            var selectedId = saved ? saved.id : null;
-            if (candidates.length) {
-                store.patch({
-                    picker: { open: true, episode: episode, items: candidates, target: buildPickerTarget(episode), status: 'ready', selectedId: selectedId }
-                });
-                return;
-            }
-            var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
-            if (loadStatus === 'ready' || loadStatus === 'error') {
-                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
-                return;
-            }
-            // Only ask for a lazy per-season fetch when it can actually do something: a series
-            // context with no customQuery override (ensureSeasonLoaded's own hasSeasons/customQuery
-            // bail is now a silent no-op with no eventual callback at all — see its own comment),
-            // and a SETTLED whole-work pool — openPicker already defers calling this function at
-            // all while the pool itself is loading/idle; this repeats that same check for the rare
-            // case this runs from ensureSeasonLoaded's own queued callback after a real async gap
-            // (e.g. a requery() landed in between). Any of these NOT holding used to still call
-            // ensureSeasonLoaded anyway, which bailed out with nothing changed and, via this
-            // function's own retry-on-callback shape, bounced straight back here — an unbounded
-            // *synchronous* recursion, crashed live twice (RangeError: Maximum call stack size
-            // exceeded) via two different bail branches. ensureSeasonLoaded is now safe against
-            // that by itself too (see its own comment), but a caller asking for something
-            // structurally impossible has the identical failure mode regardless of how well-behaved
-            // the callee is, so the ask itself is gated here as well — loadStatus 'loading' is the
-            // one case excluded from this gate, since that one DOES resolve on its own (queued).
-            if (loadStatus !== 'loading') {
-                var canLazyLoad = ensureSeasonLoaded && hasSeasons && !state.customQuery &&
-                    (state.poolStatus === 'ready' || state.poolStatus === 'error');
-                if (!canLazyLoad) {
-                    store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
-                    return;
-                }
-            }
-            ensureSeasonLoaded(state.season, function () {
-                // ensureSeasonLoaded now queues this callback (rather than firing it
-                // synchronously) whenever the season is already 'loading' from an earlier call —
-                // see its own comment. That means this callback can resolve well after the user
-                // closed the panel; re-opening it here would resurrect a picker the user no longer
-                // has on screen (found alongside the recursion fix above).
-                if (!store.get().picker.open) return;
-                fillPicker(episode);
-            });
-        }
-
-        function buildPickerTarget(episode) {
-            var state = store.get();
-            return {
-                movie: object.movie,
-                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
-                season: state.season,
-                episode: episode,
-                seasonEpisodeCount: state.seasonEpisodeCount,
-                avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery
-            };
+            store.patch({ picker: { open: true, episode: episode } });
         }
 
         function playPickerCandidate(item, target) {
             log('selection', 'playPickerCandidate: ' + item.title + ' (эпизод ' + target.episode + ', сезон ' + target.season + ')');
             saveSeasonDefault(object.movie, target.season, item);
-            store.patch({ picker: { open: false, episode: target.episode, items: [], target: null, status: 'idle', selectedId: null } });
+            store.patch({ picker: { open: false, episode: 0 } });
             startDownload(item, target);
         }
 
         function closePicker() {
             log('selection', 'closePicker()');
-            // Cancel any deferred picker intent too — closing the panel must not resurrect it when
-            // the pool finishes loading (found in review).
-            if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
-            pendingRetryTimer = null;
-            pendingSelection = null;
-            store.patch({ picker: { open: false, episode: 0, items: [], target: null, status: 'idle', selectedId: null } });
+            store.patch({ picker: { open: false, episode: 0 } });
         }
 
         function freshSearch(target, pickerOnly) {
@@ -511,7 +458,8 @@
             if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
             pendingRetryTimer = null;
             pendingSelection = null;
-            pendingEpisode = null;
+            pendingClick = null;
+            unsubscribeWatcher();
         }
 
         return {

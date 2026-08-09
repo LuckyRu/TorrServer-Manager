@@ -107,3 +107,33 @@
         if (state.poolStatus === 'error') return 'Не удалось получить раздачи — Jackett не ответил';
         return '';
     }
+
+    // Side picker panel content — derived, not stored (see picker's own comment in
+    // results-state.js). items/status/target/selectedId used to live in state.picker itself,
+    // imperatively populated by an interactor call (fillPicker) threaded through a manual "call me
+    // back once you know more" callback into ensureSeasonLoaded — the shared root cause of two
+    // separate infinite-recursion crashes (see CLAUDE.md): a caller that assumes "callback fired"
+    // always means "something changed" breaks the moment the callee ever fires it with nothing
+    // having changed. Making this a pure selector over already-stored fields, exactly like
+    // selectEpisodeBadges already does for the row badges, removes the "retry via callback" concept
+    // entirely: ensureSeasonLoaded is now fire-and-forget (episodes-interactor.js), and the picker's
+    // displayed content just re-derives itself automatically whenever the View's one
+    // store.subscribe fires — there is no manual bookkeeping left that can go stale or loop.
+    // `seasonDefault` is read by the caller via Lampa.Storage (this module stays framework-agnostic)
+    // and passed in, same convention selectEpisodeBadges already uses.
+    export function selectPickerData(object, state, seasonDefault) {
+        var episode = state.picker.episode;
+        var items = selectCandidatesForEpisode(object, state, episode);
+        var selectedId = seasonDefault ? seasonDefault.id : null;
+        if (items.length) {
+            return { status: 'ready', items: items, target: buildEpisodeTarget(object, state, episode), selectedId: selectedId };
+        }
+        var poolLoading = !state.pool || state.poolStatus === 'loading';
+        var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
+        if (poolLoading || seasonLoading) return { status: 'loading', items: [], target: null, selectedId: null };
+        // Settled with zero candidates — covers both a genuinely empty result and a failed search;
+        // the panel has only ever shown one "Раздач не найдено" message for both (unchanged from
+        // before this selector existed — row badges distinguish 'ошибка поиска' from 'раздачи не
+        // найдены' for a different reason, see selectEpisodeBadges, but the picker never did).
+        return { status: 'error', items: [], target: null, selectedId: null };
+    }

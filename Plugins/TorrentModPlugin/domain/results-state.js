@@ -65,16 +65,19 @@
             customQuery: null,
 
             // Side picker panel (right-arrow on an episode row): candidates for one episode, shown
-            // in a slide-in panel instead of the full-screen candidates stage. Plain data only.
-            // selectedId = identity (magnet/link/title+size) of the persisted season default, if any
-            // — the panel marks it so the user sees what a plain click will start.
+            // in a slide-in panel instead of the full-screen candidates stage. ONLY the UI intent
+            // lives here — is it open, for which episode. items/status/target/selectedId used to be
+            // stored here too, imperatively populated by an interactor call (fillPicker) threaded
+            // through a manual "call me back once you know more" callback into ensureSeasonLoaded —
+            // the shared root cause of two separate infinite-recursion crashes (see CLAUDE.md).
+            // They're now selectPickerData's job (results-selectors.js): a pure derivation over
+            // state.pool/seasonLoads/customQuery/poolStatus + picker.episode, recomputed on every
+            // render exactly like selectEpisodeBadges already does for the row badges — there is
+            // nothing here that can go stale or need a retry-callback to refresh, because it isn't
+            // stored at all.
             picker: {
                 open: false,
-                episode: 0,
-                items: [],
-                target: null,
-                status: 'idle',        // 'idle' | 'loading' | 'ready' | 'error'
-                selectedId: null
+                episode: 0
             }
         });
     }

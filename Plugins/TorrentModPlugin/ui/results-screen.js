@@ -21,7 +21,7 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
     import { candidateBadgeText, candidateSubtitleText, searchQueryText, candidateIdentity } from '../domain/results-core.js';
-    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText } from '../domain/results-selectors.js';
+    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData } from '../domain/results-selectors.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -80,7 +80,14 @@
 
         function openPickerPanel() {
             if (viewDestroyed) return;
-            var st = domain.store.get().picker || {};
+            // items/status/target/selectedId are derived fresh from the store every time this is
+            // called (selectPickerData, results-selectors.js) — they used to live directly in
+            // state.picker, imperatively populated by an interactor call threaded through a manual
+            // "call me back" callback into ensureSeasonLoaded, the shared root cause of two separate
+            // infinite-recursion crashes (see CLAUDE.md). state.picker itself now only carries the
+            // UI intent (open, for which episode).
+            var state = domain.store.get();
+            var st = selectPickerData(object, state, domain.selection.getSeasonDefault(state.season));
             pickerBody.empty();
             picker.show();
             var selectedNode = null;
@@ -684,13 +691,19 @@
             // (see selectEpisodeBadges' own comment on the same underlying report).
             var statusTextNow = selectStatusText(state);
             if (statusTextNow !== selectStatusText(previous)) setStatus(statusTextNow);
-            // Side picker panel: open/close on the flag, re-render its list when it fills or errors.
+            // Side picker panel: open/close on the flag, re-render its list whenever anything
+            // selectPickerData reads from could have changed its output — the picker's own content
+            // isn't stored (state.picker only ever carries open/episode now, see its own comment in
+            // results-state.js), so there's no `.status`/`.items` field left to diff directly;
+            // `state.pool`/`state.seasonLoads` changing reference is the actual signal instead
+            // (Store.patch always gives changed fields a new top-level reference — see store.js).
             // Closing is DOM-only here — domain.closePicker already patched open:false (this render
             // IS that patch's notification); calling closePicker again would re-enter render.
             if (state.picker.open !== previous.picker.open) {
                 if (state.picker.open) openPickerPanel();
                 else hidePickerDom();
-            } else if (state.picker.open && state.picker.status !== previous.picker.status) {
+            } else if (state.picker.open && (state.pool !== previous.pool ||
+                state.seasonLoads !== previous.seasonLoads || state.picker.episode !== previous.picker.episode)) {
                 openPickerPanel();
             }
         }

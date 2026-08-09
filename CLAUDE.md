@@ -1315,6 +1315,72 @@ entry-point/build-config layer above all of them.
       Hub's cache, confirmed the served bundle contains the new `pendingSeasonCallbacks`/`canLazyLoad`
       identifiers, loaded the live app in a browser with no new console errors beyond the same
       pre-existing unrelated noise documented throughout this file.
+  - **The `pendingSeasonCallbacks`/`canLazyLoad` fix above was itself replaced within the same
+    session** — the user pushed back directly on it as a point patch ("это все из-за хуевой
+    архитектурной работы... без такой изоляции все тщетно"), correctly diagnosing the actual root
+    cause: the season-load task and its callers communicated through a hand-rolled "call me back and
+    I'll retry" callback chain instead of through the store's own reactive primitive
+    (`store.subscribe`), which is exactly the kind of ad hoc mechanism that keeps reintroducing the
+    same bug shape (this was the *third* independent trigger of the identical crash — `poolStatus`,
+    then `seasonLoads[season]==='loading'`, and a proposed general fix would still have needed a
+    fourth pre-check for `!hasSeasons||customQuery` to be fully closed). Redesigned properly instead
+    of patching a fourth branch:
+    - **`ensureSeasonLoaded(season)` (`domain/episodes-interactor.js`) lost its `onComplete` parameter
+      entirely** — no callback, no `pendingSeasonCallbacks` queue. It is now purely fire-and-forget
+      and idempotent: check `seasonLoads[season]`, start a fetch if nothing's running, write
+      `pool`/`seasonLoads` to the store when it resolves, done. It has no idea pickers, clicks, or
+      any caller-side retry concept exist — removing the callback *entirely*, not just making it
+      safer to invoke, is what actually eliminates the bug class: there is no longer any "retry via
+      callback" shape left for a caller to get wrong, structurally, regardless of how many early-bail
+      branches this function grows in the future.
+    - **The side picker's content stopped being stored at all.** `state.picker` (`results-state.js`)
+      now holds only `{open, episode}` — the `items`/`status`/`target`/`selectedId` fields that used
+      to be imperatively populated by `fillPicker` (deleted) are now `selectPickerData(object, state,
+      seasonDefault)`, a new pure selector in `results-selectors.js` that derives them fresh from
+      `state.pool`/`state.seasonLoads`/`state.customQuery`/`state.poolStatus` on every call —
+      **exactly the same pattern `selectEpisodeBadges` already used** for the row badges, just never
+      extended to the picker. `openPicker`/`closePicker`/`playPickerCandidate`
+      (`domain/selection-interactor.js`) shrank to single `store.patch({picker:{...}})` calls with no
+      business logic left in them at all. `ui/results-screen.js`'s `openPickerPanel()` calls the
+      selector instead of reading `domain.store.get().picker` fields directly; the View's one
+      `store.subscribe(render)` re-derives and repaints the panel automatically whenever
+      `state.pool`/`state.seasonLoads`/`state.picker.episode` changes reference — no picker-specific
+      re-render trigger needed beyond what was already there for badges.
+    - **A single reactive watcher (`store.subscribe`, `selection-interactor.js`) replaces every place
+      that used to thread a completion callback.** `ensureSeasonLoaded` only ever writes state; this
+      watcher is the ONE place that reacts to that write to decide what (if anything) should happen
+      next — kicking off a season's lazy fetch when the picker is open and empty for it (safe to call
+      on every state change: `ensureSeasonLoaded` no-ops once already loading/settled), and replaying
+      a click made while its season was still loading (`pendingClick`, mirroring the pre-existing
+      `pendingSelection`/`schedulePendingRetry` pattern already used for "pool not ready yet", just
+      driven by the store instead of a `setTimeout` poll). `selectEpisode`'s own zero-candidates
+      branch shrank to: set `pendingClick`, call `ensureSeasonLoaded` (idempotent either way), notify
+      — no more separate `'loading'` vs. `undefined` branching, since the callee handles both
+      correctly on its own now. A watcher calling `store.patch()` re-triggers itself synchronously
+      once (`store.js`'s `patch()` calls listeners synchronously) — bounded, not unbounded, since the
+      second pass always finds the season already `'loading'`/settled and does nothing further; this
+      is the same shape as any well-behaved `useEffect`-style reaction, not a new instance of the bug
+      being fixed.
+    - **`openPicker` no longer needs to special-case "pool not ready yet" at all** — the old code
+      deferred via `pendingSelection`/`schedulePendingRetry` specifically for this case; now
+      `selectPickerData` already reports `status:'loading'` whenever the pool itself hasn't settled
+      (same check `selectEpisodeBadges` already made), so simply opening the picker and letting the
+      View's existing reactive render pick up the pool's eventual `store.patch` is enough — one
+      whole deferred-retry code path removed outright, not just made safer.
+    - **Net effect on the file**: `episodes-interactor.js`'s `ensureSeasonLoaded` shrank from ~75
+      lines (with its own queueing map and three-way early-bail comment block) to ~25; `fillPicker`
+      and `buildPickerTarget` (`selection-interactor.js`) were deleted outright, replaced by the
+      ~20-line selector plus the one shared watcher. The production bundle is smaller
+      post-refactor despite the new watcher/selector, not larger.
+    - All existing tests updated to read picker content via `selectPickerData` (a small `pickerData(domain,
+      object)` test helper in `smoke.test.mjs`) instead of `state.picker.items`/`.status`/`.target`/
+      `.selectedId` directly, since those fields no longer exist on the state object. No test's
+      *assertions* changed — same behavior, same 116 tests green, just reading it through the same
+      derivation path the real View now uses instead of a since-removed stored field.
+    - Verified live the same way as the fix it replaced: dev-override rebuild, Plugin Hub cache
+      refresh, confirmed the served bundle contains `unsubscribeWatcher`/`selectPickerData` and no
+      longer has a live `fillPicker` function (one remaining match is a historical comment), fresh
+      page load with no new console errors.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
