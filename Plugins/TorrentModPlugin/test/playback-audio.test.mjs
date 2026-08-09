@@ -21,6 +21,50 @@ async function waitForPlay(count) {
     throw new Error('Player.play не был вызван ' + count + ' раз');
 }
 
+runner.test('оболочка Player появляется сразу, а media source ждёт обязательный probe', async () => {
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    globalThis.__setProbeBehavior(80, false);
+
+    startDownload(candidate(), target());
+    if (!globalThis.__isPreparationShellMounted()) throw new Error('оболочка Player не смонтирована синхронно');
+    if (!globalThis.__isPreparationOverlayMounted()) throw new Error('видимый индикатор подготовки не смонтирован синхронно');
+    if (globalThis.__preparationStatus() !== 'Подключение к раздаче…') throw new Error('не показана начальная фаза подготовки');
+    if (globalThis.__playerPlays.length) throw new Error('Player.play вызван до завершения probe');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForPlay(1);
+    if (globalThis.__isPreparationShellMounted()) throw new Error('состояние подготовки осталось после Player.play');
+    if (globalThis.__isPreparationOverlayMounted()) throw new Error('индикатор подготовки остался после Player.ready');
+    if (!globalThis.__isPlayerShellMounted()) throw new Error('нативный Player не остался открыт после handoff');
+    if (globalThis.__playerShellDetachCount()) throw new Error('handoff отсоединил Player DOM и создал чёрный визуальный разрыв');
+});
+
+runner.test('Back во время probe отменяет запуск и поздний ответ не открывает media', async () => {
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    globalThis.__setProbeBehavior(80, false);
+
+    startDownload(candidate(), target());
+    await flushMicrotasks();
+    globalThis.__invokeControllerBack();
+    if (globalThis.__isPreparationShellMounted()) throw new Error('оболочка подготовки не закрылась по Back');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (globalThis.__playerPlays.length) throw new Error('поздний probe запустил Player после отмены');
+});
+
+runner.test('временный сбой probe повторяется внутри открытой оболочки Player', async () => {
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    globalThis.__setProbeBehavior(0, 1);
+
+    startDownload(candidate(), target());
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    await waitForPlay(1);
+    if (globalThis.__isPreparationShellMounted()) throw new Error('оболочка не передана Player после успешного retry');
+});
+
 runner.test('GST preflight строит единственный GST URL и передаёт все voiceovers', async () => {
     globalThis.__clearStorage();
     globalThis.__resetPlaybackMock();

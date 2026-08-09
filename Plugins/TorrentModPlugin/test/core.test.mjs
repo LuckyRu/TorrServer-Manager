@@ -100,4 +100,22 @@ runner.test('createLifecycle: dispose() without onDispose does not throw', () =>
     if (lifecycle.isAlive()) throw new Error('isAlive() должен стать false даже без onDispose');
 });
 
+runner.test('createLifecycle: parent dispose disposes child scope', () => {
+    const parent = createLifecycle();
+    const child = parent.child();
+    let cleaned = 0;
+    child.track(() => cleaned++);
+    parent.dispose();
+    if (child.isAlive()) throw new Error('child остался жив после parent.dispose()');
+    if (cleaned !== 1) throw new Error('cleanup child должен выполниться ровно один раз');
+});
+
+runner.test('createLifecycle: explicit child dispose не завершает parent', () => {
+    const parent = createLifecycle();
+    const child = parent.child();
+    child.dispose();
+    if (!parent.isAlive()) throw new Error('child.dispose() завершил parent');
+    parent.dispose();
+});
+
 await runner.run();

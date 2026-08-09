@@ -76,6 +76,21 @@ Torrent Mod сейчас заполняет: GST `url`, `hls_manifest_timeout`, 
 плейбек. На Android текущая ветка Lampa фильтрует playlist до строковых URL, поэтому этот сценарий
 требует отдельной live-проверки.
 
+Верхнеуровневый `data.url` функции не поддерживает: `play()` вызывает для него `indexOf()`,
+`preload()` — `replace()`, после чего значение напрямую передаётся в `Video.url()`
+(`interaction/player.js:1198-1250`). Поэтому Torrent Mod не может открыть первый Player через тот
+же lazy-контракт, что следующую серию.
+
+Для раннего UI используется публичный `Player.render()`: уже инициализированный DOM Player
+монтируется с нативными классами `player--loading` и `player--panel-visible`, но без media source.
+Одних классов недостаточно: внутренние `Info`/`Panel` Lampa остаются скрыты до `play()`, поэтому
+Torrent Mod добавляет в эту же оболочку свой минимальный overlay со spinner и текущей стадией.
+После обязательного probe обычный `Player.play(data)` принимает готовые GST URL и `voiceovers`, но
+уже смонтированный общий DOM не отсоединяется. Overlay снимается только по `Player.ready`, после чего
+оболочкой полностью владеет Lampa. Это исключает чёрный промежуток между preflight и штатным Player.
+Если пользователь нажал Back до handoff, плагин закрывает оболочку и уничтожает player lifecycle
+scope; поздний callback уничтоженного player/file scope не вызывает `Player.play`.
+
 ## `data.ffprobe` — нативная альтернатива ручному парсингу аудиодорожек
 
 Найдено при чтении `play()` целиком (`interaction/player.js:1202-1208`), актуально для любой будущей

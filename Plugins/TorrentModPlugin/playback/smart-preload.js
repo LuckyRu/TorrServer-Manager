@@ -1,8 +1,9 @@
     // ---------- GST-only playback with audio-track preflight ----------
     //
-    // The user explicitly rejected the smart-preload overlay ("лишний моргающий интерфейс без
-    // реальной пользы"): a click must go STRAIGHT to the player. What remains is the silent
-    // plumbing that makes playback possible at all:
+    // A click mounts Lampa's own Player shell immediately. The shell has no media source yet: it
+    // only shows the native loading state while the torrent is registered, metadata is resolved,
+    // and the mandatory GST probe selects an audio track. The real Player.play still receives a
+    // concrete URL, so no direct/GST task can start before preflight has completed.
     //
     //   register torrent                POST /torrents action:add
     //     → pollFiles: Torserver.files(hash)  until metadata resolves → file_stats
@@ -15,13 +16,12 @@
     // A probe always precedes Player.play: it supplies `voiceovers` and selects either the user's
     // saved studio or the first audio track. Do not patch global Lampa Player/Torserver APIs.
     //
-    // PLAYBACK SESSION (architect's lifecycle isolation): every launch is a session object with
-    // `alive` + `dispose()`. All async continuations (Torserver.hash/files, /ffp, /cache, player
-    // listeners) check `session.alive` first — so a late callback from a cancelled/superseded
-    // launch can never start playback or leak listeners. `dispose()` is idempotent: clears timers,
-    // removes player/video listeners, drops the session reference. The Torrent Mod SCREEN does NOT
-    // own the session — playback intentionally outlives the screen (the player keeps running after
-    // the results screen is gone); only a new startDownload or the player's own destroy disposes it.
+    // PLAYBACK LIFECYCLES: every launch owns one player scope; each selected file owns a child
+    // scope. Register/files and the early shell belong to the parent. Probe/retry and listeners for
+    // a concrete episode belong to its child, so changing files cancels stale file work without
+    // ending the player session. The Torrent Mod SCREEN does NOT own either scope — playback
+    // intentionally outlives the results screen. `session.alive` is a compatibility getter over
+    // playerScope.isAlive(), not a second lifecycle mechanism.
     //
     // Three native side effects of the old Lampa.Torrent.start path are compensated explicitly
     // (native torrent.js used to do them on hover:enter — torrent.js:437/333/446):
@@ -32,9 +32,9 @@
     //      (Player.play wires Playlist from data.playlist, player.js:1243)
     //
     // Plus, still silent: an initial fire-and-forget `&preload` cache nudge and next-episode
-    // cache warming near the end of the current file. This uses Torserver.stream only to obtain
-    // TorrServer's official preload URL; it is never a Player transport. No global patching of
-    // Lampa.Player.play / Torserver.stream (ADR-0003).
+    // cache warming near the end of the current file. The plugin builds the direct cache endpoint
+    // itself; it is never a Player transport. No global patching of Lampa.Player.play /
+    // Torserver.stream (ADR-0003).
     import { parseSignals } from '../shared/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
@@ -43,6 +43,7 @@
     import { buildSeriesPlayerData } from './series-player.js';
     import { normalizeAudioTracks, preferenceFromTrack, resolvePreferredTrack } from './audio-tracks.js';
     import { log, warn } from '../shared/core/log.js';
+    import { createLifecycle } from '../shared/core/lifecycle.js';
 
     var currentSession = null;
     var sessionSeq = 0;
@@ -50,6 +51,150 @@
     var REGISTERED_HASH_CACHE_MAX = 200;
     var AUDIO_PREFERENCE_CACHE = 'torrent_mod_audio_preference';
     var AUDIO_PREFERENCE_CACHE_MAX = 200;
+    var PREPARING_CONTROLLER = 'torrent_mod_player_preparing';
+
+    function updatePreparation(session, phase, text) {
+        if (!session || !session.alive) return;
+        session.phase = phase || session.phase;
+        var shell = session.preparationShell;
+        if (!shell || !shell.find) return;
+        try {
+            var label = text || 'Подготовка воспроизведения…';
+            shell.find('.torrent-mod-player-preparing__title').text(label);
+            shell.find('.player-info__name').text(label);
+            shell.find('.head-backward__title').text('Плеер');
+        } catch (e) {}
+    }
+
+    function removePreparationOverlay(session) {
+        if (!session || !session.preparationOverlay) return;
+        try { session.preparationOverlay.remove(); } catch (e) {}
+        session.preparationOverlay = null;
+    }
+
+    // Lampa does not accept a function as the first Player.play(data.url), but Player.render() is
+    // public and returns the already initialized native shell. Mount it without a media source so
+    // the user enters the player immediately while the required preflight remains truly first.
+    function openPreparationShell(session) {
+        if (!session || !session.alive || !Lampa.Player || !Lampa.Player.render) return;
+        try {
+            var shell = Lampa.Player.render();
+            if (!shell || !shell.addClass) return;
+            session.preparationShell = shell;
+            session.preparationMounted = true;
+            shell.addClass('player--loading player--panel-visible torrent-mod-player-preparing');
+            session.preparationOverlay = $(
+                '<div class="torrent-mod-player-preparing__overlay">' +
+                    '<span class="torrent-mod-player-preparing__spinner"></span>' +
+                    '<div class="torrent-mod-player-preparing__title">Подготовка воспроизведения…</div>' +
+                    '<div class="torrent-mod-player-preparing__hint">Назад — отменить</div>' +
+                '</div>'
+            );
+            shell.append(session.preparationOverlay);
+            try { shell.find('.player-info__error').addClass('hide').text(''); } catch (e) {}
+            updatePreparation(session, 'registering', 'Подключение к раздаче…');
+            $('body').addClass('player--viewing').append(shell);
+            session.scope.track(function () { closePreparationShell(session, true); });
+
+            Lampa.Controller.add(PREPARING_CONTROLLER, {
+                invisible: true,
+                toggle: function () {},
+                back: function () {
+                    if (!session.alive || currentSession !== session) return;
+                    log('playback', 'preflight отменён пользователем, session #' + session.id);
+                    session.cancelled = true;
+                    session.dispose();
+                },
+                stop: function () {
+                    if (session.alive && currentSession === session) {
+                        session.cancelled = true;
+                        session.dispose();
+                    }
+                }
+            });
+            Lampa.Controller.toggle(PREPARING_CONTROLLER);
+        } catch (e) {
+            try {
+                if (session.preparationShell) {
+                    session.preparationShell.removeClass('player--loading player--panel-visible torrent-mod-player-preparing');
+                    removePreparationOverlay(session);
+                    session.preparationShell.detach();
+                }
+                $('body').removeClass('player--viewing');
+            } catch (cleanupError) {}
+            session.preparationShell = null;
+            session.preparationMounted = false;
+            warn('playback', 'Не удалось открыть оболочку Player для preflight', e);
+        }
+    }
+
+    function closePreparationShell(session, restoreController) {
+        if (!session || !session.preparationMounted) return;
+        session.preparationMounted = false;
+        var shell = session.preparationShell;
+        session.preparationShell = null;
+        try {
+            shell.removeClass('player--loading player--panel-visible torrent-mod-player-preparing');
+            removePreparationOverlay(session);
+            // detach(), not remove(): this is Lampa's shared Player DOM with its own handlers.
+            shell.detach();
+        } catch (e) {}
+        try { $('body').removeClass('player--viewing'); } catch (e) {}
+        if (restoreController) {
+            try {
+                if (Lampa.Controller.enabled().name === PREPARING_CONTROLLER) {
+                    Lampa.Controller.toggle(session.backController || 'content');
+                }
+            } catch (e) {}
+        }
+    }
+
+    // Player.play can spend time in its own preload() before it appends and reveals the native
+    // controls. Keep the already-mounted shell and our visible status overlay in place until the
+    // native Player announces `ready`; detaching it before play() creates a second black gap.
+    function handoffPreparationShell(session) {
+        if (!session || !session.preparationMounted) return function () {};
+        var settled = false;
+        var untrack = null;
+        function cleanupListener() {
+            try { Lampa.Player.listener.remove('ready', onReady); } catch (e) {}
+            if (untrack) {
+                var release = untrack;
+                untrack = null;
+                release();
+            }
+        }
+        function onReady() {
+            if (settled) return;
+            settled = true;
+            cleanupListener();
+            if (!session.preparationMounted) return;
+            session.preparationMounted = false;
+            var shell = session.preparationShell;
+            session.preparationShell = null;
+            try { shell.removeClass('player--loading player--panel-visible torrent-mod-player-preparing'); } catch (e) {}
+            removePreparationOverlay(session);
+            // Do not detach the shared shell or remove body.player--viewing: ownership has passed
+            // to native Player.play, which is already using this exact DOM node.
+        }
+        try {
+            Lampa.Player.listener.follow('ready', onReady);
+            untrack = session.scope.track(cleanupListener);
+        } catch (e) {
+            return function () {};
+        }
+        return cleanupListener;
+    }
+
+    function activateFileScope(session, file) {
+        var id = file ? String(file.id) : '';
+        if (session.fileScope && session.fileScope.isAlive() && session.fileScopeId === id) return session.fileScope;
+        if (session.fileScope) session.fileScope.dispose();
+        session.fileScope = session.scope.child();
+        session.fileScopeId = id;
+        session.nextEpisodeCleanup = null;
+        return session.fileScope;
+    }
 
     // The normal TorrServer stream endpoint accepts `&preload` to start filling the torrent cache.
     // Do not obtain this URL from Lampa.Torserver.stream(): when its global `torrserver_gts` switch
@@ -149,32 +294,54 @@
 
     function probeFile(session, file, done, fail) {
         var id = String(file.id);
+        var fileScope = activateFileScope(session, file);
         var cached = session.probes[id];
         if (cached) { done(cached); return; }
         var base = torrServerBase();
         if (!base) { fail('TorrServer недоступен'); return; }
-
-        try {
-            $.ajax({
-                url: base + '/gst/' + encodeURIComponent(session.hash) + '/probe?index=' + encodeURIComponent(file.id),
-                method: 'GET',
-                dataType: 'json',
-                timeout: 35000
-            }).done(function (probe) {
-                if (!session.alive) return;
-                var tracks = normalizeAudioTracks(probe);
-                if (!tracks.length) { fail('В файле не найдены аудиодорожки'); return; }
-                session.probes[id] = tracks;
-                done(tracks);
-            }).fail(function (xhr, status, error) {
-                if (!session.alive) return;
-                warn('playback', 'probeFile: GST probe failed', { file: file.path, status: status, error: error, response: xhr && xhr.responseText });
-                fail('Не удалось получить дорожки файла');
-            });
-        } catch (e) {
-            warn('playback', 'probeFile: GST probe threw', e);
-            fail('Не удалось получить дорожки файла');
+        var attempt = 0;
+        function run() {
+            if (!session.alive || !fileScope.isAlive()) return;
+            attempt++;
+            try {
+                var request = $.ajax({
+                    url: base + '/gst/' + encodeURIComponent(session.hash) + '/probe?index=' + encodeURIComponent(file.id),
+                    method: 'GET',
+                    dataType: 'json',
+                    timeout: 35000
+                });
+                var untrackRequest = fileScope.track(function () {
+                    try { if (request && request.abort) request.abort(); } catch (e) {}
+                });
+                request.done(function (probe) {
+                    untrackRequest();
+                    if (!session.alive || !fileScope.isAlive()) return;
+                    var tracks = normalizeAudioTracks(probe);
+                    if (!tracks.length) { fail('В файле не найдены аудиодорожки'); return; }
+                    session.probes[id] = tracks;
+                    done(tracks);
+                }).fail(function (xhr, status, error) {
+                    untrackRequest();
+                    if (!session.alive || !fileScope.isAlive()) return;
+                    var code = Number(xhr && xhr.status) || 0;
+                    var response = String(xhr && xhr.responseText || '');
+                    var deterministic = (code >= 400 && code < 500) || /unsupported container/i.test(response);
+                    warn('playback', 'probeFile: GST probe failed', { file: file.path, attempt: attempt, status: status, code: code, error: error, response: response });
+                    if (attempt < 2 && !deterministic) {
+                        updatePreparation(session, 'probing', 'Повторный анализ аудиодорожек…');
+                        fileScope.setTimeout(run, 1200);
+                        return;
+                    }
+                    fail(deterministic ? 'Формат файла не поддерживается GStreamer' : 'Не удалось получить дорожки файла');
+                });
+            } catch (e) {
+                warn('playback', 'probeFile: GST probe threw', e);
+                if (attempt < 2) {
+                    fileScope.setTimeout(run, 1200);
+                } else fail('Не удалось получить дорожки файла');
+            }
         }
+        run();
     }
 
     function storeTransport(session, file, tracks, selected, seconds, done, fail) {
@@ -263,11 +430,14 @@
             if (!session.alive || !hash) return;
             log('playback', 'registerTorrent: используем hash ' + hash);
             session.hash = hash;
+            updatePreparation(session, 'metadata', 'Получение списка файлов…');
             pollFiles(session);
         }
 
         function addTorrent() {
+            if (!session.alive) return;
             log('playback', 'registerTorrent: добавляю новый торрент (' + source + ')');
+            updatePreparation(session, 'registering', source === 'torrent-link' ? 'Загрузка torrent-файла…' : 'Подключение к раздаче…');
             try {
                 $.ajax({
                     url: base + '/torrents',
@@ -282,6 +452,7 @@
                     if (session.hash) {
                         log('playback', 'registerTorrent: добавлен, hash=' + session.hash);
                         rememberRegisteredHash(item, session.hash);
+                        updatePreparation(session, 'metadata', 'Получение списка файлов…');
                         pollFiles(session);
                     } else {
                         warn('playback', 'registerTorrent: action:add вернул пустой hash', json);
@@ -321,6 +492,7 @@
                 dataType: 'json',
                 timeout: 5000
             }).done(function (list) {
+                if (!session.alive) return;
                 var plainTitle = title.replace(/^\[LAMPA\]\s*/i, '');
                 var found = (Array.isArray(list) ? list : []).filter(function (entry) {
                     var entryTitle = String(entry && entry.title || '');
@@ -328,7 +500,7 @@
                 })[0];
                 if (found) { log('playback', 'registerTorrent: найден уже зарегистрированный торрент по списку'); useRegisteredHash(found.hash); }
                 else onMissing();
-            }).fail(onMissing);
+            }).fail(function () { if (session.alive) onMissing(); });
         }
 
         var knownHash = readRegisteredHash(item);
@@ -361,6 +533,15 @@
         var attempts = 0;
         var maxAttempts = 45;
         log('playback', 'pollFiles: старт опроса метаданных, hash=' + session.hash);
+        updatePreparation(session, 'metadata', 'Получение списка файлов…');
+        session.filesDeadline = session.scope.setTimeout(function () {
+            if (!session.alive || session.bestFile) return;
+            clearInterval(session.filesTimer);
+            session.filesTimer = null;
+            warn('playback', 'pollFiles: metadata не пришли за отведённое время, hash=' + session.hash);
+            notify('Не удалось получить файлы раздачи');
+            session.dispose();
+        }, maxAttempts * 2000 + 2500);
         function attempt() {
             if (!session.alive || session.clicked) { clearInterval(session.filesTimer); return; }
             attempts++;
@@ -379,6 +560,9 @@
                         return;
                     }
                     clearInterval(session.filesTimer);
+                    clearTimeout(session.filesDeadline);
+                    session.filesTimer = null;
+                    session.filesDeadline = null;
                     log('playback', 'pollFiles: метаданные получены, попытка ' + attempts + ', файлов=' + plays.length);
                     session.allFiles = stats;
                     try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
@@ -386,9 +570,12 @@
                     pickBestFile(session);
                 });
             } catch (e) { warn('playback', 'pollFiles: Torserver.files бросил', e); }
-            if (attempts >= maxAttempts) clearInterval(session.filesTimer);
+            if (attempts >= maxAttempts) {
+                clearInterval(session.filesTimer);
+                session.filesTimer = null;
+            }
         }
-        session.filesTimer = setInterval(attempt, 2000);
+        session.filesTimer = session.scope.setInterval(attempt, 2000);
         // Do not deliberately sleep for the first interval: metadata is usually already available
         // when action:add returns, and this exact 2-second gap was visible before the player appeared.
         attempt();
@@ -403,12 +590,14 @@
             torrent: session.item.title,
             size: session.bestFile.length || session.bestFile.size || 0
         });
+        updatePreparation(session, 'probing', 'Анализ аудиодорожек…');
         // Silent nudge: ask TorrServer to start filling this file's cache while GST probes it.
         firePreload(preloadUrlFor(session.bestFile, session.hash));
         prepareTransport(session, session.bestFile, 0, function (transport) {
             if (!session.alive) return;
             session.activeFile = session.bestFile;
             session.activeAudioIndex = transport.audioIndex;
+            updatePreparation(session, 'starting', 'Запуск воспроизведения…');
             startGstPlayback(session);
         }, function (message) {
             if (!session.alive) return;
@@ -450,8 +639,10 @@
             item.hls_manifest_timeout = transport.hls_manifest_timeout;
             item.voiceovers = transport.voiceovers;
             item.callback = function () {
+                activateFileScope(session, file);
                 session.activeFile = file;
                 session.activeAudioIndex = transport.audioIndex;
+                startNextEpisodePreload(session);
             };
         } else {
             item.url = deferredPlaylistUrl(session, file, item);
@@ -469,13 +660,15 @@
                 item.hls_manifest_timeout = transport.hls_manifest_timeout;
                 item.voiceovers = transport.voiceovers;
                 item.callback = function () {
+                    activateFileScope(session, file);
                     session.activeFile = file;
                     session.activeAudioIndex = transport.audioIndex;
+                    startNextEpisodePreload(session);
                 };
                 continuePlayback();
                 // Lampa's callback destroys then immediately creates its next Player synchronously.
                 // Keep the session alive through that destroy event; clear on the next task turn.
-                setTimeout(function () { session.playlistTransition = false; }, 0);
+                session.scope.setTimeout(function () { session.playlistTransition = false; }, 0);
             }, function (message) {
                 if (!session.alive) return;
                 session.playlistTransition = false;
@@ -502,7 +695,7 @@
             session.playerCleanup = function () {
                 try { Lampa.Player.listener.remove('destroy', onPlaybackEnd); } catch (e) {}
             };
-            session.nextCleanup.push(detachPlayerLifecycle.bind(null, session));
+            session.scope.track(detachPlayerLifecycle.bind(null, session));
         } catch (e) {}
     }
 
@@ -527,9 +720,16 @@
     }
 
     function watchTrackSwitch(session) {
+        var fileScope = activateFileScope(session, session.activeFile);
         var settled = false;
         var timer = null;
+        var untrackCleanup = null;
         function cleanup() {
+            if (untrackCleanup) {
+                var untrack = untrackCleanup;
+                untrackCleanup = null;
+                untrack();
+            }
             if (timer) clearTimeout(timer);
             try { Lampa.PlayerVideo.listener.remove('canplay', onCanPlay); } catch (e) {}
             try { Lampa.PlayerVideo.listener.remove('error', onError); } catch (e) {}
@@ -549,7 +749,8 @@
         try {
             Lampa.PlayerVideo.listener.follow('canplay', onCanPlay);
             Lampa.PlayerVideo.listener.follow('error', onError);
-            timer = setTimeout(function () { finish(false); }, 70000);
+            untrackCleanup = fileScope.track(cleanup);
+            timer = fileScope.setTimeout(function () { finish(false); }, 70000);
         } catch (e) { finish(false); }
     }
 
@@ -586,11 +787,22 @@
         // Which controller the Torrent Mod screen had before playback — the player's Back should
         // return there, not to a 'modal' that may not exist (native torrent.js routes to modal
         // because ITS caller is a modal; ours is the screen, found by the architect).
-        var backController = previousController() || 'content';
+        // Captured before mounting the preparation shell. Reading Controller.enabled() here would
+        // return PREPARING_CONTROLLER and Back could lead to a controller that no longer exists.
+        var backController = session.backController || 'content';
 
         var started = false;
+        var cancelHandoff = handoffPreparationShell(session);
         try { Lampa.Player.play(data); started = true; } catch (e) { warn('playback', 'startGstPlayback: Player.play failed', e); }
-        if (!started) { session.dispose(); return; }
+        if (!started) {
+            cancelHandoff();
+            closePreparationShell(session, false);
+            notify('Не удалось открыть плеер');
+            try { Lampa.Controller.toggle(backController); } catch (e) {}
+            session.dispose();
+            return;
+        }
+        session.phase = 'started';
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle(backController); }); } catch (e) {}
         // Warm the NEXT episode's cache while this one plays — the fix for stalls on episode switch.
         // The session must STAY ALIVE for these listeners to work: disposing here would strip them
@@ -606,9 +818,10 @@
     // as the current file approaches its end (~85% or <=60s left), ask TorrServer to warm the next
     // playable file's cache so Playlist.next() starts with data already downloaded. One file only,
     // fire-and-forget, gated by the torrent_mod_preload_next setting; nothing is shown and nothing
-    // in the player/playlist is touched (ADR-0003). Listeners are registered on the SESSION and
-    // removed by session.dispose() — they must not outlive the launch (found by the architect).
+    // in the player/playlist is touched (ADR-0003). Listeners belong to the current FILE scope:
+    // episode transition removes them without ending the enclosing Player session.
     function startNextEpisodePreload(session) {
+        if (session.nextEpisodeCleanup) session.nextEpisodeCleanup();
         var files = session.files || [];
         if (files.length < 2) return;
         if (!field('torrent_mod_preload_next', true)) return;
@@ -626,41 +839,54 @@
         }
         if (!next) return; // current file is the last one in the pack
 
+        var fileScope = activateFileScope(session, currentFile);
         var fired = false;
+        var untrackCleanup = null;
+        function cleanup() {
+            if (untrackCleanup) {
+                var untrack = untrackCleanup;
+                untrackCleanup = null;
+                untrack();
+            }
+            try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (e6) {}
+            try { Lampa.Player.listener.remove('destroy', onPlayerDestroy); } catch (e7) {}
+            if (session.nextEpisodeCleanup === cleanup) session.nextEpisodeCleanup = null;
+        }
         function onTime(e) {
-            if (!session.alive || fired || !e || !(e.duration > 0)) return;
+            if (!session.alive || !fileScope.isAlive() || fired || !e || !(e.duration > 0)) return;
             var current = e.current || 0;
             var remaining = e.duration - current;
             if (remaining > 0 && (current >= e.duration * 0.85 || remaining <= 60)) {
                 fired = true;
-                try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (err) {}
+                cleanup();
                 log('playback', 'startNextEpisodePreload: прогреваю следующий файл "' + next.path + '"');
                 firePreload(preloadUrlFor(next, session.hash));
             }
         }
-        function onPlayerDestroy() {
-            try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (e3) {}
-            try { Lampa.Player.listener.remove('destroy', onPlayerDestroy); } catch (e4) {}
-        }
+        function onPlayerDestroy() { cleanup(); }
         try { Lampa.PlayerVideo.listener.follow('timeupdate', onTime); } catch (e2) {}
         try { Lampa.Player.listener.follow('destroy', onPlayerDestroy); } catch (e5) {}
-        // Register removal on the session so dispose() also clears them (e.g. the player never
-        // fired 'destroy' — play threw, or the launch was superseded).
-        session.nextCleanup = session.nextCleanup || [];
-        session.nextCleanup.push(function () {
-            try { Lampa.PlayerVideo.listener.remove('timeupdate', onTime); } catch (e6) {}
-            try { Lampa.Player.listener.remove('destroy', onPlayerDestroy); } catch (e7) {}
-        });
+        session.nextEpisodeCleanup = cleanup;
+        untrackCleanup = fileScope.track(cleanup);
     }
 
     function createSession(item, target) {
+        var scope = createLifecycle();
         var session = {
             id: ++sessionSeq,
-            alive: true,
+            scope: scope,
+            fileScope: null,
+            fileScopeId: '',
             mode: target.mode || MODE_SERIES,
             hash: '',
             item: item,
             target: target,
+            backController: previousController() || 'content',
+            phase: 'created',
+            cancelled: false,
+            preparationShell: null,
+            preparationOverlay: null,
+            preparationMounted: false,
             files: [],
             allFiles: [],
             bestFile: null,
@@ -676,18 +902,19 @@
             playerCleanup: null,
             clicked: false,
             filesTimer: null,
-            nextCleanup: [],
+            filesDeadline: null,
+            nextEpisodeCleanup: null,
             dispose: function () {
-                if (!session.alive) return;
-                session.alive = false;
-                clearInterval(session.filesTimer);
-                session.filesTimer = null;
-                var cleanups = session.nextCleanup || [];
-                session.nextCleanup = [];
-                cleanups.forEach(function (fn) { try { fn(); } catch (e) {} });
-                if (currentSession === session) currentSession = null;
+                scope.dispose(function () {
+                    session.filesTimer = null;
+                    session.filesDeadline = null;
+                    session.fileScope = null;
+                    session.nextEpisodeCleanup = null;
+                    if (currentSession === session) currentSession = null;
+                });
             }
         };
+        Object.defineProperty(session, 'alive', { get: function () { return scope.isAlive(); } });
         session.audioPreference = readAudioPreference(session);
         return session;
     }
@@ -702,5 +929,6 @@
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');
         var session = createSession(item, target);
         currentSession = session;
+        openPreparationShell(session);
         registerTorrent(session);
     }

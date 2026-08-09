@@ -16,8 +16,24 @@ export function normalizeTrackName(value) {
 
 function trackLabel(track, position) {
     if (track.title) return track.title;
-    if (track.language) return track.language.toUpperCase();
+    // Lampa already renders `language` as a localized name. Repeating its raw code as label would
+    // produce `Английский · ... · EN`.
+    if (track.language) return '';
     return 'Дорожка ' + (position + 1);
+}
+
+function cleanTitle(title, language) {
+    var result = String(title || '').trim();
+    if (result && language && normalizeTrackName(result) === normalizeTrackName(language)) return '';
+    return result;
+}
+
+// GstDiscoverer may return the whole caps string in Codec, for example
+// `AC3, framed=(boolean)true, rate=(int)48000, channels=(int)6`. Lampa expects only a codec name
+// and formats channels separately; passing caps through makes every implementation detail visible
+// in the track picker. Keep the media type/name before the first caps separator.
+function cleanCodec(value) {
+    return String(value || '').split(/[;,]/)[0].trim();
 }
 
 // Accept both Go's default JSON field names (`Tracks`, `Index`) and camelCase. The latter keeps
@@ -34,9 +50,9 @@ export function normalizeAudioTracks(probe) {
         if (type !== 'audio' || !isFinite(index) || seen[index]) return;
         seen[index] = true;
 
-        var title = String(value(raw, 'Title', 'title') || '').trim();
         var language = String(value(raw, 'Language', 'language') || '').trim();
-        var codec = String(value(raw, 'Codec', 'codec') || value(raw, 'CapsName', 'capsName') || '').trim();
+        var title = cleanTitle(value(raw, 'Title', 'title'), language);
+        var codec = cleanCodec(value(raw, 'Codec', 'codec') || value(raw, 'CapsName', 'capsName'));
         var channels = Number(value(raw, 'Channels', 'channels')) || 0;
         result.push({
             index: index,

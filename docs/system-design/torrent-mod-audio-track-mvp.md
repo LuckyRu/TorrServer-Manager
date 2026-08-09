@@ -173,14 +173,29 @@ GST `canplay` для выбранной дорожки**. В нём не хра�
 
 ## Preflight сериалов и playlist
 
-Для первой выбранной серии preflight всегда выполняется до `Player.play`. `data.url` получает GST
-URL с `audio=N`, где N — однозначно найденная preference-дорожка или первая audio-дорожка ответа
-probe. `url_reserve` не добавляется: основной источник уже GST, другого транспорта нет.
+Для первой выбранной серии preflight всегда выполняется до `Player.play`. При этом пользователь не
+остаётся на экране результатов: Torrent Mod синхронно монтирует публичный `Lampa.Player.render()`
+как нативную оболочку Player с loading-состоянием, но без media source. Поскольку штатные панели
+Lampa до `Player.play` внутренне скрыты, поверх этой же оболочки сразу монтируется минимальный
+spinner со стадиями подключения к раздаче, получения файлов, анализа дорожек и запуска. После
+успешного probe оболочка без `detach()` передаётся обычному `Player.play`; overlay удаляется только
+по `Player.ready`, поэтому между preflight и нативным плеером нет чёрного промежутка. `data.url`
+получает GST URL с
+`audio=N`, где N — однозначно найденная preference-дорожка или первая audio-дорожка ответа probe.
+`url_reserve` не добавляется: основной источник уже GST, другого транспорта нет.
+
+Верхнеуровневый `data.url` нельзя сделать функцией: Lampa передаёт его напрямую в `replace()`,
+`indexOf()` и `PlayerVideo.url()`. Lazy URL поддержан только у playlist item. Поэтому ранняя
+оболочка использует `Player.render()`, но не вызывает `Player.play` с фиктивным URL и не создаёт
+преждевременный GST task. Исходный controller запоминается до её монтирования; Back во время любой
+стадии отменяет player scope, закрывает оболочку и делает поздние XHR безвредными.
 
 Если preference не нашлась однозначно, выбирается первая audio-дорожка и показывается краткое
 объяснение; preference не удаляется, потому что она может встретиться в следующем файле. Если probe
-не удался или не содержит audio, player не открывается и Torrent Mod показывает причину. Нельзя
-тихо запустить direct stream с неизвестными дорожками.
+не удался или не содержит audio, media source не запускается, оболочка закрывается и Torrent Mod
+показывает причину. Сетевой/5xx сбой probe повторяется один раз внутри открытой оболочки;
+детерминированная ошибка формата не повторяется. Нельзя тихо запустить direct stream с неизвестными
+дорожками.
 
 Для остальных файлов сезонного пака `buildPlaylist()` создаёт lazy URL-функции, а не заранее
 пробит все файлы. При штатном `Playlist.next()` Lampa вызывает функцию, та всегда делает probe,
@@ -197,7 +212,7 @@ probe. `url_reserve` не добавляется: основной источн�
 | Компонент | Ответственность |
 |---|---|
 | `audio-tracks.js` | Чистая нормализация Go/camelCase JSON probe, label и консервативный resolver preference. |
-| `smart-preload.js` | Владеет session, storage preference по `movie.id + season`, всегда запускает probe до старта, создаёт `voiceovers`, очищает запросы/listeners при dispose. |
+| `smart-preload.js` | Владеет player scope, его file scopes, ранней оболочкой Player и storage preference по `movie.id + season`; всегда запускает probe до media source и очищает ресурсы через lifecycle. |
 | Player-data builder | Всегда применяет preflight, создаёт lazy URLs для следующих файлов и передаёт `voiceovers` из probe в каждый Player data. |
 | `switchToGstTrack` | Единственная точка контролируемого рестарта: защита от двойного клика, чтение позиции, UI ожидания, restart и rollback/error-message. |
 | Tests | Pure tests нормализации/выбора первой дорожки/preference/URL/позднего ответа и smoke-test формы `Player.play` с `voiceovers` для фильма, серии и playlist item. |
@@ -216,11 +231,16 @@ activeAudioIndex: null | number // null только до успешного GST
 audioPreference: null | AudioTrackPreference
 pendingAudioPreference: null | AudioTrackPreference
 switchState: idle | switching
-generation: increasing number
+sessionId: increasing number
+playerScope: Lifecycle
+fileScope: Lifecycle // child playerScope для текущего fileId
+phase: registering | metadata | probing | starting | started
+preparationMounted: boolean
 ```
 
 - У одного session в момент времени максимум один действующий запрос probe и один переход audio.
-- Ответ probe применим только при совпадении `generation`, `activeFileId` и живом session.
+- Ответ probe применим только пока живы соответствующие player scope и file scope; смена `fileId`
+  уничтожает scope старого запроса.
 - `activeAudioIndex === null` допустим только до успешного GST start или после ошибки; активный
   playback всегда имеет индекс, полученный из probe.
 - Клик по уже выбранному треку не перезапускает поток.
@@ -229,6 +249,13 @@ generation: increasing number
 - `pendingAudioPreference` записывается в storage только на `canplay` нового GST source. Ошибка,
   закрытие player или supersede session отбрасывают его.
 - При destroy/новом playback все handlers и pending-результаты становятся неактуальными.
+- Player scope владеет register/files, ранней оболочкой и общим Player lifecycle. File scope владеет
+  probe/retry, track-switch listeners и прогревом следующей серии; смена `fileId` уничтожает только
+  прежний file scope.
+- Оболочка Player монтируется сразу после создания player scope и не содержит URL; `Player.play`
+  вызывается только после успешного preflight.
+- Back в preparation-состоянии закрывает оболочку и уничтожает player scope до того, как
+  отменённый callback сможет вызвать отложенный `action:add`, probe или Player.
 - Автопереход на следующую серию всегда повторно резолвит fingerprint по metadata нового `fileId`;
   нельзя переносить индексы аудио из другого файла пака.
 
@@ -257,12 +284,14 @@ generation: increasing number
 
 | Ситуация | Поведение |
 |---|---|
-| GST отсутствует, `/probe` вернул 404/timeout/невалидный JSON | Не открывать player; показать причину. Preference не сохранять и не удалять. |
+| GST отсутствует, `/probe` вернул сетевую/5xx ошибку или timeout | Оставить оболочку открытой и повторить probe один раз; после второго отказа закрыть её и показать причину. Preference не менять. |
+| `/probe` вернул 4xx или unsupported container | Не повторять детерминированную ошибку; закрыть оболочку и сообщить о неподдерживаемом формате. |
+| Back во время register/files/probe | Немедленно уничтожить player scope и закрыть оболочку; поздний ответ не запускает media и не делает отложенный `action:add`. |
 | Есть preference, но probe не нашёл однозначную дорожку | Не угадывать: начать GST с первой audio-дорожкой, показать краткое объяснение и оставить список дорожек. |
 | Запуск выбранной вручную GST-дорожки завершился ошибкой | Отбросить pending preference и сообщить, что перевод не переключён; не делать автоматический retry loop. |
 | В probe одна audio-дорожка | Всё равно передать её в `voiceovers`; выбор остаётся первой и preference не создаётся автоматически. |
 | Нет названия/языка | Показать «Дорожка 1», «Дорожка 2»; не скрывать рабочую дорожку. |
-| Пользователь выбрал дорожку во время закрытия/перехода серии | Игнорировать клик и поздние ответы по generation. |
+| Пользователь выбрал дорожку во время закрытия/перехода серии | Игнорировать клик и поздние ответы уничтоженного file scope. |
 | GST не прогрелся за 60 с или вернул fatal error | Сообщить, что перевод не переключён; без цикла повторов. |
 | Пользователь быстро выбирает два перевода | Первый переход единственный, последующие клики блокируются до результата. |
 

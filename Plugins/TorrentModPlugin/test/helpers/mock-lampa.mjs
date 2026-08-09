@@ -9,7 +9,16 @@ export function setupMockLampa() {
     const storage = new Map();
     const playerListeners = new Map();
     const videoListeners = new Map();
+    const controllers = new Map();
     let playerCurrentTime = 0;
+    let currentController = 'content';
+    let preparationShellMounted = false;
+    let preparationOverlayMounted = false;
+    let preparationStatus = '';
+    let playerShellDetachCount = 0;
+    let playerShellMounted = false;
+    let probeDelay = 0;
+    let probeFailuresRemaining = 0;
 
     function listenerApi(listeners) {
         return {
@@ -34,20 +43,43 @@ export function setupMockLampa() {
         playerListeners.clear();
         videoListeners.clear();
         playerCurrentTime = 0;
+        currentController = 'content';
+        preparationShellMounted = false;
+        preparationOverlayMounted = false;
+        preparationStatus = '';
+        playerShellDetachCount = 0;
+        playerShellMounted = false;
+        probeDelay = 0;
+        probeFailuresRemaining = 0;
     };
     globalThis.__setMockPlayerTime = (seconds) => { playerCurrentTime = seconds; };
     globalThis.__emitPlayerVideo = (event, payload) => emit(videoListeners, event, payload);
+    globalThis.__isPreparationShellMounted = () => preparationShellMounted;
+    globalThis.__isPreparationOverlayMounted = () => preparationOverlayMounted;
+    globalThis.__preparationStatus = () => preparationStatus;
+    globalThis.__playerShellDetachCount = () => playerShellDetachCount;
+    globalThis.__isPlayerShellMounted = () => playerShellMounted;
+    globalThis.__setProbeBehavior = (delay, failures) => {
+        probeDelay = delay || 0;
+        probeFailuresRemaining = failures === true ? Number.MAX_SAFE_INTEGER : (Number(failures) || 0);
+    };
+    globalThis.__invokeControllerBack = () => {
+        const controller = controllers.get(currentController);
+        if (controller && controller.back) controller.back();
+    };
 
     globalThis.window = globalThis;
     globalThis.document = { currentScript: { src: 'http://192.168.10.108:8095/plugins/torrent-mod.js' } };
     globalThis.Navigator = { move: () => {}, canmove: () => true };
 
     // Minimal jQuery: only what non-UI modules touch (smart-preload calls $('body') etc.).
-    globalThis.$ = () => ({
+    function jqueryNode() { return {
         find: () => globalThis.$(),
         on: () => globalThis.$(),
         append: () => globalThis.$(),
         remove: () => globalThis.$(),
+        removeClass: () => globalThis.$(),
+        detach: () => globalThis.$(),
         text: () => globalThis.$(),
         css: () => globalThis.$(),
         addClass: () => globalThis.$(),
@@ -58,7 +90,43 @@ export function setupMockLampa() {
         html: () => globalThis.$(),
         length: 0,
         is: () => false
-    });
+    }; }
+    const preparationTitle = jqueryNode();
+    preparationTitle.text = (value) => { if (value !== undefined) preparationStatus = String(value); return preparationTitle; };
+    const preparationOverlay = jqueryNode();
+    preparationOverlay.remove = () => { preparationOverlayMounted = false; return preparationOverlay; };
+    preparationOverlay.find = (selector) => selector === '.torrent-mod-player-preparing__title' ? preparationTitle : jqueryNode();
+    const playerShell = jqueryNode();
+    playerShell.addClass = (names) => {
+        if (String(names).includes('torrent-mod-player-preparing')) preparationShellMounted = true;
+        return playerShell;
+    };
+    playerShell.removeClass = (names) => {
+        if (String(names).includes('torrent-mod-player-preparing')) preparationShellMounted = false;
+        return playerShell;
+    };
+    playerShell.detach = () => {
+        playerShellDetachCount++;
+        preparationShellMounted = false;
+        preparationOverlayMounted = false;
+        playerShellMounted = false;
+        return playerShell;
+    };
+    playerShell.append = (node) => {
+        if (node === preparationOverlay) preparationOverlayMounted = true;
+        return playerShell;
+    };
+    playerShell.find = (selector) => selector === '.torrent-mod-player-preparing__title' ? preparationTitle : jqueryNode();
+    const bodyNode = jqueryNode();
+    bodyNode.append = (node) => {
+        if (node === playerShell) playerShellMounted = true;
+        return bodyNode;
+    };
+    globalThis.$ = (selector) => {
+        if (selector === 'body') return bodyNode;
+        if (typeof selector === 'string' && selector.includes('torrent-mod-player-preparing__overlay')) return preparationOverlay;
+        return jqueryNode();
+    };
     // smart-preload probes GST before every Player.play. Return a realistic mixed stream list so
     // the smoke suite exercises audio filtering and a concrete `audio=` GST URL.
     globalThis.$.ajax = (opts) => {
@@ -66,7 +134,13 @@ export function setupMockLampa() {
             done(fn) { this._done = fn; return this; },
             fail(fn) { this._fail = fn; return this; }
         };
+        const isProbe = opts.url && opts.url.includes('/gst/') && opts.url.includes('/probe');
         setTimeout(() => {
+            if (isProbe && probeFailuresRemaining > 0) {
+                probeFailuresRemaining--;
+                if (req._fail) req._fail({ responseText: 'probe failed' }, 'error', 'mock probe failure');
+                return;
+            }
             if (!req._done) return;
             let body = {};
             try { body = typeof opts.data === 'string' ? JSON.parse(opts.data) : (opts.data || {}); } catch {}
@@ -82,7 +156,7 @@ export function setupMockLampa() {
             else if (body.action === 'add' || body.action === 'get') req._done({ hash: 'mock-torrent-hash', file_stats: [] });
             else if (body.action === 'list') req._done([]);
             else req._done({});
-        }, 0);
+        }, isProbe ? probeDelay : 0);
         return req;
     };
 
@@ -137,8 +211,13 @@ export function setupMockLampa() {
         },
         Favorite: { add: () => {} },
         Player: {
-            play: (data) => { globalThis.__playerPlays.push(data); },
-            close: () => emit(playerListeners, 'destroy'),
+            play: (data) => {
+                playerShellMounted = true;
+                globalThis.__playerPlays.push(data);
+                emit(playerListeners, 'ready', data);
+            },
+            close: () => { playerShellMounted = false; emit(playerListeners, 'destroy'); },
+            render: () => playerShell,
             playlist: () => {}, callback: () => {}, listener: listenerApi(playerListeners)
         },
         PlayerVideo: { video: () => ({ currentTime: playerCurrentTime }), listener: listenerApi(videoListeners) },
@@ -206,8 +285,9 @@ export function setupMockLampa() {
         Activity: { push: () => {}, backward: () => {}, back: () => {}, all: () => [], call: () => {} },
         Torrent: { start: () => {} },
         Controller: {
-            add: () => {}, toggle: () => {}, collectionSet: () => {}, collectionFocus: () => {},
-            enabled: () => ({ name: 'content' }), move: () => {}, back: () => {}
+            add: (name, controller) => controllers.set(name, controller),
+            toggle: (name) => { currentController = name; }, collectionSet: () => {}, collectionFocus: () => {},
+            enabled: () => ({ name: currentController }), move: () => {}, back: () => {}
         },
         Component: { add: () => {} },
         Listener: { follow: () => {} },

@@ -122,13 +122,15 @@ log(seeders+1)×5) + min(8, log(peers+1)×2.5)` — сиды весили бол
 
 ```text
 candidate
+  → немедленно смонтировать native Player shell + видимый status overlay (без media URL)
   → validate/reuse hash
   → POST /torrents action:add, если нужно
   → Torserver.files(hash), polling до file_stats
   → pickBestFile()
   → fire-and-forget &preload cache nudge
   → GET /gst/{hash}/probe?index={fileId}
-  → Lampa.Player.play({GST url with audio=N, voiceovers, playlist})
+  → handoff без detach в Lampa.Player.play({GST url with audio=N, voiceovers, playlist})
+  → снять status overlay по Player.ready
 ```
 
 Единственный player transport — TorrServer GST/HLS. После probe выбранной дорожке передаётся её
@@ -142,6 +144,15 @@ http://<torrserver>/gst/<hash>/master.m3u8?index=<fileId>&audio=<trackIndex>
 файла; иначе выбирается первая audio-дорожка. Список передаётся в `voiceovers` всегда. Прямой
 browser stream и `url_reserve` больше не строятся.
 
+Для первого файла верхнеуровневый lazy URL недоступен в Lampa, поэтому ранний Player shell
+монтируется через публичный `Player.render()`. Он не получает фиктивный URL: обязательный probe
+по-прежнему идёт раньше любого media/GST task. Внутренние панели Lampa до `play()` скрыты, поэтому
+видимость ожидания обеспечивает plugin-owned overlay внутри того же Player DOM. При handoff DOM не
+отсоединяется, а overlay живёт до `Player.ready`. Back уничтожает player lifecycle scope. Каждый
+выбранный файл получает дочерний scope, которому принадлежат probe/retry и file-specific listeners;
+переход серии уничтожает старый file scope, но сохраняет Player session. Временный сбой probe
+повторяется один раз, 4xx/unsupported container считается детерминированным.
+
 Для GST передаётся `hls_manifest_timeout: 60000`. Для следующей серии playlist содержит lazy
 URL-функцию: перед запуском она делает такой же probe, заполняет `voiceovers` и только затем
 передаёт Lampa готовый GST URL.
@@ -153,8 +164,8 @@ Preload следующего файла season-pack остаётся тихим 
 
 ### Границы fallback
 
-- Если GST не отвечает или не находит audio-дорожку, Player не открывается; на direct stream
-  Torrent Mod не переключается.
+- Если GST не отвечает или не находит audio-дорожку, media source не запускается, ранняя оболочка
+  Player закрывается; на direct stream Torrent Mod не переключается.
 - Если GST тоже не работает, Torrent Mod не выбирает третий transport URL.
 - Если выбранный файл не воспроизводится, другой файл той же раздачи автоматически
   не перебирается.

@@ -64,6 +64,15 @@
             // replaces the "поиск…" text badge on episode rows — both plain CSS, no image assets or
             // animation library (this bundle stays a single classic <script>, see CLAUDE.md).
             '@keyframes torrent-mod-spin{to{transform:rotate(360deg)}}',
+            // Player preflight is intentionally rendered inside Lampa's own already-mounted Player
+            // shell. Native Info/Panel remain internally hidden until Player.play reaches ready,
+            // so this small overlay is the visible first frame during torrent registration, file
+            // metadata loading and GST probe. It is removed on Player.ready without detaching the
+            // shared Player DOM, avoiding both the initial and handoff black-screen gaps.
+            '.torrent-mod-player-preparing__overlay{position:absolute;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;padding:2em;background:#000;color:#fff;text-align:center;pointer-events:none}',
+            '.torrent-mod-player-preparing__spinner{display:block;width:2.8em;height:2.8em;border:.25em solid rgba(255,255,255,.22);border-top-color:#fff;border-radius:50%;animation:torrent-mod-spin .8s linear infinite}',
+            '.torrent-mod-player-preparing__title{max-width:80%;margin-top:1.15em;font-size:1.35em;line-height:1.3}',
+            '.torrent-mod-player-preparing__hint{margin-top:.7em;font-size:.8em;opacity:.5}',
             '.torrent-mod__spinner{display:inline-block;width:.9em;height:.9em;margin-right:.6em;vertical-align:-.15em;border:.15em solid rgba(255,255,255,.25);border-top-color:currentColor;border-radius:50%;animation:torrent-mod-spin .8s linear infinite}',
             '@keyframes torrent-mod-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}',
             '.torrent-mod-row__badge--shimmer{display:inline-block;width:6em;max-width:60%;height:.85em;border-radius:.2em;background:linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.22),rgba(255,255,255,.08));background-size:200% 100%;animation:torrent-mod-shimmer 1.4s ease-in-out infinite}',

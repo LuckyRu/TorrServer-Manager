@@ -11,10 +11,9 @@
     // Requested directly by the user after that: a designed, reusable scope, not another one-off
     // destroy() per module that has to be remembered.
     //
-    // Deliberately does NOT cover playback/smart-preload.js's own session lifecycle — that lifetime
-    // is intentionally DECOUPLED from this screen's (a download keeps polling after the user backs
-    // out, by design, documented at length elsewhere in CLAUDE.md) — this scope is specifically for
-    // "things that must die when the results screen does," not a plugin-wide catch-all.
+    // A scope is not tied to one particular UI. Playback uses the same primitive independently of
+    // the results screen: one player scope owns child file scopes. Disposing a parent disposes all
+    // children; disposing one child (episode switch) leaves its parent and sibling state alive.
     export function createLifecycle() {
         var alive = true;
         var disposers = [];
@@ -70,6 +69,20 @@
             return unsubscribe;
         }
 
+        // Nested scope with structural ownership. It is tracked by this parent immediately, so a
+        // parent teardown cannot forget the child. Explicitly disposing the child first untracks it
+        // from the parent and does not accumulate dead child disposers during a long playlist.
+        function child() {
+            var nested = createLifecycle();
+            var nestedDispose = nested.dispose;
+            var untrack = track(function () { nestedDispose(); });
+            nested.dispose = function (onDispose) {
+                untrack();
+                return nestedDispose(onDispose);
+            };
+            return nested;
+        }
+
         // Idempotent: a second dispose() call is a no-op (returns false) rather than re-running
         // cleanups or flipping already-false state. Runs cleanups in reverse registration order
         // (last-registered, first-disposed) — the usual convention for teardown stacks, and means a
@@ -94,6 +107,7 @@
             setTimeout: scopedSetTimeout,
             setInterval: scopedSetInterval,
             subscribe: scopedSubscribe,
+            child: child,
             dispose: dispose
         };
     }

@@ -32,6 +32,24 @@ runner.test('предпочтение совпадает по нормализо
     if (!selected || selected.index !== 9) throw new Error('не найден тот же перевод в другой дорожке: ' + JSON.stringify({ preference, nextEpisode, selected }));
 });
 
+runner.test('GStreamer caps не попадают в видимое имя кодека', () => {
+    const tracks = normalizeAudioTracks({ Tracks: [
+        {
+            Type: 'audio', Index: 0, Language: 'ru', Title: 'Кубик в Кубе', Channels: 6,
+            Codec: 'AC3, FRAMED=(BOOLEAN)TRUE, RATE=(INT)48000, CHANNELS=(INT)6, ALIGNMENT=(STRING)FRAME'
+        },
+        {
+            Type: 'audio', Index: 1, Language: 'en', Title: 'EN', Channels: 6,
+            Codec: 'audio/x-eac3; framed=(boolean)true; rate=(int)48000'
+        }
+    ] });
+
+    if (tracks[0].extra.codec !== 'AC3') throw new Error('caps AC3 не очищены: ' + tracks[0].extra.codec);
+    if (tracks[1].extra.codec !== 'audio/x-eac3') throw new Error('caps EAC3 не очищены: ' + tracks[1].extra.codec);
+    if (tracks.some((track) => /framed|rate|alignment/i.test(track.extra.codec))) throw new Error('caps протекли в UI');
+    if (tracks[1].title || tracks[1].label) throw new Error('язык EN продублирован в title/label: ' + JSON.stringify(tracks[1]));
+});
+
 runner.test('неоднозначное совпадение не угадывается', () => {
     const preference = { language: 'ru', titleNormalized: 'дубляж' };
     const selected = resolvePreferredTrack(preference, normalizeAudioTracks({ Tracks: [
