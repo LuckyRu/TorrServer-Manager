@@ -30,12 +30,18 @@
             searchGeneration: 0,      // guards explicit manual-query searches
 
             // Cosmetic-only timing/counter data for the search-progress widget (selectSearchProgress,
-            // results-selectors.js) — neither has any gating role, generation counters above already
-            // own staleness. poolStartedAt escalates the head status line's wording past ~15s of a
-            // cold search; poolAttempt is a display-only "попытка N" counter bumped by requery()
-            // when explicitly called as a user-triggered retry (not on a fresh query context).
+            // results-selectors.js) — none of these three have any gating role, generation counters
+            // above already own staleness. poolStartedAt escalates the head status line's wording
+            // past ~15s of a cold search; poolAttempt is a display-only "попытка N" counter bumped
+            // by requery() whenever it's explicitly called as a retry (auto or manual) rather than a
+            // fresh query context; poolAutoRetryAt is when episodes-interactor.js's own scheduled
+            // auto-retry (POOL_RETRY_DELAYS_MS, shared/state.js) will next fire, or null when none is
+            // pending — read by selectSearchProgress to show a live, honest "повтор через Nс" instead
+            // of silently retrying in the background (required directly by the user after a real
+            // repeated-search-failure report; see episodes-interactor.js's own comment).
             poolStartedAt: null,
             poolAttempt: 1,
+            poolAutoRetryAt: null,
 
             // Data
             episodesCache: null,      // TMDB season episodes (scoped to state.season)

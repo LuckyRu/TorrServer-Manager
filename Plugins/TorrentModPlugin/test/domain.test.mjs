@@ -246,6 +246,27 @@ runner.test('selectSearchProgress: loading/error/idle, эскалация фор
     const failed = selectSearchProgress(Object.assign({}, state, { poolStatus: 'error', poolAttempt: 3 }));
     if (failed.stage !== 'error' || failed.attempt !== 3) throw new Error('ожидал stage=error, attempt=3: ' + JSON.stringify(failed));
 });
+runner.test('selectSearchProgress/selectStatusText: стадия retrying с честным отсчётом до авто-повтора', () => {
+    const retrying = selectSearchProgress(Object.assign({}, state, {
+        poolStatus: 'error', poolAttempt: 2, poolAutoRetryAt: Date.now() + 4200
+    }));
+    if (retrying.stage !== 'retrying') throw new Error('ожидал stage=retrying, получил ' + JSON.stringify(retrying));
+    if (retrying.retryInMs <= 0 || retrying.retryInMs > 4200) throw new Error('retryInMs вне ожидаемого диапазона: ' + JSON.stringify(retrying));
+    if (typeof retrying.maxAttempts !== 'number' || retrying.maxAttempts < 2) throw new Error('maxAttempts не задан: ' + JSON.stringify(retrying));
+
+    const text = selectStatusText(Object.assign({}, state, {
+        statusText: '', poolStatus: 'error', poolAttempt: 2, poolAutoRetryAt: Date.now() + 4200
+    }));
+    if (text.indexOf('повтор через') < 0) throw new Error('ожидал честный текст про авто-повтор, получил: ' + text);
+
+    // Момент авто-повтора уже прошёл (таймер вот-вот сработает по-настоящему) — это уже не
+    // "retrying", а обычный "error" (не должно вечно висеть в retrying, если реальный вызов почему-то
+    // задержался).
+    const overdue = selectSearchProgress(Object.assign({}, state, {
+        poolStatus: 'error', poolAttempt: 2, poolAutoRetryAt: Date.now() - 10
+    }));
+    if (overdue.stage !== 'error') throw new Error('просроченный poolAutoRetryAt не должен давать stage=retrying: ' + JSON.stringify(overdue));
+});
 runner.test('selectPickerData: empty и error различаются, error несёт retrySeason', () => {
     const emptyState = Object.assign({}, state, { pool: [], poolStatus: 'ready', picker: { open: true, episode: 99 } });
     const empty = selectPickerData({ movie: tvMovie }, emptyState, null);

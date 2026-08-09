@@ -504,8 +504,9 @@ runner.test('крах после провала поиска: открытие �
     await flushMicrotasks();
     // /api/torrent-search всё ещё не замокан — ленивая дозагрузка сезона (ensureSeasonLoaded,
     // теперь запускаемая реактивным watcher'ом внутри selection-interactor, а не самим openPicker)
-    // тоже проваливается, но КОРРЕКТНО (без рекурсии), помечая сезон как 'error'
-    await new Promise((r) => setTimeout(r, 10));
+    // тоже проваливается, но КОРРЕКТНО (без рекурсии). Сезонный авто-повтор (SEASON_RETRY_DELAYS_MS)
+    // держит seasonLoads[2] в 'loading' ещё некоторое время — ждём весь путь до 'error'.
+    await new Promise((r) => setTimeout(r, 2800));
 
     const state = domain.store.get();
     if (!state.seasonLoads || state.seasonLoads[2] !== 'error') {
@@ -513,6 +514,7 @@ runner.test('крах после провала поиска: открытие �
     }
     const picker = pickerData(domain, object);
     if (picker.status !== 'error') throw new Error('ожидал picker.status=error, получил ' + picker.status);
+    domain.destroy(); // отменяет любые ещё не сработавшие таймеры пула/сезона перед следующим тестом
 });
 
 runner.test('дедлок при переоткрытии панели для другой серии, пока идёт дозагрузка сезона', async () => {
@@ -626,8 +628,10 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
     });
-    // Общий пул сразу пуст и успешен; первый вызов ленивой дозагрузки сезона (запущенный watcher'ом
-    // при открытии панели) проваливается; второй — уже после ручного retrySeasonLoad — успешен.
+    // Общий пул сразу пуст и успешен; первая попытка ленивой дозагрузки сезона (запущенная
+    // watcher'ом при открытии панели) проваливается, ЕЁ СОБСТВЕННЫЙ авто-повтор (SEASON_RETRY_DELAYS_MS,
+    // ровно одна попытка) тоже проваливается — сезон реально исчерпывает авто-повторы и оседает в
+    // 'error'; только ПОСЛЕ этого проверяем ручной retrySeasonLoad.
     let torrentSearchCalls = 0;
     globalThis.__mockReguest((url) => {
         if (!url.includes('/api/torrent-search')) return false;
@@ -636,7 +640,7 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     }, { results: [], indexers: [] }, 0);
     globalThis.__mockReguest((url) => {
         if (!url.includes('/api/torrent-search')) return false;
-        return torrentSearchCalls === 2;
+        return torrentSearchCalls === 2 || torrentSearchCalls === 3;
     }, null); // unmatched-shaped: passing null data makes mock-Reguest call the fail callback
 
     const object = { movie: tvMovie, season: 2 };
@@ -649,11 +653,20 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     await new Promise((r) => setTimeout(r, 10));
 
     let picker = pickerData(domain, object);
-    if (picker.status !== 'error' || !picker.retrySeason) {
-        throw new Error('ожидал status=error после провала дозагрузки, получил ' + JSON.stringify(picker));
+    if (picker.status !== 'loading') {
+        throw new Error('ожидал status=loading (сезонный авто-повтор ещё не сработал), получил ' + JSON.stringify(picker));
     }
 
-    // Третий мок (свежий успешный ответ) для повторной попытки после ручного retry.
+    // Дождаться срабатывания сезонного авто-повтора (SEASON_RETRY_DELAYS_MS[0]) — тоже провал,
+    // авто-повторы исчерпаны, сезон реально оседает в 'error'.
+    await new Promise((r) => setTimeout(r, 2800));
+
+    picker = pickerData(domain, object);
+    if (picker.status !== 'error' || !picker.retrySeason) {
+        throw new Error('ожидал status=error после исчерпания авто-повторов, получил ' + JSON.stringify(picker));
+    }
+
+    // Свежий успешный мок для РУЧНОЙ повторной попытки.
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
         results: [jackettRaw('Футурама / Futurama S02E01 1080p WEB-DL', 8, 4, 'eeee')],
         indexers: []
@@ -666,6 +679,7 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     if (picker.status !== 'ready' || !picker.items.length) {
         throw new Error('ожидал восстановление после retrySeasonLoad, получил ' + JSON.stringify(picker));
     }
+    domain.destroy();
 });
 
 runner.test('панель, открытая ДО того как пул хоть раз ответил, не падает на null pool', async () => {
@@ -708,6 +722,83 @@ runner.test('панель, открытая ДО того как пул хоть
 
     const picker = pickerData(domain, object);
     if (picker.status !== 'loading') throw new Error('ожидал status=loading пока pool ещё null, получил ' + JSON.stringify(picker));
+    domain.destroy();
+    // Дать 200мс-мок реально отработать ВНУТРИ этого теста, а не позже, посреди следующего —
+    // mock-Reguest'а собственный setTimeout не привязан ни к domain.destroy(), ни к generation-guard,
+    // так что не дождавшийся ответа мок иначе "выстреливает" во время следующего теста и путает его
+    // собственный счётчик вызовов /api/torrent-search (нашлось именно так — следующий тест ловил
+    // лишний вызов).
+    await new Promise((r) => setTimeout(r, 200));
+});
+
+runner.test('loadAllTorrents: сетевой сбой авто-повторяется и восстанавливается без ручного действия', async () => {
+    // Требование пользователя напрямую: "повторы при сетевых сбоях нужны обязательно" — реальный
+    // репорт про "Менталист 2008", где поиск падал дважды подряд и помогал только ручной перезапуск
+    // плагина. Первая попытка проваливается, вторая (реальный запланированный авто-повтор,
+    // POOL_RETRY_DELAYS_MS[0]=3с) успешна — без единого ручного действия.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
+    });
+    let torrentSearchCalls = 0;
+    globalThis.__mockReguest((url) => {
+        if (!url.includes('/api/torrent-search')) return false;
+        torrentSearchCalls++;
+        return torrentSearchCalls === 1;
+    }, null); // первая попытка — сбой сети/Jackett
+    globalThis.__mockReguest((url) => {
+        if (!url.includes('/api/torrent-search')) return false;
+        return torrentSearchCalls === 2;
+    }, { results: [jackettRaw('Менталист / The Mentalist S01E01 1080p WEB-DL', 20, 8, 'ffff')], indexers: [] });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((r) => setTimeout(r, 30));
+
+    let state = domain.store.get();
+    if (state.poolStatus !== 'error') throw new Error('ожидал первый сбой poolStatus=error, получил ' + state.poolStatus);
+    if (!state.poolAutoRetryAt || state.poolAutoRetryAt <= Date.now()) {
+        throw new Error('ожидал запланированный авто-повтор в будущем, получил poolAutoRetryAt=' + state.poolAutoRetryAt);
+    }
+
+    // Реально ждём срабатывания первого запланированного авто-повтора (POOL_RETRY_DELAYS_MS[0]=3с).
+    await new Promise((r) => setTimeout(r, 3300));
+
+    state = domain.store.get();
+    if (state.poolStatus !== 'ready') throw new Error('ожидал восстановление после авто-повтора, получил poolStatus=' + state.poolStatus);
+    if (!state.pool || state.pool.length !== 1) throw new Error('ожидал 1 раздачу после авто-повтора, получил ' + JSON.stringify(state.pool));
+    if (state.poolAttempt !== 2) throw new Error('ожидал poolAttempt=2 после одного авто-повтора, получил ' + state.poolAttempt);
+    if (state.poolAutoRetryAt !== null) throw new Error('poolAutoRetryAt должен сброситься после успеха, получил ' + state.poolAutoRetryAt);
+    domain.destroy();
+});
+
+runner.test('domain.destroy() отменяет запланированный авто-повтор пула', async () => {
+    // Без отмены таймера домен, уже уничтоженный (пользователь ушёл с экрана), продолжал бы молча
+    // повторять поиск в фоне и в итоге дёрнул бы store.patch() у мёртвого стора.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), null); // всегда проваливается
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((r) => setTimeout(r, 30));
+
+    if (domain.store.get().poolStatus !== 'error') throw new Error('ожидал первый сбой перед destroy()');
+    const requestsBeforeDestroy = globalThis.__requestLog.filter((u) => u.includes('/api/torrent-search')).length;
+
+    domain.destroy();
+    await new Promise((r) => setTimeout(r, 3300)); // пережидаем время первого запланированного авто-повтора
+
+    const requestsAfterDestroy = globalThis.__requestLog.filter((u) => u.includes('/api/torrent-search')).length;
+    if (requestsAfterDestroy !== requestsBeforeDestroy) {
+        throw new Error('destroy() не отменил авто-повтор — новый запрос всё равно улетел (' + requestsBeforeDestroy + ' → ' + requestsAfterDestroy + ')');
+    }
 });
 
 await runner.run();

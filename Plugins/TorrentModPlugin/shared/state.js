@@ -15,3 +15,14 @@
     // branch is the `else`, usually series-shaped, instead of erroring (found in review).
     export const MODE_MOVIE = 'movie';
     export const MODE_SERIES = 'series';
+
+    // Bounded auto-retry for a failed whole-work pool search (network/Jackett failure) — a real
+    // user complaint drove this: a search that fails on the first attempt often succeeds on a
+    // later one (transient Jackett/indexer hiccup), and requiring a manual "back out and reopen
+    // the plugin" every time was the actual reported pain, not a hypothetical one. Delays escalate
+    // (3s/6s/12s/20s) rather than hammering Jackett at a fixed interval. Shared here (not just
+    // local to episodes-interactor.js, which schedules them) because results-selectors.js's
+    // selectSearchProgress needs the total attempt count too, for the honest "попытка N из M"
+    // status-line wording — a single source of truth so the two can't silently drift apart.
+    export const POOL_RETRY_DELAYS_MS = [3000, 6000, 12000, 20000];
+    export const POOL_MAX_ATTEMPTS = POOL_RETRY_DELAYS_MS.length + 1; // + the initial attempt

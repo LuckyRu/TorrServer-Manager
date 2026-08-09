@@ -8,7 +8,7 @@
     // construction and costs nothing worth avoiding to recompute on each render.
     import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeText } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
-    import { MODE_SERIES } from '../shared/state.js';
+    import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
 
     export function selectBusy(state) {
         return state.episodesStatus === 'loading' || state.poolStatus === 'loading' || state.searchStatus === 'loading';
@@ -109,14 +109,28 @@
     // not which of three independent async ops is currently running — see CLAUDE.md). Loading wins
     // over error wins over idle: if the pool failed but a lazy per-season retry is now running for
     // the season on screen, the combined stage is still 'loading', not 'error'.
+    //
+    // 'retrying': a network/Jackett failure now auto-retries with a live, honest countdown instead
+    // of silently retrying in the background or requiring a manual "Повторить" every time —
+    // required directly by the user after a real repeated-search-failure report ("сбой поиска был 2
+    // раза, два раза переходил назад и запускал плагин заново"). `poolAutoRetryAt` is written by
+    // episodes-interactor.js's own scheduled retry; this only ever reads it, never schedules
+    // anything itself (selectors stay pure).
     export function selectSearchProgress(state) {
         var seasonStatus = state.seasonLoads && state.seasonLoads[state.season];
         var loading = state.poolStatus === 'loading' || seasonStatus === 'loading' || state.searchStatus === 'loading';
-        var failed = state.poolStatus === 'error' || seasonStatus === 'error' || state.searchStatus === 'error';
         if (loading) {
             var elapsedMs = (state.poolStatus === 'loading' && state.poolStartedAt) ? Date.now() - state.poolStartedAt : null;
             return { stage: 'loading', elapsedMs: elapsedMs, slow: elapsedMs !== null && elapsedMs >= SLOW_SEARCH_THRESHOLD_MS };
         }
+        if (state.poolAutoRetryAt && state.poolAutoRetryAt > Date.now()) {
+            return {
+                stage: 'retrying', elapsedMs: null, slow: false,
+                retryInMs: state.poolAutoRetryAt - Date.now(),
+                attempt: state.poolAttempt || 1, maxAttempts: POOL_MAX_ATTEMPTS
+            };
+        }
+        var failed = state.poolStatus === 'error' || seasonStatus === 'error' || state.searchStatus === 'error';
         if (failed) return { stage: 'error', elapsedMs: null, slow: false, attempt: state.poolAttempt || 1 };
         return { stage: 'idle', elapsedMs: null, slow: false };
     }
@@ -137,8 +151,15 @@
                 ? 'Опрашиваем трекеры — некоторые отвечают медленно, обычно до 40 секунд'
                 : 'Ищем раздачи по всем трекерам…';
         }
+        if (progress.stage === 'retrying') {
+            // A real, deterministic setTimeout backs this countdown (not network-speed-dependent
+            // like the "slow search" wording above), so a live ticking number here is accurate, not
+            // misleading — unlike a raw search-duration timer, this one can't under/overshoot.
+            var seconds = Math.max(1, Math.ceil(progress.retryInMs / 1000));
+            return 'Не удалось получить раздачи — повтор через ' + seconds + ' с (попытка ' + (progress.attempt + 1) + ' из ' + progress.maxAttempts + ')';
+        }
         if (progress.stage === 'error') {
-            return 'Не удалось получить раздачи — Jackett не ответил' + (progress.attempt > 1 ? ' (попытка ' + progress.attempt + ')' : '');
+            return 'Не удалось получить раздачи — Jackett не ответил' + (progress.attempt > 1 ? ' (попытка ' + progress.attempt + ' из ' + POOL_MAX_ATTEMPTS + ')' : '');
         }
         return '';
     }

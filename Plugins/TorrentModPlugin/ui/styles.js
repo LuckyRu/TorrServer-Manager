@@ -24,8 +24,16 @@
             // of unaccounted space between the head region and .explorer__files-body, throwing
             // off the .minus() math and breaking left/right scroll bottom alignment (confirmed
             // live: the gap matched this rule's old `1em` bottom margin to within 0.01px).
-            // Padding doesn't collapse, so it stays inside the height .minus() already measures.
-            '.torrent-mod__status{opacity:.7;padding:0 0 1em 1.5em;min-height:1.2em}',
+            // Padding doesn't collapse, so it stays inside the height .minus() already measures —
+            // same reasoning now applies to the TOP padding added below: safe from collapse for the
+            // identical reason, not just the bottom one. Top padding was 0 originally (the line sat
+            // flush against the toolbar above it); the widget is explicitly allowed to be taller now
+            // (spinner + longer escalation/retry-countdown wording, occasionally two lines) and
+            // needs visual breathing room from the toolbar above it to still read as one coherent
+            // block instead of a cramped afterthought — user-requested explicitly. min-height bumped
+            // to comfortably fit the spinner glyph + a line of text without the box visibly
+            // resizing on every spinner appear/disappear.
+            '.torrent-mod__status{opacity:.7;padding:1em 0 1em 1.5em;min-height:1.6em}',
             // Horizontal padding on the list + matching negative margin on each row — copied from
             // Online Mod's own real computed values (its scroll body carries a `torrent-list` class
             // with ~1.4em horizontal padding, each `.online` row counters it with ~-.75em margin) —

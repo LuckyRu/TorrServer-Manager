@@ -14,7 +14,7 @@
     import { searchMovieTorrents } from '../search/movie-search.js';
     import { searchSeriesTorrents } from '../search/series-search.js';
     import { compact, notify } from '../shared/utils.js';
-    import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
+    import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
     import { log, warn } from '../shared/core/log.js';
 
@@ -34,6 +34,12 @@
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
         var isDestroyed = options.isDestroyed;
+
+        // Pending auto-retry timers — cancelled on destroy() so a screen the user already left
+        // doesn't keep silently retrying (and, for the pool one, doesn't fire requery() against a
+        // destroyed store).
+        var poolAutoRetryTimer = null;
+        var seasonAutoRetryTimers = {}; // season -> timer
 
         function loadEpisodes() {
             var state = store.get();
@@ -126,21 +132,44 @@
                 // search that genuinely ran and found nothing (badges/messages downstream couldn't
                 // tell the two apart either, see their own comments). Reported directly by the
                 // user testing this exact path live: a Jackett 502/timeout on the aggregate
-                // all-indexers query left them with no idea anything had gone wrong at all. An
-                // explicit toast the moment the FIRST-ever whole-work search fails is cheap and
-                // immediate — the lazy per-season retry (ensureSeasonLoaded) stays silent on its
-                // own failure as before, that one's a narrower, expected-to-sometimes-fail path,
-                // not the primary "did the search even work" signal.
+                // all-indexers query left them with no idea anything had gone wrong at all.
+                //
+                // A network/Jackett failure is now retried automatically, with escalating delays
+                // (POOL_RETRY_DELAYS_MS, shared/state.js) — required directly by the user after a
+                // real repeated-failure report ("сбой поиска был 2 раза, два раза переходил назад
+                // и запускал плагин заново"): a transient failure that a manual relaunch fixes is
+                // exactly the case auto-retry exists for, and making the user do that dance by hand
+                // every time is the actual product failure, not a hypothetical one. Kept HONEST per
+                // the same conversation ("можно честно информировать пользователя") — every retry
+                // is visible in the status line via selectSearchProgress's 'retrying' stage (a live
+                // countdown + "попытка N из M"), never silent. Once POOL_RETRY_DELAYS_MS is
+                // exhausted, this falls back to exactly the old behaviour: a toast, poolStatus
+                // 'error', and the existing manual "Повторить" surfaces (emptyPoolMessage for
+                // movies; badges/status text for series) — auto-retry raises the floor, it doesn't
+                // replace the escape hatch for a genuinely persistent outage.
                 if (response.failed) {
-                    warn('episodes', 'loadAllTorrents: поиск не удался');
+                    var current = store.get();
+                    var attempt = current.poolAttempt || 1;
+                    var retryIndex = attempt - 1;
+                    if (retryIndex < POOL_RETRY_DELAYS_MS.length) {
+                        var delayMs = POOL_RETRY_DELAYS_MS[retryIndex];
+                        warn('episodes', 'loadAllTorrents: поиск не удался, авто-повтор через ' + delayMs + 'мс (попытка ' + (attempt + 1) + ')');
+                        store.patch({ pool: [], poolStatus: 'error', poolAutoRetryAt: Date.now() + delayMs });
+                        if (poolAutoRetryTimer) clearTimeout(poolAutoRetryTimer);
+                        poolAutoRetryTimer = setTimeout(function () {
+                            poolAutoRetryTimer = null;
+                            if (isDestroyed()) return;
+                            requery(onLoaded, true);
+                        }, delayMs);
+                        return;
+                    }
+                    warn('episodes', 'loadAllTorrents: поиск не удался, авто-повторы исчерпаны');
                     notify('Не удалось получить раздачи — проверьте Jackett или повторите позже');
+                    store.patch({ pool: [], poolStatus: 'error', poolAutoRetryAt: null });
                 } else {
                     log('episodes', 'loadAllTorrents успех, раздач в пуле=' + response.results.length);
+                    store.patch({ pool: response.results, poolStatus: 'ready', poolAutoRetryAt: null });
                 }
-                store.patch({
-                    pool: response.failed ? [] : response.results,
-                    poolStatus: response.failed ? 'error' : 'ready'
-                });
                 if (typeof onLoaded === 'function') onLoaded();
                 var pending = pendingOnLoaded;
                 pendingOnLoaded = null;
@@ -189,6 +218,18 @@
         // left for a caller to get wrong. Callers that need to react to this season eventually
         // settling now do so by subscribing to the store (selection-interactor's own watcher), the
         // same way the View reacts to it for the row badges — reading state, not being called back.
+        // Short, fewer-attempts retry ladder than the pool's own (SEASON_RETRY_DELAYS_MS vs.
+        // POOL_RETRY_DELAYS_MS) — this is a background operation (per-season lazy top-up, never its
+        // own visible stage per product decision — see selectSearchProgress), not the main blocking
+        // search the pool one is. seasonLoads[season] deliberately stays 'loading' for the WHOLE
+        // retry ladder, only flipping to 'error' once exhausted — a badge reading "поиск…" that
+        // occasionally takes a bit longer is honest; flickering to "ошибка поиска" and back on every
+        // retry attempt would not be. seasonAttempts is closure-local, not stored in domain state:
+        // nothing downstream needs to render "попытка N" for this particular retry (unlike the pool
+        // one), so there's no reason to make it observable state.
+        var SEASON_RETRY_DELAYS_MS = [2500];
+        var seasonAttempts = {};
+
         function ensureSeasonLoaded(season) {
             var state = store.get();
             if (!hasSeasons || state.customQuery) return;
@@ -200,19 +241,47 @@
             loads[season] = 'loading';
             store.patch({ seasonLoads: loads });
             log('episodes', 'ensureSeasonLoaded: дозагрузка сезона ' + season + ' (в общем пуле для него пусто)');
+            delete seasonAttempts[season]; // fresh start, including for a manual retrySeasonLoad
+            runSeasonSearch(season, generation);
+        }
 
+        function runSeasonSearch(season, generation) {
             var target = { movie: object.movie, season: season, episode: 0 };
             searchSeriesTorrents(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
                     log('episodes', 'ensureSeasonLoaded(' + season + ') отброшен как устаревший');
+                    delete seasonAttempts[season];
                     return;
                 }
+                if (response.failed) {
+                    var attempt = seasonAttempts[season] || 1;
+                    if (attempt - 1 < SEASON_RETRY_DELAYS_MS.length) {
+                        var delayMs = SEASON_RETRY_DELAYS_MS[attempt - 1];
+                        seasonAttempts[season] = attempt + 1;
+                        warn('episodes', 'ensureSeasonLoaded(' + season + ') не удался, авто-повтор через ' + delayMs + 'мс');
+                        if (seasonAutoRetryTimers[season]) clearTimeout(seasonAutoRetryTimers[season]);
+                        seasonAutoRetryTimers[season] = setTimeout(function () {
+                            delete seasonAutoRetryTimers[season];
+                            if (isDestroyed()) return;
+                            runSeasonSearch(season, generation);
+                        }, delayMs);
+                        return;
+                    }
+                    delete seasonAttempts[season];
+                    warn('episodes', 'ensureSeasonLoaded(' + season + ') авто-повторы исчерпаны');
+                    var current = store.get();
+                    var loadsFailed = Object.assign({}, current.seasonLoads || {});
+                    loadsFailed[season] = 'error';
+                    store.patch({ seasonLoads: loadsFailed });
+                    return;
+                }
+                delete seasonAttempts[season];
                 var current = store.get();
-                var merged = mergePools(current.pool || [], response.failed ? [] : response.results);
-                var loads2 = Object.assign({}, current.seasonLoads || {});
-                loads2[season] = response.failed ? 'error' : 'ready';
-                log('episodes', 'ensureSeasonLoaded(' + season + ') ' + (response.failed ? 'ошибка' : 'успех') + ', пул после мержа=' + merged.length);
-                store.patch({ pool: merged, seasonLoads: loads2 });
+                var merged = mergePools(current.pool || [], response.results);
+                var loadsReady = Object.assign({}, current.seasonLoads || {});
+                loadsReady[season] = 'ready';
+                log('episodes', 'ensureSeasonLoaded(' + season + ') успех, пул после мержа=' + merged.length);
+                store.patch({ pool: merged, seasonLoads: loadsReady });
             });
         }
 
@@ -262,10 +331,14 @@
         function requery(onLoaded, isRetry) {
             var state = store.get();
             log('episodes', 'requery: сброс пула под новым запросом, customQuery=' + state.customQuery + (isRetry ? ', попытка ' + ((state.poolAttempt || 1) + 1) : ''));
+            // A manual "Повторить" press can land while an auto-retry for the SAME failure is
+            // already ticking (e.g. the user didn't want to wait) — cancel it so the two don't both
+            // fire and race each other into two overlapping loadAllTorrents calls.
+            if (poolAutoRetryTimer) { clearTimeout(poolAutoRetryTimer); poolAutoRetryTimer = null; }
             // New query context: old pool and per-season coverage are both invalid.
             store.patch({
                 pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {},
-                poolAttempt: isRetry ? (state.poolAttempt || 1) + 1 : 1
+                poolAttempt: isRetry ? (state.poolAttempt || 1) + 1 : 1, poolAutoRetryAt: null
             });
             loadAllTorrents(onLoaded);
         }
@@ -276,6 +349,17 @@
             loadAllTorrents();
         }
 
+        // Cancels every pending auto-retry timer (pool + all seasons) — without this, a screen the
+        // user already backed out of would keep silently retrying in the background and eventually
+        // call requery()/store.patch() against a destroyed store.
+        function destroy() {
+            if (poolAutoRetryTimer) { clearTimeout(poolAutoRetryTimer); poolAutoRetryTimer = null; }
+            Object.keys(seasonAutoRetryTimers).forEach(function (season) {
+                clearTimeout(seasonAutoRetryTimers[season]);
+            });
+            seasonAutoRetryTimers = {};
+        }
+
         return {
             start: start,
             loadEpisodes: loadEpisodes,
@@ -284,6 +368,7 @@
             retrySeasonLoad: retrySeasonLoad,
             setSeason: setSeason,
             showEpisodeList: showEpisodeList,
-            requery: requery
+            requery: requery,
+            destroy: destroy
         };
     }

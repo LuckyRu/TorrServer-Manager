@@ -638,27 +638,44 @@
         // wipe it on every call, so this builds markup instead of using jQuery's plain .text().
         function setStatus(text, loading) {
             status.html((loading ? '<span class="torrent-mod__spinner"></span>' : '') + escapeHtml(text));
+            // status can now genuinely wrap onto more than one line (the 15s-escalation and
+            // auto-retry-countdown wording are both longer than the original static sentence, plus
+            // the spinner glyph) — its own height feeds directly into scroll.minus()'s math (status
+            // lives inside .explorer__files-head, which the scroll area subtracts as a whole).
+            // Without this, a status change that doesn't happen to coincide with a grid-content
+            // change (renderEpisodes/renderCandidateList, the only other Lampa.Layer.update() call
+            // site) would leave that math stale — the exact "third independent cause" of the
+            // left/right scroll-bottom gap already documented and fixed once before for the same
+            // underlying reason (status's own height changing repeatedly — see CLAUDE.md).
+            try { Lampa.Layer.update(); } catch (e) {}
         }
 
-        // The status line's wording escalates past ~15s of a cold search (selectStatusText, via
-        // selectSearchProgress) purely as a function of wall-clock time — nothing else in the store
-        // necessarily changes during that wait, so without an explicit tick nothing would ever
-        // re-check it and the escalation would silently never appear. A single interval, started only
-        // while search is actually loading and cleared the moment it isn't (or the view is destroyed),
-        // is cheap: this is a TV remote UI, a slow poll while genuinely waiting on a ~40s network call
-        // is not meaningfully different from the render cadence store.patch already produces elsewhere.
+        // The status line's wording depends on wall-clock time in TWO ways — the 15s cold-search
+        // escalation (selectStatusText, via selectSearchProgress) AND, now, a live "повтор через
+        // Nс" countdown while an auto-retry is scheduled — neither is triggered by any single state
+        // transition, so without an explicit tick they'd never re-check and would silently never
+        // appear/update. One interval, cadence chosen by stage: 5s while genuinely loading (this is
+        // a TV remote UI, a slow poll during a ~40s network wait is not meaningfully different from
+        // the render cadence store.patch already produces elsewhere) but 1s while 'retrying' — that
+        // countdown is backed by a real deterministic setTimeout (not network speed), so a smooth
+        // per-second tick is accurate, not misleading, and reads far more "the app is actually doing
+        // something" than a coarse 5s jump would for a wait that's usually under 20s total.
         var statusTickTimer = null;
-        function ensureStatusTicking(loading) {
-            if (loading && !statusTickTimer) {
-                statusTickTimer = setInterval(function () {
-                    if (viewDestroyed) return;
-                    var state = domain.store.get();
-                    setStatus(selectStatusText(state), selectSearchProgress(state).stage === 'loading');
-                }, 5000);
-            } else if (!loading && statusTickTimer) {
-                clearInterval(statusTickTimer);
-                statusTickTimer = null;
+        var statusTickStage = null;
+        function ensureStatusTicking(stage) {
+            var active = stage === 'loading' || stage === 'retrying';
+            if (!active) {
+                if (statusTickTimer) { clearInterval(statusTickTimer); statusTickTimer = null; statusTickStage = null; }
+                return;
             }
+            if (statusTickTimer && statusTickStage === stage) return; // already ticking at the right cadence
+            if (statusTickTimer) clearInterval(statusTickTimer);
+            statusTickStage = stage;
+            statusTickTimer = setInterval(function () {
+                if (viewDestroyed) return;
+                var state = domain.store.get();
+                setStatus(selectStatusText(state), selectSearchProgress(state).stage === 'loading');
+            }, stage === 'retrying' ? 1000 : 5000);
         }
 
         // Renders torrent candidates as the screen's own primary content instead of a Select overlay —
@@ -733,15 +750,16 @@
             // blank for however long that search took with nothing else on screen saying so either
             // (see selectEpisodeBadges' own comment on the same underlying report).
             var progressNow = selectSearchProgress(state);
+            var progressPrev = selectSearchProgress(previous);
             var statusTextNow = selectStatusText(state);
-            var loadingNow = progressNow.stage === 'loading';
-            if (statusTextNow !== selectStatusText(previous) || loadingNow !== (selectSearchProgress(previous).stage === 'loading')) {
-                setStatus(statusTextNow, loadingNow);
+            if (statusTextNow !== selectStatusText(previous) || progressNow.stage !== progressPrev.stage) {
+                setStatus(statusTextNow, progressNow.stage === 'loading');
             }
-            // The 15s-escalation wording depends on wall-clock elapsed time, not on any single state
-            // transition — nothing else may patch the store during a long wait, so a ticking timer
-            // (only while actually loading) is what makes the escalation actually appear on screen.
-            ensureStatusTicking(loadingNow);
+            // Both the 15s cold-search escalation and the auto-retry countdown depend on wall-clock
+            // elapsed time, not on any single state transition — nothing else may patch the store
+            // during either wait, so a ticking timer (see ensureStatusTicking's own comment for why
+            // the cadence differs by stage) is what makes them actually appear/update on screen.
+            ensureStatusTicking(progressNow.stage);
             // Side picker panel: open/close on the flag, re-render its list whenever anything
             // selectPickerData reads from could have changed its output — the picker's own content
             // isn't stored (state.picker only ever carries open/episode now, see its own comment in

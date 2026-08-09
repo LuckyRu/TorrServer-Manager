@@ -1499,6 +1499,94 @@ entry-point/build-config layer above all of them.
     View takes) and asserts no exception. Verified live: pushed a real `torrent_mod` Activity with
     the search artificially delayed and triggered the content controller's `right()` before it
     resolved — no crash, only the same pre-existing unrelated console noise.
+  - **Bounded, honestly-announced auto-retry for network/Jackett search failures** — the "no
+    auto-retry, manual button only" product decision from the search-progress-widget consilium
+    (above) was explicitly overridden by direct user instruction after a real, concrete failure
+    report: "Менталист 2008" search failed **twice in a row**, and the only fix each time was
+    backing out and relaunching the plugin by hand — reasonably read as the actual product failure,
+    not evidence the earlier no-auto-retry reasoning was wrong in general (disorienting silent state
+    changes are still worth avoiding — the new design keeps every retry visibly, honestly announced,
+    per the user's own explicit allowance: "можно честно информировать пользователя").
+    - **`POOL_RETRY_DELAYS_MS = [3000, 6000, 12000, 20000]`** (`shared/state.js`, shared with the
+      selector so the two can't drift on the total-attempts count) — up to 4 automatic retries with
+      escalating backoff after the whole-work pool search fails, 5 attempts total before falling
+      back to the pre-existing manual "Повторить" surfaces (`emptyPoolMessage` for movies;
+      badges/status text for series). `episodes-interactor.js`'s `loadAllTorrents` schedules each
+      retry via `setTimeout` + `requery(onLoaded, true)` (the existing `isRetry` flag from the
+      earlier attempt-counter work climbs `poolAttempt` for real now, not just for a manual press).
+      A separate, shorter ladder — **`SEASON_RETRY_DELAYS_MS = [2500]`**, one retry — covers the
+      per-season lazy fetch (`ensureSeasonLoaded`/new `runSeasonSearch`): deliberately lighter than
+      the pool's, since this is still a background operation per the earlier product decision (not
+      surfaced as its own stage) — `seasonLoads[season]` stays `'loading'` through the whole retry
+      window rather than flickering to `'error'` and back, since a badge that occasionally takes a
+      bit longer is honest, a badge that flickers between "поиск…" and "ошибка поиска" on every
+      retry attempt would not be.
+    - **New `selectSearchProgress` stage: `'retrying'`** — reads a new, purely cosmetic
+      `state.poolAutoRetryAt` timestamp (written only by `loadAllTorrents`'s own scheduling, no
+      gating role — `poolGeneration` alone still protects against a stale response landing, exactly
+      as before) and renders a LIVE, honest countdown: `selectStatusText` produces "Не удалось
+      получить раздачи — повтор через N с (попытка X из Y)", ticking every 1s (a NEW `1000ms` cadence
+      in `ensureStatusTicking`, `ui/results-screen.js`, alongside the existing `5000ms` loading
+      cadence — chosen by stage). Deliberately NOT the same "avoid a raw countdown" caution the
+      15s-escalation wording follows: that one avoids a countdown because it's tracking real,
+      variable NETWORK time (can under/overshoot, reading as frozen); this one is backed by the
+      plugin's own deterministic `setTimeout`, so a precise per-second tick is accurate, not
+      misleading — the opposite failure mode from the one the caution exists for.
+    - **`episodes-interactor.js` gained a `destroy()`** (previously only `selection-interactor.js`
+      had one) — cancels the pool's own pending auto-retry timer plus every season's, wired into
+      `results-domain.js`'s existing `destroy()` alongside `selection.destroy()`. Without it, a
+      screen the user already backed out of would keep silently retrying in the background and
+      eventually call `store.patch()` against a destroyed store — the same class of "outlived its
+      screen" leak `selection-interactor.js`'s own pending-retry timer was fixed for earlier in this
+      project's history, now needed a second time for a second timer.
+    - **A manual "Повторить" press cancels any auto-retry already ticking for the same failure**
+      (`requery()`'s own `poolAutoRetryTimer` clear) — found while designing, not reported: without
+      it, a user pressing the button because they didn't want to wait could still end up with TWO
+      overlapping `loadAllTorrents` calls racing each other once the auto-retry's own timer also
+      fired.
+    - **Test-suite discovery, not a product bug**: adding real background timers to a domain that
+      previously had none exposed that essentially no existing `smoke.test.mjs` test ever called
+      `domain.destroy()` — harmless before (a `store.patch()` after a test finished just landed on an
+      abandoned object nobody was asserting against), but with auto-retry timers now firing several
+      seconds after a test's own assertions, a left-running timer's `Lampa.Reguest` call bled into
+      the NEXT test's mock setup (`reguestHandlers` is shared, cleared-and-repopulated per test, not
+      per-domain) and threw off its own call-counting mocks. Fixed by adding `domain.destroy()` (or,
+      for one test with an intentionally-unresolved 200ms mock, an explicit trailing wait) to every
+      test that induces a pool/season failure without waiting out its full resolution — the general
+      lesson (worth remembering for the next feature that adds a background timer): a test harness
+      that tolerated undisposed domains by accident stops tolerating it the moment ANYTHING in the
+      domain schedules real background work.
+    - Two new `smoke.test.mjs` cases drive the real domain end to end: one confirms a failed pool
+      search recovers automatically (no manual action) once its scheduled retry fires; the other
+      confirms `domain.destroy()` actually cancels a pending retry (no further request fires after
+      destroy, waited past the retry's own delay to prove it). Plus new `domain.test.mjs` coverage
+      for `selectSearchProgress`'s `'retrying'` stage and `selectStatusText`'s countdown wording. All
+      126 tests (`npm run test:plugin`) green.
+    - **Verified live against real, currently-degraded Jackett, not just tests**: pushed a real
+      `torrent_mod` Activity for "Менталист" (TMDB id 1418) with the first search attempt forced to
+      fail — the SECOND attempt (unforced) hit a genuine live Jackett 502/25s-timeout on this
+      machine's own Jackett instance at the time, and the THIRD also failed live — auto-retry handled
+      both the injected failure and two real ones identically and correctly, escalating the delay
+      each time (3s → 6s → 12s), confirmed via console logs. Separately confirmed the live countdown
+      text renders exactly as designed ("Не удалось получить раздачи — повтор через 1 с (попытка 3
+      из 5)") in a clean single-Activity session — an earlier check against a browser tab with
+      several UN-navigated-away `Activity.push`es stacked from prior verification passes this same
+      session showed a confusingly empty status line, traced to querying the wrong (backgrounded)
+      screen's leftover DOM element, not a real bug — worth remembering for future live checks in a
+      long-lived debug session: stale stacked Activities are a real confound, not just tests need
+      isolation hygiene.
+  - **Widget allowed to be visually taller, per direct user permission** ("виджету загрузки разрешаю
+    быть большим по высоте... адекватный отступ сверху"). `.torrent-mod__status` gained top padding
+    (was `0`, now `1em` matching the existing bottom) and a taller `min-height` (`1.2em` → `1.6em`) to
+    comfortably fit the spinner + escalation/retry-countdown wording without visibly resizing on
+    every spinner appear/disappear. Top padding is exactly as collapse-safe as the bottom padding
+    already documented above (same reasoning — padding never collapses regardless of what's on
+    either side, only margin does). Because the widget's own height can now genuinely change on a
+    status update alone (longer wording, occasional wrapping) without any grid-content change
+    happening at the same time, `setStatus()` now also calls `Lampa.Layer.update()` on every
+    invocation — otherwise `scroll.minus()`'s cached height math would go stale exactly the way it
+    did once before for the identical underlying reason (status's own height changing repeatedly —
+    see this file's own "third independent cause" entry above), just via a new trigger this time.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

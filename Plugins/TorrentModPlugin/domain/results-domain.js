@@ -70,8 +70,10 @@
             // Idempotent via lifecycle.dispose() — a second destroy() call is a no-op instead of
             // re-running teardown.
             var disposed = lifecycle.dispose(function () {
-                // Cancel interactor timers (pending-retry) that would otherwise outlive the screen.
+                // Cancel interactor timers (pending-retry, auto-retry) that would otherwise outlive
+                // the screen.
                 if (selection.destroy) selection.destroy();
+                if (episodes.destroy) episodes.destroy();
             });
             log('domain', disposed ? 'destroy()' : 'destroy() — уже уничтожен, повторный вызов проигнорирован');
         }
