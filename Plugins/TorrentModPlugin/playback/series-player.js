@@ -8,15 +8,14 @@ function parseSeriesFile(file, files, movie) {
     } catch (e) { return {}; }
 }
 
-export function buildSeriesPlayerData(session, buildPlaylist, urlsFor) {
-    var file = session.bestFile;
+export function buildSeriesPlayerData(session, buildPlaylist, urlsFor, file) {
+    file = file || session.activeFile || session.bestFile;
     var movie = (session.target && session.target.movie) || {};
     var files = session.files || [];
     var info = parseSeriesFile(file, files, movie);
     var urls = urlsFor(file);
     var data = {
         url: urls.url,
-        url_reserve: urls.url_reserve,
         hls_manifest_timeout: urls.hls_manifest_timeout,
         torrent_hash: session.hash,
         title: file.path_human || file.path,
@@ -27,6 +26,7 @@ export function buildSeriesPlayerData(session, buildPlaylist, urlsFor) {
         path: file.path,
         playlist: buildPlaylist(session)
     };
+    if (urls.voiceovers) data.voiceovers = urls.voiceovers;
     if (info.hash && Lampa.Timeline && Lampa.Timeline.view) data.timeline = Lampa.Timeline.view(info.hash);
     return data;
 }

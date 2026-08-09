@@ -8,9 +8,9 @@ Component/Activity/Template/Explorer/Storage в целом, эта фокуси�
 исходники в `vendor/lampa-source/` (гитигнорированы, только для разработки). Факты — с указанием
 файла и строки в `vendor/lampa-source`, чтобы можно было перепроверить самостоятельно.
 
-Найдено при работе над заменой ffprobe-гейта на нативный фолбек плеера (см. `CLAUDE.md`,
-раздел про `url_reserve`) — читать этот файл в паре с той записью, там объяснена мотивация, здесь —
-сам API.
+Страница обновлена для GST-first контракта Torrent Mod: плагин получает metadata через GST probe и
+передаёт один GST/HLS URL с точным индексом audio. Здесь зафиксирован сам API Lampa и точки, которые
+следует перепроверить при обновлении Lampa.
 
 ## Слои: `Player` — не то же самое, что `PlayerVideo`
 
@@ -32,15 +32,15 @@ Component/Activity/Template/Explorer/Storage в целом, эта фокуси�
 ## `Player.play(data)` — контракт `data`
 
 `play(data)` (`interaction/player.js:1191`) присваивает переданный объект внутренней переменной
-`work` — именно `work`, а не сам `data`, читают все последующие обработчики событий (включая
-`url_reserve`, ниже), так что «текущее состояние плеера» всегда means «то, что было передано в
+`work` — именно `work`, а не сам `data`, читают все последующие обработчики событий, так что
+«текущее состояние плеера» всегда means «то, что было передано в
 последний `play()`». Поля, которые реально читаются реализацией (полный список, не только то, что
 использует этот плагин):
 
 | Поле | Смысл |
 |---|---|
 | `url` | Обязательное. URL потока — то, что реально уходит в `PlayerVideo.url()`. |
-| `url_reserve` | Резервный URL. См. отдельный раздел ниже — это то, ради чего писан этот файл. |
+| `url_reserve` | Резервный URL встроенного Lampa fallback; Torrent Mod его намеренно не передаёт. |
 | `torrent_hash` | Хэш торрента. Влияет на `hls_manifest_timeout` (см. ниже) и на статистику/хартбиты. |
 | `title` | Заголовок эпизода/файла — то, что видно в панели плеера. |
 | `first_title` | Заголовок карточки целиком (название фильма/сериала), отдельно от `title`. |
@@ -58,33 +58,23 @@ Component/Activity/Template/Explorer/Storage в целом, эта фокуси�
 | `tv` / `iptv` | Флаги режима — влияют на CSS-класс и на то, рисуется ли `Footer.appendAbout`. |
 | `hls_manifest_timeout` | Обычно выставляется автоматически (см. ниже), но можно и передать явно. |
 
-Плагин сейчас заполняет: `url`, `url_reserve`, `torrent_hash`, `title`, `first_title`, `card`,
-`season`/`episode` (только сериалы), `path`, `timeline`, `playlist` (только сериалы). Остальные поля —
-неиспользуемые, но валидные точки расширения (см. ниже про `ffprobe`/`voiceovers`).
+Torrent Mod сейчас заполняет: GST `url`, `hls_manifest_timeout`, `torrent_hash`, `title`,
+`first_title`, `card`, `voiceovers`, `season`/`episode` (только сериалы), `path`, `timeline`,
+`playlist` (только сериалы). `url_reserve` намеренно не передаётся.
 
-## `url_reserve` — нативный фолбек при фатальной ошибке декодирования
+## GST-first вместо `url_reserve`
 
-Это то, что заменило ffprobe-гейт. `PlayerVideo.listener.follow('error', ...)`
-(`interaction/player.js:204`) — обработчик ошибки декодирования нативного `<video>`. При фатальной
-ошибке (`e.fatal`) он проверяет `work.url_reserve`: если задан — уничтожает текущий видеоэлемент и
-пересоздаёт его с этим URL (`Video.destroy(true)` → `Video.url(work.url_reserve, true)`), затем
-**удаляет** `work.url_reserve` (одна попытка резерва, не бесконечный цикл). Есть и более гибкая
-альтернатива — `work.error`, функция-колбэк, которая получает `(work, setReserve)` и сама решает,
-какой URL подставить (используется, когда резервный URL не известен заранее, а вычисляется по
-ситуации) — плагину она не нужна, у нас резерв известен сразу (GST-URL).
+`url_reserve` остаётся общей возможностью Lampa, но Torrent Mod от неё отказался: до каждого
+`Player.play` выполняется `/gst/{hash}/probe`, а единственным источником становится GST/HLS URL с
+точным `audio=<trackIndex>`. Это даёт один контракт для codecs, встроенных subtitles и audio tracks.
+При ошибке нет скрытого direct fallback; плагин сообщает об ошибке и не сохраняет неуспешно выбранное
+предпочтение.
 
-**Важно для плейлистов**: `Playlist.listener.follow('select', ...)` (`interaction/player.js:388`) —
-обработчик клика/автопереключения на следующий элемент плейлиста — вызывает `play(e.item)` заново, то
-есть каждый элемент плейлиста проходит через тот же `play()` и получает свой собственный `work`. Значит
-`url_reserve` нужно ставить не только на верхнеуровневый `data`, но и на **каждый элемент**
-`data.playlist` — иначе фолбек работает только для первой серии, а на второй и далее плеер тихо
-остаётся без резерва. `playback/smart-preload.js`'s `urlsFor(session, file)` и `buildPlaylist()`
-учитывают это — оба места вызывают одну и ту же функцию.
-
-Ограничение: обработчик реагирует именно на `e.fatal` — не на любую ошибку и не на
-«зависание»/бесконечную буферизацию без события `error` вообще. Реальный direct → GST
-сценарий следует проверять на целевом Lampa/WebOS-устройстве; автоматические Node-тесты
-не моделируют настоящий HTML5 `<video>` fatal error.
+Для season-pack `Playlist.listener.follow('select', ...)` (`interaction/player.js:388`) поддерживает
+`item.url` как функцию. Torrent Mod использует этот callback, чтобы выполнить probe непосредственно
+перед переходом на следующий файл, записать полученные GST URL и `voiceovers` в item и продолжить
+плейбек. На Android текущая ветка Lampa фильтрует playlist до строковых URL, поэтому этот сценарий
+требует отдельной live-проверки.
 
 ## `data.ffprobe` — нативная альтернатива ручному парсингу аудиодорожек
 
@@ -112,26 +102,20 @@ TorrServer. `data.ffprobe` — путь, которым эта задача ре
 ~20с на прогрев реального GStreamer pipeline) — сама Lampa уже закладывает под это до 60с терпения на
 загрузку манифеста, когда знает, что играет GST-поток.
 
-`Torserver.gstWork()` (`interaction/torserver.js:137-139`) — `Storage.field('torrserver_gts') &&
-gst_work`: связка пользовательской настройки (`torrserver_gts`, тумблер где-то в настройках Lampa) и
-внутреннего флага. Нативный `Torserver.stream(path, hash, id)` (`interaction/torserver.js:141-145`)
-сам ветвится на GST-URL или прямой `/stream` URL по этому флагу — тот же паттерн, который этот плагин
-переизобретает в `urlsFor()`/`gstStreamUrl()`/`directStreamUrl()`, только по другому критерию:
-нативная ветка — глобальный пользовательский тумблер (весь плейбек либо всегда GST, либо никогда),
-плагин — по-файлово адаптивный (прямой поток по умолчанию, GST только как `url_reserve` при реальной
-ошибке декодирования). Осознанное расхождение с нативным поведением, не забытая деталь — см.
-`CLAUDE.md` про то, почему «всегда GST» отклонено (задержка ~20с на манифест того стоит не для всех
-файлов).
+`Torserver.gstWork()` (`interaction/torserver.js:137-139`) остаётся настройкой нативной Lampa.
+Torrent Mod строит GST URL самостоятельно, поэтому его GST-first путь не зависит от этого
+глобального тумблера. `Lampa.Torserver.stream()` используется только для тихого cache-preload URL,
+никогда как Player transport.
 
 ## Плейлист: `data.playlist`, переключение серий
 
-Элементы `data.playlist` — объекты той же формы, что и верхнеуровневый `data` (`url`, `url_reserve`,
+Элементы `data.playlist` — объекты той же формы, что и верхнеуровневый `data` (`url`, `voiceovers`,
 `title`, `season`, `episode`, `timeline`, ...). `Player.play()` вызывает `Playlist.set(data.playlist)`
 один раз при первом запуске (`interaction/player.js:1243`); дальше переключением рулит
 `Playlist.next()`/`Playlist.prev()` (дергаются из `Panel.listener.follow('next'/'prev', ...)`,
 `interaction/player.js:279,284`, — то есть кнопки/жесты панели) и `Video.listener.follow('ended', ...)`
 (автопереход на следующий файл по завершении текущего). Оба пути в итоге эмитят `Playlist`-событие
-`'select'`, которое и вызывает `play(e.item)` заново (см. `url_reserve`-раздел выше).
+`'select'`, которое сначала разрешает lazy GST URL, затем вызывает `play(e.item)`.
 
 ## События `PlayerVideo.listener` (полный список из `interaction/player.js`)
 
@@ -142,11 +126,9 @@ gst_work`: связка пользовательской настройки (`to
 `timeupdate`, `progress`, `canplay`, `play`, `pause`, `rewind`, `ended`, `tracks`, `subs`, `levels`,
 `videosize`, `error`, `translate`, `loadeddata`, `reset_continue`.
 
-Из них плагин сейчас использует только `timeupdate` (для next-episode preload,
-`smart-preload.js`'s `startNextEpisodePreload`) и косвенно полагается на `error` (через `url_reserve`,
-не через собственный listener — обработчик уже встроен в `player.js` самой Lampa). `destroy` — событие
-не `PlayerVideo`, а `Lampa.Player.listener` (плеер целиком закрылся), плагин слушает его отдельно для
-освобождения playback-сессии.
+Из них Torrent Mod использует `timeupdate` (cache-preload следующей серии), `canplay` (подтверждение
+ручного выбора и сохранение preference) и `error` (отбрасывает неуспешный выбор). `destroy` — событие
+не `PlayerVideo`, а `Lampa.Player.listener`; плагин слушает его отдельно для освобождения сессии.
 
 ## События `Panel.listener` (нижняя панель управления)
 
@@ -162,8 +144,7 @@ gst_work`: связка пользовательской настройки (`to
 - **Нет глобального патчинга `Lampa.Player.play`/`Lampa.Torserver.stream`** — осознанное архитектурное
   решение, задокументировано в `CLAUDE.md` (ADR-0003). Всё в этом файле про то, что передавать В
   `Player.play(data)` как параметры, а не про переопределение самих функций.
-- **`work.url_reserve` — одна попытка**, не цепочка фолбеков. Если понадобится больше одного резерва
-  (например GST → внешний плеер), нужен `work.error`-колбэк вместо статичного поля.
+- **Нет transport fallback:** после отказа от direct stream Torrent Mod не передаёт `url_reserve`.
 - **`hls_manifest_timeout` выставляется автоматически только когда `torrent_hash` задан** — если он
   когда-либо перестанет передаваться (например для не-торрент-потоков), таймаут вернётся к дефолтному,
   что может быть недостаточно для GST resume-сценариев. Стоит помнить при будущих изменениях

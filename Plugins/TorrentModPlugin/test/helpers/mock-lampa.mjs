@@ -7,6 +7,36 @@
 // screen) surface as test failures instead of at runtime on the TV.
 export function setupMockLampa() {
     const storage = new Map();
+    const playerListeners = new Map();
+    const videoListeners = new Map();
+    let playerCurrentTime = 0;
+
+    function listenerApi(listeners) {
+        return {
+            follow: (event, callback) => {
+                const callbacks = listeners.get(event) || [];
+                callbacks.push(callback);
+                listeners.set(event, callbacks);
+            },
+            remove: (event, callback) => {
+                const callbacks = listeners.get(event) || [];
+                listeners.set(event, callbacks.filter((item) => item !== callback));
+            }
+        };
+    }
+    function emit(listeners, event, payload) {
+        (listeners.get(event) || []).slice().forEach((callback) => callback(payload));
+    }
+
+    globalThis.__playerPlays = [];
+    globalThis.__resetPlaybackMock = () => {
+        globalThis.__playerPlays.length = 0;
+        playerListeners.clear();
+        videoListeners.clear();
+        playerCurrentTime = 0;
+    };
+    globalThis.__setMockPlayerTime = (seconds) => { playerCurrentTime = seconds; };
+    globalThis.__emitPlayerVideo = (event, payload) => emit(videoListeners, event, payload);
 
     globalThis.window = globalThis;
     globalThis.document = { currentScript: { src: 'http://192.168.10.108:8095/plugins/torrent-mod.js' } };
@@ -29,8 +59,8 @@ export function setupMockLampa() {
         length: 0,
         is: () => false
     });
-    // smart-preload's ffprobe gate uses $.ajax — resolve with an empty payload immediately so the
-    // probe path falls through to playback and no timer is left running.
+    // smart-preload probes GST before every Player.play. Return a realistic mixed stream list so
+    // the smoke suite exercises audio filtering and a concrete `audio=` GST URL.
     globalThis.$.ajax = (opts) => {
         const req = {
             done(fn) { this._done = fn; return this; },
@@ -41,6 +71,13 @@ export function setupMockLampa() {
             let body = {};
             try { body = typeof opts.data === 'string' ? JSON.parse(opts.data) : (opts.data || {}); } catch {}
             if (opts.url && opts.url.includes('/gst/echo')) req._done('ok');
+            else if (opts.url && opts.url.includes('/gst/') && opts.url.includes('/probe')) req._done({
+                Tracks: [
+                    { Type: 'video', Index: 0, Codec: 'video/x-h264' },
+                    { Type: 'audio', Index: 3, Language: 'ru', Title: 'Студия А', Codec: 'audio/mpeg', Channels: 2 },
+                    { Type: 'audio', Index: 5, Language: 'en', Title: 'Original', Codec: 'audio/ac3', Channels: 6 }
+                ]
+            });
             else if (opts.url && opts.url.includes('/gst/') && opts.url.includes('master.m3u8')) req._done('#EXTM3U\n');
             else if (body.action === 'add' || body.action === 'get') req._done({ hash: 'mock-torrent-hash', file_stats: [] });
             else if (body.action === 'list') req._done([]);
@@ -99,8 +136,12 @@ export function setupMockLampa() {
             clearFileName: (files) => files
         },
         Favorite: { add: () => {} },
-        Player: { play: () => {}, playlist: () => {}, callback: () => {}, listener: { follow: () => {}, remove: () => {} } },
-        PlayerVideo: { listener: { follow: () => {}, remove: () => {} } },
+        Player: {
+            play: (data) => { globalThis.__playerPlays.push(data); },
+            close: () => emit(playerListeners, 'destroy'),
+            playlist: () => {}, callback: () => {}, listener: listenerApi(playerListeners)
+        },
+        PlayerVideo: { video: () => ({ currentTime: playerCurrentTime }), listener: listenerApi(videoListeners) },
         Utils: {
             bytesToSize: (bytes) => Math.round(bytes / 1048576) + ' MB',
             secondsToTimeHuman: (sec) => '00:' + String(Math.floor(sec % 60)).padStart(2, '0')

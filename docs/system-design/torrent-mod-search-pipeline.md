@@ -126,26 +126,25 @@ candidate
   → POST /torrents action:add, если нужно
   → Torserver.files(hash), polling до file_stats
   → pickBestFile()
-  → fire-and-forget &preload
-  → Lampa.Player.play({url, url_reserve, playlist})
+  → fire-and-forget &preload cache nudge
+  → GET /gst/{hash}/probe?index={fileId}
+  → Lampa.Player.play({GST url with audio=N, voiceovers, playlist})
 ```
 
-`url` — официальный прямой `Lampa.Torserver.stream(path, hash, fileId)`. Для
-каждого файла также строится `url_reserve` на TorrServer GST/HLS:
+Единственный player transport — TorrServer GST/HLS. После probe выбранной дорожке передаётся её
+настоящий индекс:
 
 ```text
-http://<torrserver>/gst/<hash>/master.m3u8?index=<fileId>&audio=0
+http://<torrserver>/gst/<hash>/master.m3u8?index=<fileId>&audio=<trackIndex>
 ```
 
-Обычный direct stream используется первым. Если Lampa получает от `<video>`
-фатальную ошибку декодирования/воспроизведения, её штатный обработчик уничтожает
-текущий video element и один раз переключается на `url_reserve`. После этого
-резерв удаляется. Дополнительной цепочки fallback'ов нет.
+Если для сериала и сезона сохранено предпочтение студии, оно сопоставляется с metadata нового
+файла; иначе выбирается первая audio-дорожка. Список передаётся в `voiceovers` всегда. Прямой
+browser stream и `url_reserve` больше не строятся.
 
-Для GST передаётся `hls_manifest_timeout: 60000`, поскольку прогрев GStreamer
-может занимать около 20 секунд. Эти поля задаются как для верхнеуровневого
-`Player.play(data)`, так и для каждого элемента `data.playlist`; иначе fallback
-не пережил бы переход на следующую серию.
+Для GST передаётся `hls_manifest_timeout: 60000`. Для следующей серии playlist содержит lazy
+URL-функцию: перед запуском она делает такой же probe, заполняет `voiceovers` и только затем
+передаёт Lampa готовый GST URL.
 
 Preload следующего файла season-pack остаётся тихим оптимизационным шагом: при
 примерно 85% текущей серии или за 60 секунд до конца отправляется `&preload`
@@ -154,13 +153,12 @@ Preload следующего файла season-pack остаётся тихим 
 
 ### Границы fallback
 
-- Простое зависание или бесконечная буферизация без fatal error не обязаны
-  переключать поток на GST.
+- Если GST не отвечает или не находит audio-дорожку, Player не открывается; на direct stream
+  Torrent Mod не переключается.
 - Если GST тоже не работает, Torrent Mod не выбирает третий transport URL.
 - Если выбранный файл не воспроизводится, другой файл той же раздачи автоматически
   не перебирается.
-- `/ffp` и ffprobe не являются gate перед запуском: текущий playback доверяет
-  реальному результату direct stream и штатному Lampa fallback.
+- `/gst/.../probe` — обязательный gate перед каждым стартом файла; `/ffp` не используется.
 
-Реальный direct → GST сценарий нужно проверять live на Lampa/WebOS: Node smoke-тесты
-проверяют lifecycle и доменный flow, но не настоящий fatal error HTML5-видео.
+GST-first сценарий нужно проверять live на Lampa/WebOS: Node-тесты проверяют нормализацию metadata
+и доменный flow, но не реальный GStreamer pipeline.

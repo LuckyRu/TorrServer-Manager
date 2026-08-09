@@ -25,19 +25,13 @@ season-pack, не меняя глобальное поведение Lampa дл�
 3. Опросить `Torserver.files(hash)` до появления `file_stats` и выбрать подходящий
    playable-файл по режиму фильма/сериала.
 4. Отправить fire-and-forget preload-запрос для выбранного файла.
-5. Сразу вызвать `Lampa.Player.play(data)` с прямым `url`, timeline и playlist.
+5. Запросить `/gst/{hash}/probe?index={fileId}`, выбрать audio track и вызвать
+   `Lampa.Player.play(data)` с GST URL, `voiceovers`, timeline и playlist.
 
-Для каждого файла передаются два transport URL:
-
-- `url` — обычный `Lampa.Torserver.stream(...)`, быстрый путь для форматов, которые
-  декодирует браузер;
-- `url_reserve` — TorrServer GST/HLS URL, используемый штатным Lampa при fatal-ошибке
-  декодирования или воспроизведения.
-
-При наличии `url_reserve` также передаётся `hls_manifest_timeout: 60000`: прогрев GST
-может занимать около 20 секунд. `url_reserve` задаётся и на верхнем уровне `data`, и
-на каждом элементе `data.playlist`, потому что Lampa заново вызывает `play()` при
-переходе на следующий файл.
+Для каждого файла Player получает один TorrServer GST/HLS URL с `audio=<trackIndex>` и
+`hls_manifest_timeout: 60000`. Прямой stream и `url_reserve` не используются. У следующего
+элемента season-pack playlist URL отложен: Lampa вызывает его перед переходом, после чего плагин
+выполняет probe, задаёт `voiceovers` и продолжает play готовым GST URL.
 
 ## Жизненный цикл сессии
 
@@ -52,14 +46,9 @@ season-pack, не меняя глобальное поведение Lampa дл�
 
 ## Fallback и ограничения
 
-Основной fallback выполняет сама Lampa: при fatal-событии `<video>` она уничтожает
-текущий video element и запускает `url_reserve`. Это одна попытка, а не цепочка
-fallback'ов: после переключения Lampa удаляет `work.url_reserve`.
-
-Fallback не гарантирован для простого зависания или бесконечной буферизации, если
-Lampa не получила fatal error. Также Torrent Mod не выбирает автоматически другой
-файл той же раздачи после ошибки выбранного файла — пользователь должен повторить
-выбор или выбрать другую раздачу.
+На проблеме GST Torrent Mod не делает transport fallback и не выбирает автоматически другой
+файл. При ошибке probe плеер не открывается; при ошибке ручного переключения preference не
+сохраняется. Пользователь может повторить запуск или выбрать другую раздачу.
 
 Preload следующего файла season-pack выполняется отдельно: примерно на 85% текущего
 видео или за 60 секунд до конца отправляется тихий preload-запрос для следующего
@@ -68,11 +57,11 @@ playable-файла. Он не патчит Player и не меняет playlist
 ## Последствия
 
 - Нет глобального влияния на другие плагины и native torrent flow Lampa.
-- Обычные файлы стартуют через прямой stream без обязательной задержки GST.
-- Несовместимый для браузера файл получает штатную GST-транскодирующую попытку.
+- У всех файлов одинаковый GST-first путь с предсказуемыми codecs, subtitles и audio tracks.
+- Первый старт ждёт metadata probe и GST manifest.
 - Вся логика регистрации, выбора файла и lifecycle остаётся локальной playback-сессии.
-- Реальный direct → GST fallback требует live-проверки на устройстве: Node smoke-тесты
-  проверяют доменный flow, но не настоящий HTML5 `<video>` fatal error.
+- Реальный GST-first playback требует live-проверки на устройстве: Node-тесты проверяют
+  доменный flow и metadata matching, но не GStreamer pipeline.
 
 Историческая модель с `Lampa.Torrent.start`, overlay и ручным `/cache`-поллингом
 сохранена только в истории разработки и больше не является текущим контрактом.
