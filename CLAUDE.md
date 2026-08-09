@@ -466,69 +466,24 @@ entry-point/build-config layer above all of them.
     the "silently falls back to nocomponent" bug above the first time). Use the plugin's own local
     `escapeHtml()` for any HTML interpolation instead of assuming Lampa provides one.
   - Deliberately does **not** globally patch `Lampa.Player.play`/`Lampa.Torserver.stream` — that would
-    affect every torrent screen in Lampa, not just this one, a reliable source of hard-to-debug ordering
-    bugs. **`Lampa.Torrent.start(...)` is NOT called anymore** (it used to force Lampa's native
-    torrent-file screen open — «сиди и выбирай» — which is exactly what we got rid of; see the direct
-    playback pipeline below). Instead: `Lampa.Torserver.hash({link: magnet||.torrent-link})` registers
-    the torrent directly, `Torserver.files(hash)` is polled until metadata resolves, `pickBestFile()`
-    scores season/episode signals in the file paths (from `file_stats`, not native events), and once
-    our **duration-based** buffer target is met we call `Lampa.Player.play({url, timeline, playlist})`
-    where `url = Torserver.stream(path, hash, id)` (the official Lampa stream URL, never invented),
-    `timeline = Timeline.view(Torserver.parse({movie, files, filename, path}).hash)` (the same hash
-    `Timeline.watchedEpisode` reads — NOT the torrent infohash), and `playlist` built from all
-    playable files of the pack (Player.play wires Playlist from data.playlist, player.js:1243 — that's
-    what keeps next-episode inside a season pack working). Three native side effects of the old
-    `Lampa.Torrent.start` path are compensated explicitly: `Favorite.add('history', movie, 100)`
-    (continue-watch card), the timeline above (per-episode watch history), and the playlist.
-    **No pre-start buffer overlay anymore** — the user rejected it as "лишний моргающий интерфейс":
-    a click goes STRAIGHT to `Player.play`, the player buffers on its own via the TorrServer stream.
-    What stays silent: a fire-and-forget `&preload` nudge (starts the download before the player
-    asks), the ffprobe gate (probeSelectedFile: a CONFIRMED-bad video codec — MPEG-2/MPEG-4 ASP/
-    VC-1/WMV/... — blocks playback with an honest toast instead of a black screen; 'unavailable' is
-    not proof of bad, play anyway), and next-episode preloading near the end of the current file
-    (`torrent_mod_preload_next`). (History: the old path listened to Lampa's `torrent_file`
-    events and replayed the file's own `hover:enter` — replaced because the native screen itself was
-    the problem.)
-  - **Confirms the title-guessed quality/audio/subtitle badges against the real file once one is picked**,
-    via TorrServer's own `/ffp/{hash}/{fileId}` — TorrServer bundles `ffprobe` for its transcoding support
-    and exposes it at that path. Found by reading a third-party plugin, **MediaInfo** (`iptvgeek_mediainfo`,
-    formerly in this project's own plugin list), whose entire job is exactly this: it calls `/ffp/`, with a
-    fallback to a public "Tracks Inspector" service when a TorrServer build lacks `ffprobe` (that endpoint
-    then 400s). `fileId` isn't DOM/array position — it's TorrServer's own file `.id`, obtained the same way
-    MediaInfo gets it: `POST /torrents {action:'get', hash}` → match `file_stats[].path` against the
-    already-picked file, read `.id` off that entry. `probeRealTracks()` does this once per download, right
-    after `pickBestFile()` — on success, replaces the preload overlay's generic buffering copy with the
-    ffprobe-confirmed resolution/codec/audio-track-count/subtitle-track-count; on failure (no `ffprobe` on
-    this TorrServer build, or the request just fails) it stays quiet, same as the title-only badges already
-    shown elsewhere. Deliberately skips MediaInfo's own public-service fallback — a third-party dependency
-    outside this project's infrastructure, inconsistent with keeping everything (Jackett, TorrServer)
-    local/loopback-only.
-  - **Two real, repeatedly-reported bugs in the smart-preload overlay, both found live while
-    re-verifying an unrelated View/ViewModel/Core split of `results-screen.js` (see below) — neither
-    was caused by that split, `smart-preload.js` itself was untouched by it (confirmed via `git diff`
-    before investigating).** (1) Some Torznab indexers (confirmed live: NoNaMe Club) don't return a
-    magnet URI at all, only an HTTP link to download the raw `.torrent` file — `item.magnet` is `''`,
-    so `extractInfoHash()` has nothing to parse and `hash` comes back empty. The old code treated this
-    as "can't poll `/cache` without a hash — let native flow run unassisted" and bailed out of the
-    whole smart-preload flow entirely, leaving `Lampa.Torrent.start()`'s own native torrent-file
-    screen (an unavoidable side effect of that call) fully exposed with nothing covering it — this is
-    the actual bug behind repeated user reports of "Lampa's ugly native torrent interface" appearing.
-    Fixed without implementing bencode parsing ourselves: `Lampa.Torrent.start()` still downloads and
-    parses the `.torrent` on TorrServer's own side, and the resolved hash shows up shortly after in
-    `POST /torrents {action:'list'}` under a title match — confirmed live, `Lampa.Torrent.start` itself
-    prefixes whatever title we pass with `"[LAMPA] "` before TorrServer sees it, so a substring match
-    against the plain title survives that prefix without needing to know its exact format.
-    `resolveHashByTitle()` polls that same `list` action (already used elsewhere by `probeRealTracks`,
-    just a different action) every 700ms up to 8 times, filtering by title+hash-present and picking the
-    most recent match by `timestamp` (in case of duplicate historical entries), and mutates
-    `pending.hash` in place once found — no need to restart the already-running `/cache` poll loop
-    inside `showSmartPreload`, since it reads `pending.hash` fresh on every tick already. (2) Even once
-    the overlay does show, its background was `rgba(8,12,20,.92)` (92% opaque, not fully) — confirmed
-    live this was enough for the native torrent-file screen's own bright rows to visibly bleed through
-    at the edges, reported directly as "тоже самое говно" (same crap) still showing behind our own
-    overlay despite it technically being on top and z-indexed correctly. Changed to a fully opaque
-    `#080c14` — no CSS-transparency category of bug can recur here regardless of what's rendered
-    underneath, a stronger guarantee than tuning the alpha value closer to 1 would have been.
+    affect every torrent screen in Lampa and create ordering/lifecycle conflicts. **`Lampa.Torrent.start(...)`
+    is not called anymore.** Playback registers the torrent with JSON `POST /torrents`, polls
+    `Torserver.files(hash)`, chooses a file from `file_stats`, sends a fire-and-forget `&preload`
+    request and immediately calls `Lampa.Player.play({url, url_reserve, timeline, playlist})`.
+    `url` is the official direct `Torserver.stream(path, hash, id)` URL. `url_reserve` is the
+    TorrServer GST/HLS URL and is used by Lampa's native player on a fatal `<video>` error.
+    `hls_manifest_timeout: 60000` is supplied when the reserve exists because GST warm-up can take
+    about 20 seconds. `url_reserve` and the timeout are added to every playlist item as well as the
+    top-level player data, because Lampa calls `play()` again when switching episodes.
+    `Favorite.add('history', movie, 100)`, `Timeline.view(...)` and the playlist reproduce the
+    native torrent flow's useful side effects. There is no playback overlay, duration-based `/cache`
+    polling or ffprobe gate before starting: the player buffers through TorrServer itself.
+    Next-episode preload remains silent and fires around 85% progress or 60 seconds before the end.
+  - The playback fallback is intentionally narrow: Lampa tries `url` first and then makes one
+    `url_reserve` attempt on a fatal error. A plain stall without a fatal error may not trigger it;
+    if GST also fails there is no third transport URL, and a failed file is not automatically replaced
+    by another file from the same torrent. See [`docs/reference/lampa-player-api.md`](docs/reference/lampa-player-api.md)
+    and [`docs/adr/0003-no-global-player-patching.md`](docs/adr/0003-no-global-player-patching.md).
   - **Season/translation/quality filter choices persist across visits, per-movie, matching Online
     Mod's own pattern exactly** — pointed at directly (`Lampa.Storage.get('online_balanser',
     'videocdn')` + `Lampa.Storage.cache('online_last_balanser', 200, {})`, confirmed live in
@@ -688,14 +643,12 @@ entry-point/build-config layer above all of them.
       anyone subscribed.
     - **`playback/smart-preload.js` deliberately stays outside the Store/Domain pattern**, called
       into as a plain cross-module function (`startDownload(item, target)`) from
-      `selection-interactor.js`, same shape as before. Its overlay is appended directly to
-      `$('body')` and its own `Lampa.Controller.add('torrent_mod_preload', ...)` entry — entirely
-      outside the `Lampa.Explorer`/`Scroll`/`Filter`/`content`-controller tree the results View owns,
-      and its lifetime is deliberately *decoupled* from the results screen's own (`startDownload`
-      pushes into `Lampa.Torrent.start` and keeps its own timers polling after the results Activity
-      is gone, by design). Folding it into this domain would mean the Store carrying state nothing in
-      the results View's own render loop ever reads, or special-casing `domain.destroy()` to *not*
-      cancel it — worse on both counts than a plain function call across the boundary.
+      `selection-interactor.js`. Its playback session is intentionally decoupled from the results
+      screen: after direct `Lampa.Player.play()` the player may outlive the results Activity, while
+      the session owns metadata polling and next-episode listeners until the player is destroyed or
+      a newer download supersedes it. It has no overlay or results-store state, so folding it into the
+      domain would add state the results View never reads and would complicate its independent
+      lifecycle.
     - Verified live end to end after the rewrite: initial paint (persisted season/voice/quality
       correctly restored on first render, before any subscription had fired), a season switch via
       the toolbar chip (chip label + episode list + badges all updated through the same

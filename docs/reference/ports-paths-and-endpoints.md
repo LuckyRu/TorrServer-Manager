@@ -70,15 +70,21 @@ Lampa при каждом старте стучится в корень хост
 Jackett кладёт в `Link` результата свой loopback download-эндпоинт (`http://127.0.0.1:9117/dl/...`).
 `PluginHub` переписывает их на **`http://127.0.0.1:8095/jackett/...`** (наш reverse-proxy). Это
 намеренно loopback, а не LAN-IP: единственный потребитель этих ссылок — **TorrServer на этом же
-ПК** (плагин передаёт `link` в `Lampa.Torserver.hash`, ТВ сам `.torrent` не скачивает). Переписывание
+ПК** (плагин передаёт `link` в JSON `POST /torrents`, ТВ сам `.torrent` не скачивает). Переписывание
 на LAN-IP было живым багом: TorrServer не мог дозвониться до собственного LAN-адреса
 (`dial tcp 192.168.10.108:8095: connection refused` в `server.log`), и все раздачи, отдающие только
 `.torrent`-ссылку без magnet (сейчас так все настроенные индексаторы), зависали навсегда.
+Текущий Torrent Mod отправляет этот `link` в TorrServer напрямую через JSON `POST /torrents`;
+телевизор не скачивает `.torrent` сам.
 
 ## Эндпоинты TorrServer, на которые опирается Torrent Mod (не наш код, для справки)
 
 | Путь | Назначение |
 |---|---|
+| `POST /torrents {action:'list'}` | Поиск уже зарегистрированной раздачи по title/hash перед повторным добавлением |
+| `POST /torrents {action:'add', link, title, ...}` | Регистрация magnet или loopback `.torrent`-ссылки |
 | `POST /torrents {action:'get', hash}` | Список файлов раздачи (`file_stats[]`, у каждого свой `.id`, не позиция в массиве) |
-| `POST /cache {action:'get', hash}` | Статус буферизации (`preloaded_bytes`, `download_speed`, `connected_seeders`, `active_peers`) |
+| `GET /stream/...` | Прямой поток выбранного файла, который передаётся в `Player.play({url})` |
+| `GET /gst/{hash}/master.m3u8?index={fileId}&audio=0` | GST/HLS reserve-поток для штатного Lampa fallback |
+| `POST /cache {action:'get', hash}` | Справочный API статуса буферизации; текущий Torrent Mod не поллит его для собственного pre-start buffer |
 | `GET /ffp/{hash}/{fileId}` | ffprobe-снятые характеристики потоков (реальные, не угаданные из названия); 400, если на этой сборке TorrServer нет `ffprobe` |

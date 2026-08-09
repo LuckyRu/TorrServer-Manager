@@ -117,33 +117,26 @@ Torrent Mod запускается **из уже найденного в TMDB п
   пула. Добавлено измерение **Битрейт** (расчётный `estimateBitrateMbps`, бакеты до 2 / 2–5 /
   5–12 / 12+ Мбит/с) — опции только из реально присутствующих в пуле бакетов; битрейт показывается
   и в карточке кандидата (`~X Mbps`). Персистентность как у перевода/качества (global + per-movie).
-- **Прямой путь воспроизведения (без нативного экрана торрентов)** — выполнен (см. план
-  «прямой путь» в обсуждении): `Lampa.Torrent.start()` больше НЕ вызывается. Вместо него:
-  `Lampa.Torserver.hash({link})` → поллинг `Torserver.files(hash)` → `pickBestFile()` по
-  `file_stats` → **`initiatePreload()`** (первый GET к stream URL с `&preload` — именно этот запрос
-  заставляет TorrServer качать файл в кэш; без него `/cache`-поллинг вечно показывал 0%, найдено
-  архитектором: поллинг читает состояние, но не запускает загрузку) → `/cache`-поллинг до
-  duration-based target → `Torserver.stream(path, hash, id)` → `Lampa.Player.play({url, timeline,
-  playlist})`. Три native-сайд-эффекта компенсируются явно: `Favorite.add('history')`, `timeline:
-  Timeline.view(Torserver.parse(...).hash)`, `data.playlist` из playable-файлов пака (next-episode).
-  Таймаут не закрывает preload раньше выбора файла (metadata `.torrent`-ссылки может качаться
-  дольше 60с — даётся двойной бюджет, потом честная ошибка).
-  **Буфер считается ТОЛЬКО для выбранной серии** (`/cache` отдаёт per-piece битмап `Pieces` +
-  `PiecesLength`; по байтовому диапазону выбранного файла `[fileStart, fileEnd)` считаем
-  непрерывный от начала буфер — левые файлы торрента больше не раздувают готовность, найдено
-  живой проверкой API TorrServer). `targetBytes = min(битрейт × 25с, размер файла)`, битрейт
-  берётся из ffprobe (`format.bit_rate`, fallback `size/duration`, fallback оценка по заголовку).
-  **Никакого оверлея предзагрузки** — пользователь отверг «лишний моргающий интерфейс»: клик идёт
-  сразу в `Player.play`, буфер набирает сам плеер через TorrServer-стрим. Тихими остаются:
-  fire-and-forget `&preload`-nudge перед стартом, **ffprobe-гейт** (реальный видеокодек выбранного
-  файла через `/ffp/{hash}/{id}`: `mpeg1/2video`, `mpeg4`, `vc1`, `wmv*`, `msmpeg4*`, `h263`, `rv*`,
-  `flv1` или отсутствие видеопотока блокируют запуск честным toast вместо чёрного экрана;
-  `unavailable` — не доказательство, играем) и **предзагрузка следующей серии**
-  (`torrent_mod_preload_next`, вкл.): пока серия играет, плагин
-  слушает `PlayerVideo.listener('timeupdate')` и, когда текущий файл доходит до ~85% (или осталось
-  ≤60с), просит TorrServer предзагрузить следующий playable-файл пака — переход по плейлисту
-  начинается без паузы на дозагрузку. Ничего не показывает, в плеер/playlist не лезет (ADR-0003),
-  один следующий файл, fire-and-forget.
+- **Прямой путь воспроизведения (без нативного экрана торрентов)** — выполнен: `Lampa.Torrent.start()`
+  больше НЕ вызывается. `smart-preload.js` проверяет сохранённый hash, затем ищет торрент через
+  `POST /torrents {action:'list'}` или добавляет его через `POST /torrents {action:'add'}`.
+  После этого `Torserver.files(hash)` опрашивается до появления `file_stats`, `pickBestFile()`
+  выбирает playable-файл, отправляется fire-and-forget запрос с `&preload`, затем сразу вызывается
+  `Lampa.Player.play({url, url_reserve, timeline, playlist})`.
+
+  `url` — прямой `Torserver.stream(path, hash, id)`. `url_reserve` — GST/HLS URL TorrServer
+  (`/gst/{hash}/master.m3u8?index={id}&audio=0`). Обычный stream пробуется первым, а при fatal
+  ошибке `<video>` штатный Lampa handler один раз переключается на `url_reserve`. Для GST задаётся
+  `hls_manifest_timeout: 60000`, а `url_reserve` и timeout прокидываются в каждый элемент playlist.
+  Это необходимо, потому что Lampa заново вызывает `Player.play()` при переходе к следующему файлу.
+
+  Три native-сайд-эффекта старого torrent flow компенсируются явно: `Favorite.add('history')`,
+  `timeline: Timeline.view(Torserver.parse(...).hash)` и `data.playlist` из playable-файлов пака.
+  **Никакого overlay, duration-based `/cache`-поллинга и ffprobe-гейта перед запуском нет.**
+  Плеер буферизует сам через TorrServer; дополнительно тихо прогревается следующий файл,
+  когда текущая серия доходит примерно до 85% или до оставшихся 60 секунд. Если direct stream
+  просто завис без fatal error, fallback на GST не гарантирован; третьего transport fallback
+  и автоматического перебора другого файла нет.
   **Клик по серии = сразу воспроизведение** (сохранённый дефолт сезона, если он ещё валидный
   кандидат, иначе лучший; без полноэкранного списка и без availability-floor — клик это явное
   намерение). **Правая стрелка на серии** открывает боковую панель-оверлей со списком раздач

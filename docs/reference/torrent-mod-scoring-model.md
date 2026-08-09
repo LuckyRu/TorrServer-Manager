@@ -64,14 +64,17 @@ confident =
 - `audioChannels`, `subtitles` — из `parseRelease()`, показываются в подписи кандидата в пикере, в скоринг
   не входят.
 
-## Буферизация
+## Связь со стартом playback
 
-```
-leadSeconds        = 25
-targetBytes        = bitrateMbps × 1_000_000 / 8 × leadSeconds
-keepsUpWithPlayback = observedSpeedMbps >= bitrateMbps × 0.9   // можно стартовать раньше targetBytes
-riskWarning        = elapsedSeconds > 8 && observedSpeedMbps < bitrateMbps × 0.5
-```
+Скоринг кандидата определяет, какую раздачу показывать или запускать, но больше не
+управляет собственным duration-based буфером. После выбора playback-код:
 
-`MIN_AVAILABILITY_FOR_AUTOPLAY` и `leadSeconds` — именованные константы в `TorrentModPlugin.js`, не
-пользовательские настройки (кроме `torrent_mod_preload_timeout`, который есть в UI настроек).
+- проверяет/получает hash торрента;
+- ждёт `file_stats` и выбирает playable-файл;
+- отправляет тихий `&preload`-запрос;
+- сразу вызывает `Lampa.Player.play()`.
+
+Буферизацию выполняет сам Lampa/TorrServer stream. Для несовместимого с браузером
+потока Lampa один раз использует `url_reserve` с GST/HLS. Подробности и ограничения
+описаны в [`ADR-0003`](../adr/0003-no-global-player-patching.md) и
+[`lampa-player-api.md`](lampa-player-api.md).

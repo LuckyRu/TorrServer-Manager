@@ -45,8 +45,8 @@ ADR/system-design/reference там, где одно объясняет друг�
 - **Точная карта компонентов** → [`reference/architecture-map.md`](reference/architecture-map.md)
 - **API Lampa для плагинов** (Component/Activity, Explorer/Scroll/Filter/Select/Controller, Template,
   TMDB, дизайн-токены, нативные парсеры сезонов/серий) → [`reference/lampa-plugin-api.md`](reference/lampa-plugin-api.md)
-- **API плеера Lampa** (`Player.play(data)` контракт, `url_reserve` нативный фолбек, `data.ffprobe`
-  трек-пикер, плейлист/переключение серий, события `PlayerVideo`/`Panel`) →
+- **API плеера Lampa** (`Player.play(data)` контракт, `url_reserve` нативный фолбек, потенциальный
+  `data.ffprobe` трек-пикер, плейлист/переключение серий, события `PlayerVideo`/`Panel`) →
   [`reference/lampa-player-api.md`](reference/lampa-player-api.md)
 - **Порты, пути, эндпоинты** → [`reference/ports-paths-and-endpoints.md`](reference/ports-paths-and-endpoints.md)
 - **Формула оценки раздач Torrent Mod** →
