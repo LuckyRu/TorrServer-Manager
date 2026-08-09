@@ -21,7 +21,7 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
     import { candidateBadgeText, candidateSubtitleText, searchQueryText, candidateIdentity } from '../domain/results-core.js';
-    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress } from '../domain/results-selectors.js';
+    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress, selectPoolIndexers } from '../domain/results-selectors.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -47,6 +47,12 @@
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var grid = $('<div class="torrent-mod__list"></div>');
         var status = $('<div class="torrent-mod__status"></div>');
+        var trackers = $('<div class="torrent-mod__trackers"></div>');
+        // Per-tracker chip DOM bookkeeping — id -> {node, hideTimer}. View-local, like
+        // episodeRows/lastFocusedNode below; NOT store state, since which chips are currently
+        // mid-animation or already removed is presentation state the domain has no business
+        // knowing about (see renderTrackers' own header comment).
+        var trackerNodes = {};
         var episodeRows = {};
         var initialFocusDone = false;
 
@@ -300,6 +306,9 @@
         // uncounted and the list would still under- or over-shoot Explorer's own left-card bottom
         // by exactly status's height, the same class of misalignment the toolbar-height mixup was.
         explorer.appendHead(status);
+        // Same reasoning as status above — fixed chrome inside .explorer__files-head so its height
+        // is covered by scroll.minus()'s subtraction, not floating outside it.
+        explorer.appendHead(trackers);
         explorer.appendFiles(scroll.render());
 
         // .minus(el) tells Scroll to subtract el's own height from the scroll area's available
@@ -650,16 +659,117 @@
             try { Lampa.Layer.update(); } catch (e) {}
         }
 
+        // How long a successfully-answered tracker's chip stays on screen before it fades away —
+        // purely a View/presentation decision, deliberately NOT domain state (see
+        // domain/results-selectors.js's own comment on selectPoolIndexers, which reports every
+        // indexer forever with no opinion about hiding). Scheduled per chip via domain.scope (the
+        // same shared lifecycle every other timer this screen owns registers into — leak-safe even
+        // if the screen closes mid-fade), never touching the store.
+        var TRACKER_SUCCESS_HIDE_MS = 4000;
+        // CSS transition duration for the leave animation (styles.js's own `.25s` on
+        // .torrent-mod__tracker) plus a small margin — the node is actually removed from the DOM
+        // only after this, so a dropped/coalesced transition can't leave it stuck forever.
+        var TRACKER_LEAVE_ANIMATION_MS = 300;
+
+        function trackerLabel(indexer) {
+            return indexer.name + ' · ' + (indexer.status === 'ok' ? Math.round(indexer.elapsedMs) + 'мс' : 'ошибка');
+        }
+
+        // Fires once, TRACKER_SUCCESS_HIDE_MS after a chip first reports 'ok' (or immediately if
+        // that window has already elapsed, e.g. the screen restored a view after being backgrounded)
+        // — adds the CSS leave state, then actually removes the node once the transition has had
+        // time to finish. Guarded by `entry.hideTimer` so a re-render before the timer fires (e.g.
+        // pending -> ok on the very next poll tick) never double-schedules.
+        function scheduleTrackerHide(id, delayMs) {
+            var entry = trackerNodes[id];
+            if (!entry || entry.hideTimer) return;
+            entry.hideTimer = domain.scope.setTimeout(function () {
+                var current = trackerNodes[id];
+                if (!current) return;
+                current.node.addClass('torrent-mod__tracker--leave');
+                try { Lampa.Layer.update(); } catch (e) {}
+                domain.scope.setTimeout(function () {
+                    var stillThere = trackerNodes[id];
+                    if (!stillThere) return;
+                    stillThere.node.remove();
+                    delete trackerNodes[id];
+                    // Same reasoning as setStatus — this region's height feeds scroll.minus()'s
+                    // math, and MUST run even when this was the very last chip (an early-return
+                    // that skipped this call for an empty list was the original bug report: "после
+                    // исчезания всех трекеров надо место вверху освободить, а то пустота там
+                    // остаётся"). The CSS side of that same fix is
+                    // `.torrent-mod__trackers:empty{padding:0}` (styles.js).
+                    try { Lampa.Layer.update(); } catch (e) {}
+                }, TRACKER_LEAVE_ANIMATION_MS);
+            }, Math.max(0, delayMs));
+        }
+
+        // One chip per CONFIGURED indexer — the ONLY place in the UI that names individual
+        // trackers, requested directly by the user so a slow/broken one is visible by NAME instead
+        // of hiding behind one aggregate status line or count. Pending trackers get the same
+        // spinner glyph the status line uses ("показывать со спиннером кого ещё ждём"). Diffs
+        // against the currently-rendered `trackerNodes` instead of wiping and rebuilding the whole
+        // row on every call, so each chip gets a real enter/update/leave lifecycle with a CSS
+        // transition (styles.js) rather than popping in and out — appearing softly, animating in
+        // place on a status change, and fading itself away a few seconds after answering
+        // successfully (requested directly by the user: "мягкий плавный вид... с анимациями
+        // появления, исчезновения, сдвигания/раздвигания списка" — the shrinking chip's own
+        // max-width/margin transition is what makes the rest of the row visibly slide together as
+        // it collapses, no separate list-reflow animation needed).
+        function renderTrackers(progress) {
+            progress.trackers.forEach(function (indexer) {
+                var entry = trackerNodes[indexer.id];
+                if (!entry) {
+                    var node = $('<span class="torrent-mod__tracker torrent-mod__tracker--enter"></span>');
+                    if (indexer.status === 'pending') {
+                        node.addClass('torrent-mod__tracker--pending');
+                        node.html('<span class="torrent-mod__spinner"></span>' + escapeHtml(indexer.name));
+                    } else {
+                        node.addClass(indexer.status === 'ok' ? 'torrent-mod__tracker--ok' : 'torrent-mod__tracker--error');
+                        node.text(trackerLabel(indexer));
+                    }
+                    trackers.append(node);
+                    entry = trackerNodes[indexer.id] = { node: node, hideTimer: null };
+                    // Removing the --enter class on the very next macrotask (not the same tick it
+                    // was added) gives the browser a paint with the collapsed state applied first,
+                    // so there's an actual FROM state for the CSS transition to animate away from —
+                    // doing it synchronously would coalesce both class changes into one paint, no
+                    // visible animation. A domain.scope.setTimeout(fn, 0), not requestAnimationFrame:
+                    // rAF callbacks are suspended entirely for a backgrounded/hidden tab (confirmed
+                    // live — this is exactly what silently broke the entrance animation during this
+                    // feature's own browser verification, tab hidden in the automation harness), and
+                    // while the real target (an always-foreground TV app) would rarely hit that, a
+                    // plain timer has no such dependency at all and is just as correct when visible.
+                    domain.scope.setTimeout(function () { node.removeClass('torrent-mod__tracker--enter'); }, 0);
+                } else if (indexer.status !== 'pending') {
+                    // pending -> ok/error: update the already-on-screen chip in place, no
+                    // re-entrance animation (it never left).
+                    entry.node
+                        .removeClass('torrent-mod__tracker--pending torrent-mod__tracker--ok torrent-mod__tracker--error')
+                        .addClass(indexer.status === 'ok' ? 'torrent-mod__tracker--ok' : 'torrent-mod__tracker--error')
+                        .text(trackerLabel(indexer));
+                }
+                if (indexer.status === 'ok') {
+                    scheduleTrackerHide(indexer.id, TRACKER_SUCCESS_HIDE_MS - (Date.now() - indexer.reportedAt));
+                }
+            });
+            // Same reasoning as setStatus above — this region's height feeds scroll.minus()'s math.
+            try { Lampa.Layer.update(); } catch (e) {}
+        }
+
         // The status line's wording depends on wall-clock time in TWO ways — the 15s cold-search
-        // escalation (selectStatusText, via selectSearchProgress) AND, now, a live "повтор через
-        // Nс" countdown while an auto-retry is scheduled — neither is triggered by any single state
+        // escalation (selectStatusText, via selectSearchProgress) AND a live "повтор через Nс"
+        // countdown while an auto-retry is scheduled — neither is triggered by any single state
         // transition, so without an explicit tick they'd never re-check and would silently never
         // appear/update. One interval, cadence chosen by stage: 5s while genuinely loading (this is
         // a TV remote UI, a slow poll during a ~40s network wait is not meaningfully different from
         // the render cadence store.patch already produces elsewhere) but 1s while 'retrying' — that
         // countdown is backed by a real deterministic setTimeout (not network speed), so a smooth
-        // per-second tick is accurate, not misleading, and reads far more "the app is actually doing
-        // something" than a coarse 5s jump would for a wait that's usually under 20s total.
+        // per-second tick is accurate, not misleading. The tracker widget's own success-hide fade
+        // does NOT tick here (or anywhere) — it's a real scheduled state transition instead
+        // (episodes-interactor.js's own scope.setTimeout, see TRACKER_SUCCESS_HIDE_MS's comment in
+        // shared/state.js), which is what lets it flow through the normal render() diff below
+        // rather than needing a second reason for this interval to exist.
         var statusTickTimer = null;
         var statusTickStage = null;
         function ensureStatusTicking(stage) {
@@ -671,7 +781,10 @@
             if (statusTickTimer && statusTickStage === stage) return; // already ticking at the right cadence
             if (statusTickTimer) clearInterval(statusTickTimer);
             statusTickStage = stage;
-            statusTickTimer = setInterval(function () {
+            // Registered into the shared domain scope (not a bare setInterval) so a return-to-
+            // previous-screen tears this down through the same single dispose() as every other
+            // async resource this screen owns — see results-domain.js's own header comment.
+            statusTickTimer = domain.scope.setInterval(function () {
                 if (viewDestroyed) return;
                 var state = domain.store.get();
                 setStatus(selectStatusText(state), selectSearchProgress(state).stage === 'loading');
@@ -755,6 +868,12 @@
             if (statusTextNow !== selectStatusText(previous) || progressNow.stage !== progressPrev.stage) {
                 setStatus(statusTextNow, progressNow.stage === 'loading');
             }
+            // Per-tracker chips — reference-equality check on poolIndexers/poolAllIndexers is
+            // enough (both get fresh references from store.patch whenever they actually change,
+            // same convention as every other diff in this function).
+            if (state.poolIndexers !== previous.poolIndexers || state.poolAllIndexers !== previous.poolAllIndexers) {
+                renderTrackers(selectPoolIndexers(state));
+            }
             // Both the 15s cold-search escalation and the auto-retry countdown depend on wall-clock
             // elapsed time, not on any single state transition — nothing else may patch the store
             // during either wait, so a ticking timer (see ensureStatusTicking's own comment for why
@@ -777,7 +896,10 @@
             }
         }
 
-        var unsubscribe = domain.store.subscribe(render);
+        // Registered into the shared domain scope, same reasoning as statusTickTimer above — one
+        // dispose() (domain.destroy(), called before view.destroy() by torrent-mod-component.js)
+        // tears this down, no separate unsubscribe bookkeeping needed here anymore.
+        domain.scope.subscribe(domain.store, render);
 
         function renderComponent(js) {
             return explorer.render(js);
@@ -798,13 +920,14 @@
             destroy: function () {
                 // Tear the panel down WITHOUT touching domain/store (no closePicker → no store.patch
                 // → no render): the screen is going away, render must not fight the removal. Also
-                // unsubscribe and destroy BOTH scrolls (the panel's own pickerScroll was being
-                // leaked — found by the architect). The 'content' controller is NOT toggled here:
-                // Lampa re-registers it on the next Activity start anyway, and leaving it alone
-                // avoids a global controller pointing at a dead screen.
+                // destroy BOTH scrolls (the panel's own pickerScroll was being leaked — found by the
+                // architect). The 'content' controller is NOT toggled here: Lampa re-registers it on
+                // the next Activity start anyway, and leaving it alone avoids a global controller
+                // pointing at a dead screen. statusTickTimer/the render subscription are NOT touched
+                // here anymore — both are registered into domain.scope, and torrent-mod-component.js
+                // already calls viewModel.destroy() (domain.destroy() → scope.dispose()) before this
+                // runs, so they're already torn down by the time we get here.
                 viewDestroyed = true;
-                if (statusTickTimer) { clearInterval(statusTickTimer); statusTickTimer = null; }
-                try { if (unsubscribe) unsubscribe(); } catch (e) {}
                 try { picker.remove(); } catch (e) {}
                 try { pickerScroll.destroy(); } catch (e) {}
                 try { scroll.destroy(); } catch (e) {}

@@ -8,7 +8,7 @@ import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { flushMicrotasks } from './helpers/mock-lampa.mjs';
 import { createResultsDomain } from '../domain/results-domain.js';
-import { selectPickerData } from '../domain/results-selectors.js';
+import { selectPickerData, selectPoolIndexers } from '../domain/results-selectors.js';
 
 const runner = createRunner();
 
@@ -60,6 +60,11 @@ runner.test('сериал: start → пул → смена сезона → фи
     if (state.poolStatus !== 'ready') throw new Error('пул не загрузился: ' + state.poolStatus);
     if (!state.pool || state.pool.length !== 2) throw new Error('ожидал 2 раздачи в пуле, получил ' + (state.pool || []).length);
     if (!state.episodesCache || state.episodesCache.length !== 2) throw new Error('серии не загрузились');
+    // /start's own indexer list (mock-Reguest synthesizes one "mock" tracker) реально доходит до
+    // стора — это то, что позволяет виджету показывать спиннер по имени трекера, а не только счётчик.
+    if (!state.poolAllIndexers || state.poolAllIndexers.length !== 1 || state.poolAllIndexers[0].id !== 'mock') {
+        throw new Error('poolAllIndexers не заполнился из /start: ' + JSON.stringify(state.poolAllIndexers));
+    }
 
     // смена сезона — локально, пул не перезагружается (тот же объект) и НЕ отправляется новый
     // torrent-search запрос (только TMDB season)
@@ -471,7 +476,9 @@ runner.test('destroy() мид-флайт: поздний ответ после d
     if (stateAfter.episodesStatus !== 'loading') throw new Error('поздний TMDB-ответ изменил стор после destroy(): episodesStatus=' + stateAfter.episodesStatus);
     if (stateAfter.poolStatus !== 'loading') throw new Error('поздний torrent-search-ответ изменил стор после destroy(): poolStatus=' + stateAfter.poolStatus);
     if (stateAfter.episodesCache !== null) throw new Error('episodesCache не должен был заполниться после destroy()');
-    if (stateAfter.pool !== null) throw new Error('pool не должен был заполниться после destroy()');
+    // pool is now always an array (results-state.js) — "didn't get filled in" is `length === 0`,
+    // not `=== null` (that check was for the old nullable-pool design).
+    if (stateAfter.pool.length !== 0) throw new Error('pool не должен был заполниться после destroy()');
 });
 
 runner.test('крах после провала поиска: открытие панели после ошибки пула не уходит в бесконечную рекурсию', async () => {
@@ -682,15 +689,17 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     domain.destroy();
 });
 
-runner.test('панель, открытая ДО того как пул хоть раз ответил, не падает на null pool', async () => {
+runner.test('панель, открытая ДО того как пул хоть раз ответил, не падает на пустой pool', async () => {
     // Реальный краш, найденный при ревью (не пойман руками): TMDB (список серий) обычно резолвится
     // намного быстрее агрегатного поиска Jackett (до ~40с) — значит строка серии становится
-    // фокусируемой и доступной для right-arrow ЗАДОЛГО до того, как state.pool перестаёт быть null
-    // (его стартовое значение, results-state.js). selectPickerData звало
-    // selectCandidatesForEpisode (→ applyStateFilters → pool.filter(...)) РАНЬШЕ проверки
-    // poolLoading — TypeError: Cannot read properties of null (reading 'filter'). Не мокаем
-    // /api/torrent-search вообще (искусственно "вечно висящий" ответ), чтобы pool гарантированно
-    // остался null на момент открытия панели.
+    // фокусируемой и доступной для right-arrow ЗАДОЛГО до того, как state.pool получает хоть один
+    // результат. selectPickerData звало selectCandidatesForEpisode (→ applyStateFilters →
+    // pool.filter(...)) РАНЬШЕ проверки poolLoading — TypeError: Cannot read properties of null
+    // (reading 'filter'), поскольку pool тогда стартовал как `null`. state.pool теперь ВСЕГДА
+    // массив (results-state.js — пул стал прогрессивным), так что тот КОНКРЕТНЫЙ null-краш больше
+    // структурно невозможен; тест по-прежнему стоит того, чтобы проверить, что открытие панели ДО
+    // первого ответа пула (пустой `pool: []`, ещё не settled) не падает и корректно даёт
+    // status='loading'.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -706,9 +715,9 @@ runner.test('панель, открытая ДО того как пул хоть
     const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
     domain.start();
     // Достаточно для TMDB (быстрый), недостаточно для /api/torrent-search (200мс) —
-    // state.pool гарантированно всё ещё null здесь.
+    // state.pool гарантированно всё ещё пуст здесь.
     await new Promise((r) => setTimeout(r, 30));
-    if (domain.store.get().pool !== null) throw new Error('тест сломан: pool уже не null, сценарий не воспроизведён');
+    if (domain.store.get().pool.length !== 0) throw new Error('тест сломан: pool уже не пуст, сценарий не воспроизведён');
 
     domain.selection.setActiveEpisode(1);
     let threw = null;
@@ -735,7 +744,7 @@ runner.test('loadAllTorrents: сетевой сбой авто-повторяе�
     // Требование пользователя напрямую: "повторы при сетевых сбоях нужны обязательно" — реальный
     // репорт про "Менталист 2008", где поиск падал дважды подряд и помогал только ручной перезапуск
     // плагина. Первая попытка проваливается, вторая (реальный запланированный авто-повтор,
-    // POOL_RETRY_DELAYS_MS[0]=3с) успешна — без единого ручного действия.
+    // POOL_RETRY_DELAYS_MS[0]=5с) успешна — без единого ручного действия.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -763,8 +772,8 @@ runner.test('loadAllTorrents: сетевой сбой авто-повторяе�
         throw new Error('ожидал запланированный авто-повтор в будущем, получил poolAutoRetryAt=' + state.poolAutoRetryAt);
     }
 
-    // Реально ждём срабатывания первого запланированного авто-повтора (POOL_RETRY_DELAYS_MS[0]=3с).
-    await new Promise((r) => setTimeout(r, 3300));
+    // Реально ждём срабатывания первого запланированного авто-повтора (POOL_RETRY_DELAYS_MS[0]=5с).
+    await new Promise((r) => setTimeout(r, 5300));
 
     state = domain.store.get();
     if (state.poolStatus !== 'ready') throw new Error('ожидал восстановление после авто-повтора, получил poolStatus=' + state.poolStatus);
@@ -799,6 +808,48 @@ runner.test('domain.destroy() отменяет запланированный а
     if (requestsAfterDestroy !== requestsBeforeDestroy) {
         throw new Error('destroy() не отменил авто-повтор — новый запрос всё равно улетел (' + requestsBeforeDestroy + ' → ' + requestsAfterDestroy + ')');
     }
+});
+
+runner.test('виджет трекеров: домен не планирует никакого скрытия — это презентационная политика View', async () => {
+    // Раньше episodes-interactor.js само планировало store.patch через несколько секунд, чтобы
+    // "скрыть" успешно ответивший трекер — пользователь прямо поправил архитектуру: "таймер фейда —
+    // это UI логика, а не домена... Процесс поиска спокойно наполняет стор, а во вьюмодели
+    // создаются мягкий плавный вид". Домен теперь только пишет факты (ok/error/elapsedMs/reportedAt)
+    // и останавливается на этом; ничего в domain/ больше не отслеживает время после этого события.
+    // Фактическое затухание чипа — DOM/CSS-анимация внутри ui/results-screen.js, за пределами
+    // границы "verified live" для доменных тестов (см. CLAUDE.md) — здесь не проверяется.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] });
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    const afterSearch = domain.store.get();
+    if (afterSearch.poolStatus !== 'ready') throw new Error('пул не загрузился: ' + afterSearch.poolStatus);
+    const progressNow = selectPoolIndexers(afterSearch);
+    if (progressNow.trackers.length !== 1 || progressNow.trackers[0].status !== 'ok') {
+        throw new Error('ожидал один успешный трекер сразу после ответа: ' + JSON.stringify(progressNow));
+    }
+    const poolIndexersRef = afterSearch.poolIndexers;
+
+    // Пережидаем даже дольше старого TRACKER_SUCCESS_HIDE_MS (4с) — если бы домен всё ещё
+    // что-то планировал сам, ссылка бы сменилась.
+    await new Promise((resolve) => setTimeout(resolve, 4300));
+
+    const afterWait = domain.store.get();
+    if (afterWait.poolIndexers !== poolIndexersRef) {
+        throw new Error('poolIndexers сменил ссылку сам по себе — в домене осталось что-то планирующее скрытие, это презентационная логика, ей место во View');
+    }
+    if (selectPoolIndexers(afterWait).trackers.length !== 1) {
+        throw new Error('селектор не должен сам прятать давно ответившие трекеры — это решение View, не его');
+    }
+    domain.destroy();
 });
 
 await runner.run();

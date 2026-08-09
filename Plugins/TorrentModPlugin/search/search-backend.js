@@ -1,20 +1,19 @@
     // ---------- search backend ----------
     // Raw Jackett response mapping (mapTorrent) and the actual multi-query fetch/merge
-    // orchestration (searchTorrentMod) — the two functions that talk to /api/torrent-search.
-    // Scoring/gating of the results this returns lives in scoring.js, not here.
-    import { hubBase } from '../shared/state.js';
+    // orchestration (searchTorrentMod) — the two functions that talk to
+    // /api/torrent-search/{start,poll,cancel} via parallel-search.js. Scoring/gating of the results
+    // this returns lives in scoring.js, not here.
     import { buildQueries as buildQueriesForTarget } from './query-building.js';
-    import { compact, unique, request } from '../shared/utils.js';
+    import { compact, unique } from '../shared/utils.js';
+    import { startParallelSearch } from './parallel-search.js';
 
+    // A single malformed entry (raw is null/undefined) used to throw here, and since this ran
+    // inside a plain .map() with no per-item try/catch, that exception propagated all the way out
+    // to the caller's own outer .catch() — silently discarding *every* query's results, not just
+    // the one bad entry. Found during an independent review pass; matches the existing null-return
+    // convention two lines below (no magnet and no link → null, filtered out downstream by
+    // .filter(Boolean)) rather than introducing a new failure mode.
     function mapTorrent(raw, parseReleaseForMode) {
-        // A single malformed entry (raw is null/undefined) used to throw here, and since this runs
-        // inside allResults.map() with no per-item try/catch, that exception propagated all the way
-        // out to searchTorrentMod's own outer .catch() — silently discarding *every* query's
-        // results, not just the one bad entry, and reporting the generic "Jackett недоступен" even
-        // though most or all of the merged data was actually fine. Found during an independent
-        // review pass; matches the existing null-return convention two lines below (no magnet and
-        // no link → null, filtered out downstream by .filter(Boolean)) rather than introducing a
-        // new failure mode.
         if (!raw) return null;
         var magnet = raw.MagnetUri || raw.Magnet || '';
         var link = raw.Link || raw.downloadUrl || '';
@@ -35,38 +34,78 @@
         };
     }
 
+    // Runs ONE query through the parallel-per-indexer backend (parallel-search.js), collecting
+    // every indexer's own contribution as it arrives. Used by searchTorrentMod below to reproduce
+    // the old single-Promise contract for callers that don't need progressive updates (season lazy
+    // load, customQuery manual search) — those needed zero changes when this file moved off the old
+    // single blocking aggregate call, since the external shape here is unchanged.
+    function searchOneQuery(text) {
+        return new Promise(function (resolve) {
+            var rawResults = [];
+            var indexers = [];
+            var anyOk = false;
+            startParallelSearch(text, function (entry) {
+                anyOk = anyOk || entry.ok;
+                indexers.push({ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs });
+                if (entry.ok) (entry.results || []).forEach(function (raw) { rawResults.push(raw); });
+            }, function (failed) {
+                resolve({ rawResults: rawResults, indexers: indexers, failed: failed || !anyOk });
+            });
+        });
+    }
+
     export function searchTorrentMod(target, parseReleaseForMode, buildQueriesForMode) {
         var queries = (buildQueriesForMode || buildQueriesForTarget)(target);
         if (!queries.length) return Promise.resolve({ results: [], indexers: [], failed: true });
 
-        var calls = queries.map(function (text) {
-            return request(hubBase + '/api/torrent-search?query=' + encodeURIComponent(text), 45000)
-                .then(function (data) { return data || null; });
-        });
-
-        return Promise.all(calls).then(function (responses) {
-            var ok = responses.filter(Boolean);
+        return Promise.all(queries.map(searchOneQuery)).then(function (responses) {
+            var ok = responses.filter(function (response) { return !response.failed; });
             if (!ok.length) return { results: [], indexers: [], failed: true };
 
-            var allResults = [];
-            var indexerMap = {};
-            ok.forEach(function (data) {
-                (data.results || []).forEach(function (raw) { allResults.push(raw); });
-                (data.indexers || []).forEach(function (entry) {
-                    var id = entry.ID || entry.Name;
-                    if (!id) return;
-                    var existing = indexerMap[id];
-                    if (!existing || (entry.Results || 0) > (existing.Results || 0)) indexerMap[id] = entry;
-                });
+            var allRaw = [];
+            var indexers = [];
+            ok.forEach(function (response) {
+                response.rawResults.forEach(function (raw) { allRaw.push(raw); });
+                indexers = indexers.concat(response.indexers);
             });
 
-            var mapped = allResults.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean);
+            var mapped = allRaw.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean);
             var results = unique(mapped, function (item) {
                 return compact(item.magnet || item.link || (item.title + '|' + item.size));
             });
 
-            return { results: results, indexers: Object.keys(indexerMap).map(function (k) { return indexerMap[k]; }), failed: false };
-        }).catch(function () {
-            return { results: [], indexers: [], failed: true };
+            return { results: results, indexers: indexers, failed: false };
         });
+    }
+
+    // Progressive variant for the whole-work pool search specifically (episodes-interactor.js's
+    // loadAllTorrents) — this search is ALWAYS exactly one query (season:0 → buildQueries emits
+    // just the title, no season/episode suffix; see docs/system-design/torrent-mod-unified-pool.md,
+    // Этап 1), so there's no multi-query merge to coordinate here the way searchTorrentMod above
+    // has to. `onIndexerResult({id, name, ok, error, elapsedMs, items})` fires once per indexer, in
+    // completion order (fastest first) — `items` are already mapped AND deduped against everything
+    // seen so far in THIS search, so the caller can merge them straight into its pool without
+    // re-running its own dedup pass per indexer. `onDone(failed)` fires once, after the last
+    // indexer (or immediately if the search never started at all — Jackett down/no API key).
+    // Returns `{cancel}` — the caller (episodes-interactor.js) is responsible for calling it when a
+    // manual retry/new search context supersedes this one; `scope`, if given, gets the underlying
+    // poll timer registered into it so leaving the screen cancels it automatically. `onIndexerList`
+    // is passed straight through to startParallelSearch — see its own doc comment.
+    export function searchTorrentModProgressive(target, parseReleaseForMode, buildQueriesForMode, onIndexerResult, onDone, scope, onIndexerList) {
+        var query = ((buildQueriesForMode || buildQueriesForTarget)(target))[0];
+        if (!query) { onDone(true); return { cancel: function () {} }; }
+
+        var seen = {};
+        return startParallelSearch(query, function (entry) {
+            var mapped = entry.ok
+                ? (entry.results || []).map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean)
+                : [];
+            var deduped = mapped.filter(function (item) {
+                var id = compact(item.magnet || item.link || (item.title + '|' + item.size));
+                if (!id || seen[id]) return false;
+                seen[id] = true;
+                return true;
+            });
+            onIndexerResult({ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, items: deduped });
+        }, onDone, scope, onIndexerList);
     }

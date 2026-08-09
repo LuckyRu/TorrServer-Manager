@@ -18,6 +18,7 @@ export function createMovieResultsViewModel(options) {
         episodes: domain.episodes,
         selection: domain.selection,
         start: domain.start,
-        destroy: domain.destroy
+        destroy: domain.destroy,
+        scope: domain.scope
     };
 }

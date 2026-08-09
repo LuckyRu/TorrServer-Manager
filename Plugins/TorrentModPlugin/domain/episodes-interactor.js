@@ -11,8 +11,8 @@
     // purely a state.season flip with zero network traffic. See
     // docs/system-design/torrent-mod-unified-pool.md (Этап 1).
     import { fetchSeason, episodeCounts } from '../metadata/tmdb.js';
-    import { searchMovieTorrents } from '../search/movie-search.js';
-    import { searchSeriesTorrents } from '../search/series-search.js';
+    import { searchMovieTorrents, searchMovieTorrentsProgressive } from '../search/movie-search.js';
+    import { searchSeriesTorrents, searchSeriesTorrentsProgressive } from '../search/series-search.js';
     import { compact, notify } from '../shared/utils.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
@@ -34,12 +34,31 @@
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
         var isDestroyed = options.isDestroyed;
+        // Shared lifecycle scope (shared/core/lifecycle.js) — every timer this interactor starts,
+        // and the in-flight pool search's own cancel handle, register into it via scope.setTimeout/
+        // scope.track, so leaving the screen (results-domain.js's destroy() → scope.dispose())
+        // cleans all of it up in one call. This interactor no longer needs its own destroy() method
+        // at all (see the file's own history in CLAUDE.md for why that used to be error-prone: two
+        // separate ad hoc timer fields each needed retrofitting into a hand-written destroy() after
+        // the fact, once real leaks surfaced them).
+        var scope = options.scope;
 
-        // Pending auto-retry timers — cancelled on destroy() so a screen the user already left
-        // doesn't keep silently retrying (and, for the pool one, doesn't fire requery() against a
-        // destroyed store).
-        var poolAutoRetryTimer = null;
-        var seasonAutoRetryTimers = {}; // season -> timer
+        // Manual cancel handle for the pool retry timer specifically — kept as a plain variable
+        // (not just scope-tracked) because requery() needs to cancel a STILL-TICKING retry on its
+        // own, independent of full scope disposal (a manual "Повторить" press superseding an
+        // auto-retry that hasn't fired yet).
+        var poolRetryTimerId = null;
+        var poolSearchHandle = null; // {cancel} from the currently in-flight progressive search, if any
+        var seasonAutoRetryTimers = {}; // season -> timer id (same "manual override" reasoning as above)
+
+        // scope.setTimeout already cancels the search's own internal poll timer on scope disposal
+        // (parallel-search.js registers it there too), but that alone only stops the CLIENT from
+        // polling — it doesn't tell the server to stop bothering with any still-in-flight per-
+        // indexer requests. Registered once, reads whatever the CURRENT search handle is at the
+        // moment the scope actually disposes (not a stale snapshot) — covers "user backed out of
+        // the screen entirely" the same way requery()'s own explicit cancel already covers "user
+        // started a different search."
+        scope.track(function () { if (poolSearchHandle) poolSearchHandle.cancel(); });
 
         function loadEpisodes() {
             var state = store.get();
@@ -97,6 +116,14 @@
         // else — badges, filters, clicks — is local filtering over this pool (see selectors and
         // selection-interactor.js). `onLoaded` fires after the pool lands (used by the movie flow
         // to kick off the local candidate pick once data is actually there).
+        //
+        // PROGRESSIVE, per-indexer (search/parallel-search.js) — replaced the old single blocking
+        // call to Jackett's own aggregate endpoint after a direct, concrete complaint: one
+        // slow/broken tracker used to hold up every OTHER tracker's already-ready results for up to
+        // 45s, and the user watched it happen live ("смотреть на таймер пустого ожидания
+        // мучительно больно"). Each indexer now merges into `pool` (and reports into
+        // `poolIndexers`, for the widget's per-tracker status) the moment IT answers — the fastest
+        // tracker's results are visible immediately, not gated behind the slowest one.
         var pendingOnLoaded = null;
         function loadAllTorrents(onLoaded) {
             var state = store.get();
@@ -119,61 +146,79 @@
             // poolStartedAt: plain wall-clock timestamp, read only by selectSearchProgress to
             // escalate the head status line's wording past ~15s of a cold search — not a
             // generation/staleness concern, just cosmetic timing data (still "plain data only" per
-            // this file's own state-shape rule: a number, not a timer/Promise).
-            store.patch({ poolStatus: 'loading', poolStartedAt: Date.now() });
-            var search = hasSeasons ? searchSeriesTorrents : searchMovieTorrents;
-            search(target).then(function (response) {
-                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
-                    log('episodes', 'loadAllTorrents отброшен как устаревший, generation=' + generation);
-                    return;
-                }
+            // this file's own state-shape rule: a number, not a timer/Promise). pool/poolIndexers
+            // reset to [] here (not null — see results-state.js) so a fresh search starts from a
+            // clean, always-array slate every time.
+            store.patch({ poolStatus: 'loading', poolStartedAt: Date.now(), pool: [], poolIndexers: [], poolAllIndexers: [] });
+            var search = hasSeasons ? searchSeriesTorrentsProgressive : searchMovieTorrentsProgressive;
+            poolSearchHandle = search(target, function (entry) {
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                var current = store.get();
+                log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" ' +
+                    (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, +' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
+                // reportedAt is a plain fact (when did this indexer answer) — the domain stops
+                // there. How long a successful chip stays visible before it fades, and how that
+                // fade actually animates, is presentation policy, not a domain concern; that logic
+                // used to live here as a scheduled store.patch (found wrong in review, corrected
+                // directly by the user: "таймер фейда — это UI логика, а не домена... Процесс
+                // поиска спокойно наполняет стор, а во вьюмодели создаются мягкий плавный вид").
+                // It now lives entirely in ui/results-screen.js's renderTrackers, scheduled via the
+                // same shared domain.scope so it's still leak-safe, but never touches the store.
+                store.patch({
+                    pool: mergePools(current.pool, entry.items),
+                    poolIndexers: current.poolIndexers.concat([{ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, reportedAt: Date.now() }])
+                });
+            }, function (startFailed) {
+                poolSearchHandle = null;
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                var current = store.get();
+                var anyOk = current.poolIndexers.some(function (indexer) { return indexer.ok; });
                 // A silent warn() log used to be the ONLY signal a failed whole-work search ever
                 // produced — pool just became [] and poolStatus 'error', visually identical to a
-                // search that genuinely ran and found nothing (badges/messages downstream couldn't
-                // tell the two apart either, see their own comments). Reported directly by the
-                // user testing this exact path live: a Jackett 502/timeout on the aggregate
-                // all-indexers query left them with no idea anything had gone wrong at all.
+                // search that genuinely ran and found nothing. Reported directly by the user testing
+                // this exact path live. This branch is now reached only when NOT ONE configured
+                // indexer answered successfully (startFailed: the job never even started — Jackett/
+                // API key unavailable; or every single indexer individually failed) — a much rarer,
+                // more genuine outage than before, since one slow/broken tracker no longer drags the
+                // whole search down with it.
                 //
-                // A network/Jackett failure is now retried automatically, with escalating delays
-                // (POOL_RETRY_DELAYS_MS, shared/state.js) — required directly by the user after a
-                // real repeated-failure report ("сбой поиска был 2 раза, два раза переходил назад
-                // и запускал плагин заново"): a transient failure that a manual relaunch fixes is
-                // exactly the case auto-retry exists for, and making the user do that dance by hand
-                // every time is the actual product failure, not a hypothetical one. Kept HONEST per
-                // the same conversation ("можно честно информировать пользователя") — every retry
-                // is visible in the status line via selectSearchProgress's 'retrying' stage (a live
-                // countdown + "попытка N из M"), never silent. Once POOL_RETRY_DELAYS_MS is
-                // exhausted, this falls back to exactly the old behaviour: a toast, poolStatus
-                // 'error', and the existing manual "Повторить" surfaces (emptyPoolMessage for
-                // movies; badges/status text for series) — auto-retry raises the floor, it doesn't
-                // replace the escape hatch for a genuinely persistent outage.
-                if (response.failed) {
-                    var current = store.get();
+                // Retried automatically, with escalating delays (POOL_RETRY_DELAYS_MS,
+                // shared/state.js) — required directly by the user after a real repeated-failure
+                // report ("сбой поиска был 2 раза, два раза переходил назад и запускал плагин
+                // заново"). Kept HONEST per the same conversation ("можно честно информировать
+                // пользователя") — every retry is visible in the status line via
+                // selectSearchProgress's 'retrying' stage (a live countdown + "попытка N из M"),
+                // never silent. Once POOL_RETRY_DELAYS_MS is exhausted, this falls back to the
+                // existing manual "Повторить" surfaces (emptyPoolMessage for movies; badges/status
+                // text for series).
+                if (startFailed || !anyOk) {
                     var attempt = current.poolAttempt || 1;
                     var retryIndex = attempt - 1;
                     if (retryIndex < POOL_RETRY_DELAYS_MS.length) {
                         var delayMs = POOL_RETRY_DELAYS_MS[retryIndex];
-                        warn('episodes', 'loadAllTorrents: поиск не удался, авто-повтор через ' + delayMs + 'мс (попытка ' + (attempt + 1) + ')');
-                        store.patch({ pool: [], poolStatus: 'error', poolAutoRetryAt: Date.now() + delayMs });
-                        if (poolAutoRetryTimer) clearTimeout(poolAutoRetryTimer);
-                        poolAutoRetryTimer = setTimeout(function () {
-                            poolAutoRetryTimer = null;
-                            if (isDestroyed()) return;
+                        warn('episodes', 'loadAllTorrents: ни один трекер не ответил, авто-повтор через ' + delayMs + 'мс (попытка ' + (attempt + 1) + ')');
+                        store.patch({ poolStatus: 'error', poolAutoRetryAt: Date.now() + delayMs });
+                        if (poolRetryTimerId !== null) clearTimeout(poolRetryTimerId);
+                        poolRetryTimerId = scope.setTimeout(function () {
+                            poolRetryTimerId = null;
                             requery(onLoaded, true);
                         }, delayMs);
                         return;
                     }
-                    warn('episodes', 'loadAllTorrents: поиск не удался, авто-повторы исчерпаны');
+                    warn('episodes', 'loadAllTorrents: авто-повторы исчерпаны, ни один трекер не ответил');
                     notify('Не удалось получить раздачи — проверьте Jackett или повторите позже');
-                    store.patch({ pool: [], poolStatus: 'error', poolAutoRetryAt: null });
+                    store.patch({ poolStatus: 'error', poolAutoRetryAt: null });
                 } else {
-                    log('episodes', 'loadAllTorrents успех, раздач в пуле=' + response.results.length);
-                    store.patch({ pool: response.results, poolStatus: 'ready', poolAutoRetryAt: null });
+                    log('episodes', 'loadAllTorrents успех, раздач в пуле=' + current.pool.length);
+                    store.patch({ poolStatus: 'ready', poolAutoRetryAt: null });
                 }
                 if (typeof onLoaded === 'function') onLoaded();
                 var pending = pendingOnLoaded;
                 pendingOnLoaded = null;
                 if (pending && pending !== onLoaded) pending();
+            }, scope, function (indexerList) {
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                store.patch({ poolAllIndexers: indexerList });
             });
         }
 
@@ -259,10 +304,12 @@
                         var delayMs = SEASON_RETRY_DELAYS_MS[attempt - 1];
                         seasonAttempts[season] = attempt + 1;
                         warn('episodes', 'ensureSeasonLoaded(' + season + ') не удался, авто-повтор через ' + delayMs + 'мс');
-                        if (seasonAutoRetryTimers[season]) clearTimeout(seasonAutoRetryTimers[season]);
-                        seasonAutoRetryTimers[season] = setTimeout(function () {
+                        if (seasonAutoRetryTimers[season] !== undefined) clearTimeout(seasonAutoRetryTimers[season]);
+                        // scope.setTimeout: cancelled automatically if the screen closes before it
+                        // fires (no manual isDestroyed() check needed here anymore — see this file's
+                        // own header comment on `scope`).
+                        seasonAutoRetryTimers[season] = scope.setTimeout(function () {
                             delete seasonAutoRetryTimers[season];
-                            if (isDestroyed()) return;
                             runSeasonSearch(season, generation);
                         }, delayMs);
                         return;
@@ -277,7 +324,7 @@
                 }
                 delete seasonAttempts[season];
                 var current = store.get();
-                var merged = mergePools(current.pool || [], response.results);
+                var merged = mergePools(current.pool, response.results);
                 var loadsReady = Object.assign({}, current.seasonLoads || {});
                 loadsReady[season] = 'ready';
                 log('episodes', 'ensureSeasonLoaded(' + season + ') успех, пул после мержа=' + merged.length);
@@ -333,11 +380,18 @@
             log('episodes', 'requery: сброс пула под новым запросом, customQuery=' + state.customQuery + (isRetry ? ', попытка ' + ((state.poolAttempt || 1) + 1) : ''));
             // A manual "Повторить" press can land while an auto-retry for the SAME failure is
             // already ticking (e.g. the user didn't want to wait) — cancel it so the two don't both
-            // fire and race each other into two overlapping loadAllTorrents calls.
-            if (poolAutoRetryTimer) { clearTimeout(poolAutoRetryTimer); poolAutoRetryTimer = null; }
+            // fire and race each other into two overlapping loadAllTorrents calls. Same for a still
+            // in-flight progressive search itself — "ручной запуск должен прерывать поиск оставшихся
+            // запросов" (requested directly by the user): a fresh query context (or a manual retry)
+            // means whatever the OLD search's still-pending per-indexer requests were doing is no
+            // longer relevant, so tell the server to stop bothering with them too
+            // (parallel-search.js's cancel(), which best-effort notifies PluginHub.cs to abort them
+            // server-side — see PluginHub.cs's own /api/torrent-search/cancel).
+            if (poolRetryTimerId !== null) { clearTimeout(poolRetryTimerId); poolRetryTimerId = null; }
+            if (poolSearchHandle) { poolSearchHandle.cancel(); poolSearchHandle = null; }
             // New query context: old pool and per-season coverage are both invalid.
             store.patch({
-                pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {},
+                pool: [], poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {}, poolIndexers: [], poolAllIndexers: [],
                 poolAttempt: isRetry ? (state.poolAttempt || 1) + 1 : 1, poolAutoRetryAt: null
             });
             loadAllTorrents(onLoaded);
@@ -349,17 +403,6 @@
             loadAllTorrents();
         }
 
-        // Cancels every pending auto-retry timer (pool + all seasons) — without this, a screen the
-        // user already backed out of would keep silently retrying in the background and eventually
-        // call requery()/store.patch() against a destroyed store.
-        function destroy() {
-            if (poolAutoRetryTimer) { clearTimeout(poolAutoRetryTimer); poolAutoRetryTimer = null; }
-            Object.keys(seasonAutoRetryTimers).forEach(function (season) {
-                clearTimeout(seasonAutoRetryTimers[season]);
-            });
-            seasonAutoRetryTimers = {};
-        }
-
         return {
             start: start,
             loadEpisodes: loadEpisodes,
@@ -368,7 +411,6 @@
             retrySeasonLoad: retrySeasonLoad,
             setSeason: setSeason,
             showEpisodeList: showEpisodeList,
-            requery: requery,
-            destroy: destroy
+            requery: requery
         };
     }

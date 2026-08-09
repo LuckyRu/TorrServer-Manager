@@ -1540,6 +1540,361 @@ entry-point/build-config layer above all of them.
     invocation — otherwise `scroll.minus()`'s cached height math would go stale exactly the way it
     did once before for the identical underlying reason (status's own height changing repeatedly —
     see this file's own "third independent cause" entry above), just via a new trigger this time.
+  - **Lifecycle scope + parallel-per-indexer search — a real architecture change, not another point
+    fix, requested directly by the user after the auto-retry work above** ("при запуске плагина...
+    должен быть спроектирован и использоваться лайфскоуп объект для регистрации в нём всех
+    асинхронных задач... и уберём паузу между ретраями... сделай мне пул параллельных запросов по
+    каждому трекеру"). Two independent asks, shipped together since the second made the first's
+    payoff visible: (1) one shared lifecycle object every async resource a results-screen instance
+    owns registers into, so a single dispose tears all of it down; (2) fan out to every Jackett
+    indexer in parallel instead of one blocking aggregate call, so a single slow/broken tracker can
+    no longer hold up every other tracker's already-ready results.
+    - **`shared/core/lifecycle.js`'s `createLifecycle()` grew from a bare `{isAlive, dispose}` flag
+      into a real registry**: `track(dispose)` (generic cleanup registration, returns an `untrack`),
+      `setTimeout(fn, ms)`/`setInterval(fn, ms)` (scope-owned timers — auto-untrack themselves on a
+      normal `setTimeout` fire, both cancelled automatically on `dispose()`), `subscribe(store,
+      listener)` (store subscription with automatic unsubscribe on dispose). `dispose()` runs every
+      tracked cleanup in REVERSE registration order, each wrapped in its own try/catch so one
+      throwing cleanup can't block the rest from running. This directly replaced two independent, ad
+      hoc destroy() methods (`episodes-interactor.js`'s own, `selection-interactor.js`'s own) that
+      each had to be hand-updated every time a new timer/subscription was added — the exact
+      "N separately-remembered destroy() methods" failure mode the `shared/core/` work earlier in
+      this file was already naming as a risk. Both interactors' own `destroy()` functions (and the
+      `destroy: destroy` entries in their returned APIs) were deleted outright once every timer they
+      owned was migrated to `scope.setTimeout`/`scope.track` — there is no cleanup left for a
+      hand-written destroy to do. `results-domain.js`'s `destroy()` is now just `scope.dispose()`,
+      logged for idempotency (a second call is a documented no-op, not silently swallowed).
+    - **The View (`ui/results-screen.js`) registers into the SAME shared scope**, not its own: the
+      one `store.subscribe(render)` and the `statusTickTimer` `setInterval` (search-progress-widget's
+      escalating countdown ticker) both moved to `domain.scope.subscribe`/`domain.scope.setInterval`.
+      `torrent-mod-component.js` already calls `viewModel.destroy()` (→ `domain.destroy()` →
+      `scope.dispose()`) BEFORE `view.destroy()` — so by the time the View's own `destroy()` runs,
+      both are already torn down; its own `destroy()` only needs to handle View-only DOM/jQuery state
+      (the picker panel, both `Lampa.Scroll` instances, `explorer.destroy()`) that was never part of
+      the scope's job in the first place.
+    - **Parallel per-indexer search, backend**: `Services/PluginHub.cs` replaced the single
+      `GET /api/torrent-search` (Jackett's own aggregate `indexers/all/results` endpoint, one round
+      trip bounded by the slowest configured indexer) with a three-endpoint job protocol —
+      `GET /api/torrent-search/start?query=...` → `{jobId, totalIndexers}` (fetches/caches the
+      configured-indexer list via Jackett's Torznab `t=indexers&configured=true` capabilities XML,
+      5-minute TTL, then fires one `SearchOneIndexerAsync` per indexer via `Task.Run`), `GET
+      .../poll?jobId=...` → `{done, indexers:[{id,name,ok,error,elapsedMs,results}]}` (always the
+      FULL accumulated set so far — polling is stateless on the client, no "since last poll" cursor
+      needed), `GET .../cancel?jobId=...` (best-effort; the real backstop is `CleanupStaleSearchJobs`,
+      a 3-minute TTL sweep run at the top of every `/start`, for a cancel request that never arrives
+      at all — page closed, network blip). **`cancel` is a GET, not a POST**: an early implementation
+      used POST and hit a live `HttpListener` `411 Length Required` — .NET's own listener demands
+      `Content-Length` on any POST regardless of whether the handler reads a body, and this endpoint
+      has nothing to read; GET sidesteps the whole POST-body/Content-Length question for an action
+      this low-stakes. **Per-indexer completions are processed via `Task.WhenAny` in a loop over a
+      materialized `.ToList()` of tasks, not a `foreach (var t in tasks) await t`** — the latter
+      processes results in the ORIGINAL list order regardless of which task actually finished first,
+      which would have silently defeated the entire point (showing the fastest tracker's results
+      first) while still compiling and running without any visible error. Caught at design time, not
+      live — worth remembering as a general C# trap: sequential `await` inside a `foreach` over a
+      task list is a correctness bug whenever "as they complete" matters, not just a style
+      preference. **Verified live via curl against this project's own real Jackett instance**
+      end-to-end for all three endpoints before any JS-side change was written: `/start` returned 5
+      real configured indexers (anilibria/bigfangroup/megapeer/noname-club/rutracker-ru); `/poll`
+      returned real per-indexer timing (4–36ms in this run — Jackett itself caches aggressively, so
+      these numbers understate a genuinely cold multi-tracker search); `/cancel` correctly made a
+      subsequent `/poll` 404.
+    - **Parallel per-indexer search, plugin JS side**: `search/parallel-search.js` (new file) is the
+      one module that actually talks to the three endpoints — plain GET polling via the existing
+      `request()` helper (`shared/utils.js`, itself built on `Lampa.Reguest`), deliberately NOT
+      `fetch()`/`ReadableStream` HTTP streaming, for the same target-is-an-LG-WebOS-TV-browser
+      caution behind this plugin's other transport choices (documented throughout this file).
+      `startParallelSearch(query, onIndexerResult, onDone, scope)` returns `{cancel}`; `scope`, when
+      given, gets the poll timer registered into it, so leaving the results screen mid-search cancels
+      the client-side poll loop automatically — no caller-remembered cleanup step. **Found and fixed
+      a real duplicate-delivery bug while wiring this up, not live-reported**: `/poll` always returns
+      the FULL accumulated indexer list so far (by design, for a stateless client) — the first
+      version of `startParallelSearch` fed every entry in that list to `onIndexerResult` on EVERY
+      poll tick, so an indexer that had already reported would be redelivered roughly every 600ms
+      until the job finished, and the caller's own `poolIndexers.concat([...])` accumulator (see
+      below) had no way to know it was seeing the same indexer twice — a growing duplicate-entries
+      list in the widget, not a crash, but a real bug all the same. Fixed with a `delivered` set
+      keyed by `entry.id` inside `startParallelSearch` itself: each indexer's entry crosses the
+      `onIndexerResult` boundary exactly once, ever, for a given search. `search-backend.js`'s
+      `searchTorrentMod`/`searchTorrentModProgressive` were rewritten to use this transport
+      internally while keeping their EXTERNAL contract byte-identical to before (`{results, indexers,
+      failed}` for the Promise-based `searchTorrentMod`; a new `searchTorrentModProgressive` with an
+      `onIndexerResult`/`onDone` callback pair for the whole-work pool search specifically) — this is
+      why season-lazy-load (`ensureSeasonLoaded`) and manual customQuery search (`freshSearch`) got
+      the parallel-fetch speed win for FREE, zero code changes, while only `loadAllTorrents` (the one
+      caller that actually wants progressive per-tracker updates, not just a faster single Promise)
+      needed to move to the new progressive variant.
+    - **`state.pool` changed from nullable (`null` until the first successful search) to ALWAYS an
+      array (`results-state.js`)** — a direct, structural consequence of the search now being
+      progressive: "hasn't settled yet" and "genuinely empty" are both representable as `[]`,
+      distinguished by `poolStatus` alone, the same way this file's own earlier `selectPickerData`
+      null-pool crash writeup already argued for defensively; making it structurally non-null removes
+      that whole bug class instead of relying on every future caller remembering to check first.
+      `selectEpisodeBadges`/`selectPickerData` (`results-selectors.js`) both now check "does this
+      episode already have real candidates" BEFORE checking loading/error state — an episode can
+      genuinely have a confirmed match from a fast tracker while other, slower trackers are still
+      outstanding, and showing a loading placeholder over data that's already there would recreate
+      exactly the "мучительно больно ждать" complaint this whole redesign exists to fix. Verified
+      with a new `domain.test.mjs` case asserting a badge shows real data, not "поиск…", when
+      `poolStatus` is still `'loading'` but the episode's own candidates have already arrived.
+    - **Auto-retry ladder shrunk from four steps to two** (`POOL_RETRY_DELAYS_MS`, `shared/state.js`:
+      `[3000,6000,12000,20000]` → `[5000,15000]`) — not a revert of the earlier "retries are
+      mandatory" requirement, a re-scoping of what "failure" now means: with parallel-per-indexer
+      fetching, the whole-work search only reaches its failure/retry path when NOT ONE configured
+      indexer answered at all (a genuine outage — Jackett down, or every tracker failing
+      simultaneously), since a single slow/broken tracker no longer drags the aggregate down with it.
+      That's a rarer, more genuine case than before, so the same aggressive four-step backoff a
+      single flaky tracker used to need is no longer the right shape for it.
+    - **Manual search cancels whatever the superseded search's own indexer requests were still doing
+      — requested directly by the user** ("ручной запуск должен прерывать поиск оставшихся
+      запросов"). `episodes-interactor.js`'s `requery()` (the single re-entry point for both a fresh
+      customQuery and a manual "Повторить" retry) now calls `poolSearchHandle.cancel()` before
+      starting the new search — this best-effort-notifies `PluginHub.cs` to abort the old search's
+      still-in-flight per-indexer requests server-side via the same `/cancel` endpoint the screen's
+      own teardown uses, not just stopping the client from polling for it.
+    - **Per-tracker status widget — the actual "видно какой трекер говнит" ask.** `poolIndexers`
+      (`results-state.js`, already scaffolded by the earlier auto-retry work but never rendered) now
+      genuinely gets one entry per indexer, appended in real completion order, each carrying
+      `{id, name, ok, error, elapsedMs}`; a new `poolIndexersTotal` field (threaded onto every
+      `parallel-search.js` entry from the job's own `/start` response, no extra round trip) lets
+      `selectPoolIndexers` (`results-selectors.js`) report a `pending` count too. `ui/results-screen.js`
+      renders these as a row of small chips directly under the existing status line (own
+      `.explorer__files-head`-region element, `trackers`, covered by the same `scroll.minus()`/
+      `Lampa.Layer.update()` height accounting this file has documented at length for every other
+      element in that region) — green for `ok`, red for a failed indexer with its error, a trailing
+      dim "ждём ещё N" chip while some haven't answered yet. This is the only place in the UI that
+      names individual trackers rather than showing one aggregate status line.
+    - **Test suite required real rework, not just new cases** — every existing smoke test mocked the
+      OLD single `/api/torrent-search` endpoint; the harness itself (`test/helpers/mock-lampa.mjs`)
+      was extended to translate that same one-call-per-search mock registration shape into the new
+      three-endpoint protocol underneath, so ~30 existing call sites in `smoke.test.mjs` needed zero
+      changes — a synthetic job/`Map` inside the mock hands a matched handler's data back on the
+      first `/poll`, wrapped as one indexer entry. **Found a real flake while doing this, not
+      theoretical**: the two-step protocol adds a genuine extra network hop per search versus the old
+      one-call model, and the mock's first version resolved even a `delay: 0` fixture via
+      `setTimeout(fn, 0)` for BOTH legs — two macrotask hops where the old mock only ever needed one,
+      occasionally exceeding the suite's `flushMicrotasks()` 10ms budget under real event-loop
+      jitter and failing tests that have nothing to do with the actual feature. Fixed by resolving
+      through a microtask (`Promise.resolve().then(fn)`) instead of a real timer whenever a fixture's
+      delay is falsy — a zero-delay mock is exactly as fast as the old one-hop version again, while a
+      genuinely-requested delay (this suite's races/staleness tests) still goes through a real timer,
+      unchanged. Also found and fixed, while chasing what looked like unrelated failures further down
+      the suite: two tests still asserted `pool !== null` (the OLD nullable-pool contract) instead of
+      `pool.length === 0`, and one of them threw on that stale assertion BEFORE reaching its own
+      documented cross-test-pollution guard (a trailing wait specifically added, per this file's own
+      earlier writeup, to drain a deliberately-slow mock response within the test that registered
+      it) — the early throw skipped that drain, which is exactly the "next test catches a stray
+      extra call" bug that guard exists to prevent, and it duly resurfaced two tests later once the
+      new two-step protocol's timings shifted the exact moment things happened. Fixing the stale
+      assertion so the test reaches its own drain step fixed both failures at once — not two separate
+      bugs, one root cause. `test/e2e.test.mjs`'s Playwright route mock was updated the same way
+      (three `page.route` patterns instead of one, matching the real protocol) though it wasn't
+      exercised in this pass (`npm run test:e2e`, not part of `npm run test:plugin`, needs a live
+      running manager + `npx playwright install chromium`).
+    - **A real wiring bug survived the entire green test suite and only surfaced live in the
+      browser**: `domain/series-results-viewmodel.js`/`movie-results-viewmodel.js` are both 22-line
+      pass-throughs to `createResultsDomain` that explicitly re-list which fields to forward to the
+      View rather than spreading the whole domain object — `scope` (this session's own new field)
+      was never added to either list. Every test in this suite constructs via `createResultsDomain`
+      directly, bypassing both wrappers entirely, so nothing caught it — it took an actual live
+      click on the Torrent Mod button to throw `TypeError: Cannot read properties of undefined
+      (reading 'subscribe')` inside `ui/results-screen.js`'s `domain.scope.subscribe(...)` call,
+      which `Lampa.Component.create`'s own try/catch (see this file's own earlier writeup on
+      `nocomponent`) silently swapped for the generic empty-state screen — no visible error on
+      screen at all, only in devtools console. Fixed by adding `scope: domain.scope` to both
+      wrappers' return objects; a new `domain.test.mjs` case constructs each wrapper directly and
+      asserts `.scope.subscribe` is a real function, closing the exact coverage gap that let this
+      through (bypassing the View/DOM layer entirely, same as every other domain-layer test, so it
+      doesn't cross this project's stated "`ui/` stays live-verified" boundary). **Also found while
+      first checking why the live retry-countdown said "попытка 2 из 5" instead of the new ladder's
+      "из 3"**: a stale `%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js` file — left over
+      from `npm run dev:plugin` earlier in this same session — was shadowing the freshly-published
+      embedded resource (`BuiltInPlugins.Read` checks the dev-override path first, by design, see
+      this file's own "Fast JS-only iteration" entry). Not a code bug, just a reminder that this
+      project's own dev-loop convenience mechanism needs an explicit cleanup step (delete the
+      override, or `npm run install:plugin-dev` again) before trusting a "live-verified" deploy — a
+      stale dev override reads identically to a real regression until you know to check for it.
+      All `npm run test:plugin` suites green (13+52+41+18 = 124 tests, one more than before — the
+      new viewmodel-scope regression test) after every fix above, confirmed stable across repeated
+      runs, AND verified against the actual deployed app in a browser: per-tracker chips rendered
+      live (`RuTracker.RU · 3мс`, `Anilibria · 3мс`, ..., `ждём ещё 1` while the slowest indexer was
+      still outstanding), episode badges populated from fast trackers while `poolStatus` was still
+      `'loading'`, and a full click-to-playback round trip (episode click → torrent match → GST
+      stream URL → `Lampa.Player.play`) completed with zero console errors beyond this file's own
+      already-documented unrelated noise (cub.rip 500s, thumbnail 404s).
+  - **Per-indexer immediate retry + named pending-tracker widget — a direct follow-up request the
+    same day the parallel-search redesign above shipped**: "Если ошибка отвала по таймауту, то
+    задержку повтора не использовать. По каждому трекеру ретраить до исчерпания попыток если идут
+    ошибки. В панели показывать со спиннером кого ещё ждём, успешные скрывать по таймауту." Three
+    distinct asks, all satisfied together:
+    - **`Services/PluginHub.cs`'s `SearchOneIndexerAsync` retries a single failing indexer
+      IMMEDIATELY (no backoff delay) up to `IndexerMaxAttempts` (3) total attempts**, for any
+      failure including its own 30s timeout — split into an outer `SearchOneIndexerAsync` (the
+      retry loop, reports cumulative `ElapsedMs` across every attempt — the honest total time spent
+      on that one indexer, not just its final attempt) and an inner `SearchOneIndexerAttemptAsync`
+      (the original single-HTTP-call body, unchanged). Deliberately does NOT reuse
+      `POOL_RETRY_DELAYS_MS`'s backoff shape (`episodes-interactor.js`) — the user explicitly ruled
+      that out ("задержку повтора не использовать"), and the two retry mechanisms solve different
+      problems anyway: the pool ladder exists for the rare "not one indexer answered at all" outage
+      case; this one exists because a single indexer erroring once is common and cheap to just
+      retry immediately, since parallelism already means a struggling tracker doesn't block the
+      others. Worth noting as a real, accepted tradeoff rather than an oversight: since
+      `SearchJob.Done` requires EVERY indexer to report (success or final failure) before the whole
+      pool flips to `poolStatus:'ready'`, a persistently-failing indexer can now take up to
+      `IndexerMaxAttempts × 30s` (90s worst case) before the OVERALL search settles — but the
+      widget (next bullet) shows that specific indexer as a live spinner the whole time, and every
+      OTHER indexer's results/badges are already visible progressively regardless (the
+      "candidates-first" selectors don't wait on `poolStatus` at all), so this cost is fully visible
+      to the user rather than a silent hang.
+    - **`/api/torrent-search/start`'s response gained `indexers: [{id, name}]`** — the full
+      configured-indexer list, known before any individual result can possibly have arrived — on
+      top of the existing `jobId`/`totalIndexers`. This is what makes the "spinner by name" ask
+      possible at all: without it, the client only ever learns an indexer's NAME once it has already
+      reported (ok or error), so a still-pending tracker could only ever be shown as an anonymous
+      count. `search/parallel-search.js`'s `startParallelSearch` gained a 5th optional
+      `onIndexerList(list)` callback, fired once synchronously inside the `/start` response handler,
+      threaded through `search-backend.js`'s `searchTorrentModProgressive` and both
+      `searchMovieTorrentsProgressive`/`searchSeriesTorrentsProgressive` wrappers down to
+      `episodes-interactor.js`'s `loadAllTorrents`, which stores it as a new `poolAllIndexers` field
+      (`results-state.js`) — reset to `[]` alongside `pool`/`poolIndexers` on every fresh search
+      (`loadAllTorrents`'s own start, and `requery`).
+    - **`poolIndexersTotal` (a bare count, added earlier the same day) was removed outright, not
+      kept alongside `poolAllIndexers`** — once the full list is known, a redundant separately-
+      tracked count is a second source of truth for the same fact with no reason to exist; `total`
+      is now just `poolAllIndexers.length` wherever it's needed. The `entry.total` field
+      `parallel-search.js` used to stamp onto every indexer result (to get the count to the caller
+      without a second round trip) was removed too, for the same reason — `onIndexerList` already
+      delivers the count (as the list itself) earlier and more directly than piggybacking it on the
+      first result ever could.
+    - **`selectPoolIndexers` (`results-selectors.js`) rewritten to return one entry per CONFIGURED
+      indexer, not just the ones that have answered** — diffs `state.poolAllIndexers` against
+      `state.poolIndexers` to produce `{id, name, status: 'pending'|'ok'|'error', error, elapsedMs}`
+      per tracker. `ui/results-screen.js`'s `renderTrackers` renders a `torrent-mod__spinner` (the
+      same glyph the status line already uses) on every `'pending'` entry, by name — this is the
+      literal "показывать со спиннером кого ещё ждём" ask, previously only an aggregate "ждём ещё N"
+      count.
+    - **`TRACKER_SUCCESS_HIDE_MS` (4000ms, `results-selectors.js`) — a successfully-answered
+      indexer's chip drops out of `selectPoolIndexers`'s returned list once this much time has
+      passed since it reported** (`reportedAt`, a plain `Date.now()` timestamp stamped onto every
+      `poolIndexers` entry when it's appended, `episodes-interactor.js`). Direct answer to "успешные
+      скрывать по таймауту" — once several trackers have already reported, a growing wall of green
+      "ok" chips is exactly the noise this widget exists to cut through; a failed or still-pending
+      tracker keeps its chip indefinitely (nothing time-based hides those — they're the ones that
+      still need attention). New `selectTrackersFading(state)` reports whether any successful entry
+      is still within its hide window, purely so the View knows whether it still needs to keep
+      ticking for this reason alone once the search itself has otherwise gone quiet.
+    - **The View's ticking interval (renamed `ensureStatusTicking` → `ensureTicking`, same
+      mechanism) now serves two independent wall-clock-driven concerns, not one**: the
+      pre-existing 15s cold-search escalation / auto-retry countdown, AND the tracker widget's own
+      fade-out. `ensureTicking(stage, trackersFading)`'s "should I be running at all" check widened
+      to `stage === 'loading' || stage === 'retrying' || trackersFading` — covers the case where the
+      overall search has already settled (`poolStatus:'ready'`) but one last successful chip is
+      still waiting out its hide window with nothing else driving a re-render. Every tick now calls
+      both `setStatus(...)` and `renderTrackers(selectPoolIndexers(...))`, since both are cheap pure
+      re-derivations over already-stored state.
+    - **Tests**: two new `domain.test.mjs` unit tests exercise `selectPoolIndexers` directly (a
+      3-indexer fixture — one fresh success, one error, one never-reported — asserts pending/ok/
+      error status and names are all correct, then re-asserts after backdating the success's
+      `reportedAt` past the hide window that it — and only it — disappears) and
+      `selectTrackersFading` (fresh success → true, stale success → false, error-only → false, since
+      only success has a hide-timeout to wait out). `smoke.test.mjs`'s first end-to-end test gained
+      an assertion that `poolAllIndexers` genuinely arrives via the real domain flow, not just in
+      isolated selector unit tests — `test/helpers/mock-lampa.mjs`'s `/start` shim was extended to
+      synthesize the same one-fake-tracker `indexers` list it already used for `/poll`'s fallback,
+      keeping the two consistent. `test/e2e.test.mjs`'s Playwright `/start` route mock updated to
+      match the new response shape too (not exercised in this pass, same as before — needs a live
+      manager + `npx playwright install chromium`). All `npm run test:plugin` suites green
+      (13+52+43+18 = 126 tests) after every change above.
+    - **Found and fixed live, same day, reported directly by the user**: once every tracker chip
+      faded out, the space they'd occupied stayed reserved — "после исчезания всех трекеров надо
+      место вверху освободить, а то пустота там остаётся". Two independent causes, both needed
+      fixing: (1) `.torrent-mod__trackers` (styles.js) keeps its `1em` bottom padding
+      unconditionally, even with zero children — CSS boxes don't collapse their own padding just
+      because they're empty, fixed with `.torrent-mod__trackers:empty{padding:0}`; (2)
+      `renderTrackers` (ui/results-screen.js) had an early `return` the moment
+      `progress.trackers.length` was 0, which skipped its own `Lampa.Layer.update()` call in
+      exactly that case, fixed by moving that call to run unconditionally, after the forEach.
+    - **The fix above led to two rounds of direct user architectural correction, same day, before
+      landing on the right design — worth recording in full since both corrections sharpen a
+      principle this codebase already claims to follow but hadn't actually been checked against
+      this specific feature.** Round 1 ("Разве эта разметка не должна на изменение стейта
+      отрабатывать всё? Мы же для этого его и делали. Опять где-то рендер в логике у тебя, вместо
+      наблюдения?"): correct — the success-hide fade had been a ticking `setInterval` calling
+      `renderTrackers` DIRECTLY, bypassing the store, because nothing in `state.poolIndexers`
+      actually changes when 4 seconds pass, only `Date.now()` does — the exact "render in logic
+      instead of observation" failure this View/store split exists to rule out. First attempt at
+      fixing it: move the SCHEDULING into `episodes-interactor.js` (a `scope.setTimeout` that fires
+      a `store.patch({poolIndexers: pool.slice()})`, letting the pre-existing reactive diff pick it
+      up). Round 2, immediately after, corrected THAT attempt too ("Таймеры фейдинга должны в рамках
+      вьюмодели работать. Таймер фейда — это UI логика, а не домена. Вот для этого я и просил
+      разделение. Процесс поиска спокойно наполняет стор, а во вьюмодели создаются мягкий плавный
+      вид для пользователя. С анимациями появления, исчезновения, сдвигания/раздвигания списка.") —
+      also correct, and a sharper point than round 1's: making the fade "a real state transition"
+      doesn't mean the DOMAIN should own scheduling it. `TRACKER_SUCCESS_HIDE_MS` (how long to keep
+      showing a success before decluttering it) is a presentation/UX tuning value, not a domain
+      fact — the domain's job stops at recording `reportedAt` (when did this indexer answer) and
+      nothing past that. Baking the hide-delay into `episodes-interactor.js` also structurally
+      blocked the smooth animations the user explicitly wanted (appear/disappear/list-reflow): a
+      `store.patch()`-driven full re-render can only pop a chip in or out, it has no place to hang a
+      CSS transition off of a specific DOM node's own lifecycle.
+    - **Final design**: `selectPoolIndexers` (`domain/results-selectors.js`) reports EVERY
+      configured indexer FOREVER, `{id, name, status, error, elapsedMs, reportedAt}`, no time-based
+      filtering of its own — pure reshaping of already-stored facts, no opinion about visibility
+      duration. `TRACKER_SUCCESS_HIDE_MS` moved out of `shared/state.js` entirely, into a local
+      const inside `ui/results-screen.js` — it has exactly one reader now, no cross-file agreement
+      to protect. `renderTrackers` was rewritten from a wipe-and-rebuild-the-whole-row function into
+      a real per-chip DOM lifecycle, diffed against a new View-local `trackerNodes` map (`id ->
+      {node, hideTimer}` — plain View bookkeeping, same category as this file's pre-existing
+      `episodeRows`/`lastFocusedNode`, not store state): a chip NEW to `progress.trackers` is
+      inserted with an `--enter` class (collapsed: `opacity:0;max-width:0;margin-right:0`), which
+      gets removed one tick later so the browser has an actual FROM state to transition away from;
+      a chip transitioning `pending -> ok`/`error` updates its existing node's class/text in place,
+      no re-entrance animation (it never left); and every time a chip reports `status:'ok'`,
+      `renderTrackers` schedules (via `domain.scope.setTimeout` — still leak-safe, still the shared
+      lifecycle every timer this screen owns registers into, just living in the RIGHT layer now) a
+      one-shot hide for `TRACKER_SUCCESS_HIDE_MS - (Date.now() - reportedAt)`, guarded so a re-render
+      before it fires can't double-schedule. That timer adds a `--leave` class (identical collapsed
+      end-state as `--enter`, so it's really one shared "not visible" CSS state used for both
+      directions) and, after the `.25s` CSS transition has had time to finish, actually `.remove()`s
+      the node and calls `Lampa.Layer.update()`. **Spacing switched from the container's `gap` to a
+      per-chip `margin-right`** (styles.js) specifically so this transition produces the "list
+      reflows to close the gap" effect the user asked for ("сдвигания/раздвигания списка") for
+      free — `gap` doesn't participate in a shrinking item's own transition the way margin does, so
+      keeping `gap` would have left a fixed-size hole where a collapsing chip used to be even as the
+      chip itself visibly shrank to nothing.
+    - **A real, live-caught bug in the entrance animation, found during this feature's own browser
+      verification, not reported by the user**: the first version used a double
+      `requestAnimationFrame` to remove the `--enter` class (a common, normally-correct technique to
+      force a browser paint between adding and removing a class). Confirmed live via
+      `document.hidden`/`visibilityState`: the automation harness's Browser pane tab was
+      backgrounded during verification, and Chromium suspends `requestAnimationFrame` callbacks
+      ENTIRELY for hidden tabs — the class removal never ran, leaving affected chips permanently
+      collapsed (invisible) rather than fading in. Not a bug that would hit the real target (an LG
+      WebOS TV app is always the foreground surface, no "backgrounded tab" concept applies), but
+      relying on rAF made the mechanism fragile to that class of environment for no real benefit —
+      switched to `domain.scope.setTimeout(fn, 0)` instead, which has no tab-visibility dependency
+      at all and is equally correct (still "next macrotask, not the same tick") on a genuinely
+      visible screen. General lesson for this codebase: `requestAnimationFrame` is not a safe
+      default scheduling primitive here even though this Lampa build is Chromium-based — prefer
+      `domain.scope.setTimeout` unless something specifically needs frame-timing precision, which
+      nothing in this plugin currently does.
+    - **Tests**: `domain.test.mjs`'s `selectPoolIndexers` case rewritten to assert the OPPOSITE of
+      before — a long-ago-reported success is still returned, unfiltered, with its real `reportedAt`
+      passed through — proving the selector no longer has any hiding opinion of its own.
+      `smoke.test.mjs` gained a case asserting `state.poolIndexers` does NOT get a new reference on
+      its own well past the old hide window (domain stays inert once it's written the facts) —
+      deliberately checking for the ABSENCE of the mechanism this section's Round 1 fix had wrongly
+      added, so a future regression back toward "the domain schedules its own hiding" would be
+      caught immediately. The actual fade/animation itself stays outside automated coverage, per
+      this file's own established `ui/` boundary ("verified live", not unit-tested) — verified
+      live instead: `document.hidden` confirmed the rAF bug's cause, then confirmed fixed post-patch
+      (`--enter` class removed correctly even while backgrounded); a full live search with a real
+      slow/retrying tracker (NewStudio, 19.5s via the per-indexer retry from earlier the same day)
+      showed every chip animate in, the slow one visibly still spinning while the rest had already
+      faded, and the widget container settling to `{childCount:0, paddingBottom:'0px', height:0}`
+      once everything finished — confirming the ORIGINAL reported bug (leftover empty space) is
+      genuinely fixed end to end, not just patched around. All `npm run test:plugin` suites green
+      (13+52+42+19 = 126 tests) throughout every round of this correction.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

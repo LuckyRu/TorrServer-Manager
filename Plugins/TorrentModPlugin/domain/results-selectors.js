@@ -74,26 +74,78 @@
     // work — a UX/product/error-domain design consilium documented in CLAUDE.md decided static text
     // wasn't dynamic enough). `text` is still always populated (loading rows carry a plain-language
     // fallback too) so nothing downstream that reads `.text` directly needs a loading-aware branch.
+    //
+    // CANDIDATES ARE CHECKED FIRST, before loading/error — the pool search is now progressive
+    // (parallel-per-indexer, search/parallel-search.js): `state.pool` fills in as each tracker
+    // answers, so an episode can genuinely have real candidates already while OTHER, slower trackers
+    // are still being waited on. Showing "поиск…" for an episode that already has a real match would
+    // hide data that's already there, exactly the "мучительно больно ждать" complaint this whole
+    // redesign was for — requested directly by the user: "начать показывать торренты от самого
+    // быстрого трекера". Only falls through to loading/error/empty once there's truly nothing yet.
     export function selectEpisodeBadges(object, state, seasonDefault) {
-        var poolLoading = !state.pool || state.poolStatus === 'loading';
+        var poolSettling = state.poolStatus === 'loading' || state.poolStatus === 'idle';
         var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
-        // A genuinely FAILED search (Jackett 502/timeout on the aggregate query, or this season's
-        // own lazy per-season retry failing too) used to be visually identical to "searched
-        // cleanly, found nothing" — badgeText's own "раздачи не найдены" doesn't know the
-        // difference, it just sees an empty candidates array either way. Reported directly by the
-        // user testing this exact path live, alongside a real crash the same root cause enabled
-        // (see ensureSeasonLoaded's own comment) — badges now say so explicitly instead of quietly
-        // implying "confirmed empty".
+        // A genuinely FAILED search (every tracker errored/timed out, or this season's own lazy
+        // per-season retry failing too) used to be visually identical to "searched cleanly, found
+        // nothing" — badgeText's own "раздачи не найдены" doesn't know the difference, it just sees
+        // an empty candidates array either way. Reported directly by the user testing this exact
+        // path live — badges now say so explicitly instead of quietly implying "confirmed empty".
         var poolFailed = state.poolStatus === 'error';
         var seasonFailed = !!(state.seasonLoads && state.seasonLoads[state.season] === 'error');
         var map = {};
         (state.episodesCache || []).forEach(function (episode) {
             var number = parseInt(episode.episode_number, 10);
-            if (poolLoading || seasonLoading) map[number] = { text: 'поиск…', loading: true };
-            else if (poolFailed || seasonFailed) map[number] = { text: 'ошибка поиска', loading: false };
-            else map[number] = { text: badgeText(selectCandidatesForEpisode(object, state, number), seasonDefault), loading: false };
+            var candidates = selectCandidatesForEpisode(object, state, number);
+            if (candidates.length) {
+                map[number] = { text: badgeText(candidates, seasonDefault), loading: false };
+            } else if (poolSettling || seasonLoading) {
+                map[number] = { text: 'поиск…', loading: true };
+            } else if (poolFailed || seasonFailed) {
+                map[number] = { text: 'ошибка поиска', loading: false };
+            } else {
+                map[number] = { text: badgeText(candidates, seasonDefault), loading: false }; // 'раздачи не найдены'
+            }
         });
         return map;
+    }
+
+    // Per-tracker progress for the CURRENT pool search — one entry per CONFIGURED indexer (not just
+    // the ones that have answered so far), each `{id, name, status, error, elapsedMs, reportedAt}`
+    // where status is `'pending'` (not in state.poolIndexers yet — the widget renders this with a
+    // spinner, requested directly by the user: "показывать со спиннером кого ещё ждём"), `'ok'`, or
+    // `'error'`. Diffs `state.poolAllIndexers` (the full configured list, known from the job's own
+    // /start response — see results-state.js) against `state.poolIndexers` (who's actually reported
+    // so far) to derive this — nothing here is itself stored.
+    //
+    // Deliberately reports EVERY indexer forever, with no time-based hiding of its own — how long
+    // a successfully-answered chip stays visible before it fades is a presentation decision, not a
+    // domain fact, and belongs entirely to the View (ui/results-screen.js's own
+    // TRACKER_SUCCESS_HIDE_MS + per-chip scheduling). An earlier version filtered stale 'ok'
+    // entries out right here and had episodes-interactor.js schedule the actual hide as a
+    // store.patch — corrected directly by the user ("таймер фейда — это UI логика, а не домена...
+    // Процесс поиска спокойно наполняет стор, а во вьюмодели создаются мягкий плавный вид"): this
+    // selector's only job is reshaping already-stored facts, and `reportedAt` is passed through
+    // unfiltered so the View can compute its own remaining-time-until-hide from it.
+    // `pending`/`total` stay as plain counts too, for callers that just want the aggregate (there
+    // are none today, kept for symmetry/debuggability).
+    export function selectPoolIndexers(state) {
+        var reported = {};
+        (state.poolIndexers || []).forEach(function (indexer) { reported[indexer.id] = indexer; });
+        var trackers = [];
+        var pending = 0;
+        (state.poolAllIndexers || []).forEach(function (configured) {
+            var indexer = reported[configured.id];
+            if (!indexer) {
+                pending++;
+                trackers.push({ id: configured.id, name: configured.name, status: 'pending', error: null, elapsedMs: null, reportedAt: null });
+                return;
+            }
+            trackers.push({
+                id: indexer.id, name: indexer.name, status: indexer.ok ? 'ok' : 'error',
+                error: indexer.error, elapsedMs: indexer.elapsedMs, reportedAt: indexer.reportedAt
+            });
+        });
+        return { trackers: trackers, pending: pending, total: (state.poolAllIndexers || []).length };
     }
 
     // Escalates the wording for a genuinely slow cold search (up to ~40s server-side) instead of
@@ -179,27 +231,27 @@
     // and passed in, same convention selectEpisodeBadges already uses.
     export function selectPickerData(object, state, seasonDefault) {
         var episode = state.picker.episode;
-        // MUST check poolLoading (which includes `!state.pool`) BEFORE ever touching the pool —
-        // state.pool is `null` by design until the whole-work search resolves at least once
-        // (results-state.js), and applyStateFilters (search/scoring.js, reached via
-        // selectCandidatesForEpisode → candidatesForEpisode) calls `pool.filter(...)` with no
-        // null-guard of its own. TMDB's episode list (which is what makes an episode row focusable
-        // at all) typically resolves far faster than the Jackett aggregate search (up to ~40s) —
-        // real crash, confirmed live: right-arrow on an episode row before the pool has EVER
-        // resolved threw `TypeError: Cannot read properties of null (reading 'filter')`. Every
-        // other caller of selectCandidatesForEpisode (selectEpisodeBadges, the reactive watcher,
-        // selectEpisode/startMovie/showMoviePool) already checks poolStatus/pool first — this one
-        // didn't, a regression from the reactive-architecture rewrite that dropped openPicker's own
-        // pre-check without replacing it here.
-        var poolLoading = !state.pool || state.poolStatus === 'loading';
-        var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
-        if (poolLoading || seasonLoading) return { status: 'loading', items: [], target: null, selectedId: null };
+        // state.pool is now ALWAYS an array (results-state.js), never null — calling
+        // selectCandidatesForEpisode unconditionally is safe by construction, not just because
+        // something upstream happens to gate it (a real, live-caught crash — `TypeError: Cannot
+        // read properties of null (reading 'filter')` — came from exactly that assumption breaking
+        // once, see CLAUDE.md; making `pool` structurally non-null removes the whole bug class
+        // instead of relying on every caller remembering to check first).
+        //
+        // CANDIDATES ARE CHECKED FIRST, before loading/error, for the same reason
+        // selectEpisodeBadges now does: the pool search is progressive, so this episode may already
+        // have real candidates while other, slower trackers are still being waited on — showing
+        // "Ищем раздачи…" over data that's already there would hide it (requested directly by the
+        // user: "начать показывать торренты от самого быстрого трекера").
         var items = selectCandidatesForEpisode(object, state, episode);
         var selectedId = seasonDefault ? seasonDefault.id : null;
         if (items.length) {
             return { status: 'ready', items: items, target: buildEpisodeTarget(object, state, episode), selectedId: selectedId };
         }
-        // Settled with zero candidates — now split the same way row badges already do
+        var poolSettling = state.poolStatus === 'loading' || state.poolStatus === 'idle';
+        var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
+        if (poolSettling || seasonLoading) return { status: 'loading', items: [], target: null, selectedId: null };
+        // Settled with zero candidates — split the same way row badges already do
         // (selectEpisodeBadges: 'ошибка поиска' vs 'раздачи не найдены'), instead of one identical
         // "Раздач не найдено" for both (product decision, CLAUDE.md consilium: empty and failed are
         // semantically opposite — nothing exists vs. the app couldn't check — and only a failure is

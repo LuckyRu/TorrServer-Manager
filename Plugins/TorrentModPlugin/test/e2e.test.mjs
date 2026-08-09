@@ -46,9 +46,22 @@ try {
         localStorage.setItem('plugins', JSON.stringify([{ url: base + '/lampa.js', status: true }]));
     }, BASE);
 
-    await page.route('**/api/torrent-search*', (route) => route.fulfill({
+    // Two-step parallel-per-indexer protocol (PluginHub.cs /api/torrent-search/{start,poll,cancel} —
+    // replaced the old single blocking /api/torrent-search call). A single fixed jobId is fine here:
+    // every /start this page ever issues gets the same immediate one-shot /poll answer, which is all
+    // this test needs (it doesn't exercise progressive multi-tick arrival, that's covered by the
+    // Node-side smoke tests' mock-Reguest shim instead).
+    await page.route('**/api/torrent-search/start*', (route) => route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ results: MOCK_SEARCH_RESULTS, indexers: [] })
+        body: JSON.stringify({ jobId: 'e2e-job', totalIndexers: 1, indexers: [{ id: 'mock', name: 'mock' }] })
+    }));
+    await page.route('**/api/torrent-search/poll*', (route) => route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ done: true, indexers: [{ id: 'mock', name: 'mock', ok: true, error: null, elapsedMs: 5, results: MOCK_SEARCH_RESULTS }] })
+    }));
+    await page.route('**/api/torrent-search/cancel*', (route) => route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true })
     }));
 
     console.log('E2E: открываю ' + CARD_URL);

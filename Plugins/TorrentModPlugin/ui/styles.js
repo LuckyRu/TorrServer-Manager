@@ -66,7 +66,48 @@
             '@keyframes torrent-mod-spin{to{transform:rotate(360deg)}}',
             '.torrent-mod__spinner{display:inline-block;width:.9em;height:.9em;margin-right:.6em;vertical-align:-.15em;border:.15em solid rgba(255,255,255,.25);border-top-color:currentColor;border-radius:50%;animation:torrent-mod-spin .8s linear infinite}',
             '@keyframes torrent-mod-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}',
-            '.torrent-mod-row__badge--shimmer{display:inline-block;width:6em;max-width:60%;height:.85em;border-radius:.2em;background:linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.22),rgba(255,255,255,.08));background-size:200% 100%;animation:torrent-mod-shimmer 1.4s ease-in-out infinite}'
+            '.torrent-mod-row__badge--shimmer{display:inline-block;width:6em;max-width:60%;height:.85em;border-radius:.2em;background:linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.22),rgba(255,255,255,.08));background-size:200% 100%;animation:torrent-mod-shimmer 1.4s ease-in-out infinite}',
+            // Per-tracker status row — one chip per configured indexer, named and shown as
+            // pending/ok/error (selectPoolIndexers), successful ones fading out a few seconds after
+            // they report. Requested directly by the user: "будет визуально видно какой трекер
+            // говнит" — this is the only place in the UI that names individual trackers rather than
+            // one aggregate status line. Lives right under .torrent-mod__status inside the same
+            // .explorer__files-head region, so its height is covered by the same scroll.minus()
+            // subtraction (see CLAUDE.md's own writeup on why that matters for this screen).
+            // `:empty{padding:0}` collapses the element's own box once renderTrackers has removed
+            // every chip (all trackers reported and their success-hide window elapsed) — without
+            // this, the bottom padding stuck around forever as unaccounted dead space above the
+            // episode list, reported live by the user ("после исчезания всех трекеров надо место
+            // вверху освободить, а то пустота там остаётся"); renderTrackers's own
+            // Lampa.Layer.update() call (ui/results-screen.js) is the other half of this fix — it
+            // has to actually run when the list goes empty, not just when chips are present, for
+            // scroll.minus()'s cached height math to learn the region shrank at all.
+            //
+            // Spacing is per-chip MARGIN, not the container's `gap` — deliberately, so a chip's own
+            // enter/leave transition (below) can animate margin-right down to 0 together with its
+            // width, and the REST of the row visibly slides to close the space as it does. `gap`
+            // does not participate in a per-item transition the same way, so it would leave a
+            // fixed-size hole where a collapsing chip used to be even as the chip itself shrinks to
+            // nothing — the flex "list reflow" animation requested directly by the user
+            // ("сдвигания/раздвигания списка") depends on margin being the thing that's animating.
+            '.torrent-mod__trackers{display:flex;flex-wrap:wrap;padding:0 0 1em 1.5em}',
+            '.torrent-mod__trackers:empty{padding:0}',
+            '.torrent-mod__tracker{display:inline-flex;align-items:center;overflow:hidden;white-space:nowrap;' +
+                'font-size:.68em;padding:.25em .6em;margin:0 .4em .4em 0;border-radius:1em;background:rgba(255,255,255,.08);' +
+                'max-width:16em;opacity:1;' +
+                'transition:opacity .25s ease,max-width .25s ease,margin-right .25s ease,padding-left .25s ease,padding-right .25s ease}',
+            '.torrent-mod__tracker--ok{background:rgba(88,214,141,.18);color:#8beeb3}',
+            '.torrent-mod__tracker--error{background:rgba(231,76,60,.2);color:#f1948a}',
+            '.torrent-mod__tracker--pending{opacity:.55}',
+            // Shared enter/leave collapsed state — a chip is invisible AND zero-width/zero-margin
+            // here, so the transition to/from this state is what produces both the fade and the
+            // "rest of the row slides over" effect in one animation, no separate JS-driven layout
+            // step needed. Declared AFTER --ok/--error/--pending above (same specificity — equal-
+            // weight single-class selectors — so source order decides): a node carries BOTH its
+            // status class and --enter/--leave at once, and this must win the opacity conflict
+            // against --pending's own `opacity:.55`, or a pending chip's entrance would never
+            // actually fade in from 0.
+            '.torrent-mod__tracker--enter,.torrent-mod__tracker--leave{opacity:0;max-width:0;margin-right:0;padding-left:0;padding-right:0}'
         ].join('');
         document.head.appendChild(style);
     }

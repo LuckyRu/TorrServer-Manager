@@ -1,9 +1,12 @@
     // ---------- domain: composition root ----------
     //
-    // Wires the Store + Episodes/Selection/Filters interactors together. A single shared `destroyed`
-    // flag lives here (not one per interactor) — both async interactors read the same `isDestroyed`
-    // function, so there's exactly one place a future third interactor would need to plug into, not
-    // one flag per file to keep in sync.
+    // Wires the Store + Episodes/Selection/Filters interactors together. A single shared lifecycle
+    // `scope` lives here (not one destroy() per interactor) — both async interactors, and the View
+    // once it's constructed with this domain, register their timers/subscriptions into it directly
+    // (shared/core/lifecycle.js's `track`/`setTimeout`/`setInterval`/`subscribe`), so there's exactly
+    // one place anything with a cleanup step plugs into, and exactly one dispose() call
+    // (`destroy()`, below) that tears all of it down — not N separately-remembered destroy() methods
+    // a future timer is one missed edit away from outliving its screen.
     //
     // playback/smart-preload.js is deliberately NOT wired in here as another interactor sharing this
     // store — its overlay is appended directly to `$('body')` and its own `Lampa.Controller.add`
@@ -30,14 +33,18 @@
         var movie = options.movie;
         var hasSeasons = options.hasSeasons;
 
-        var lifecycle = createLifecycle();
-        function isDestroyed() { return !lifecycle.isAlive(); }
+        // `scope` is the one lifecycle every async resource this screen owns registers into
+        // (timers, the store subscriptions below AND the View's own, once it's constructed with
+        // this domain as an option) — see lifecycle.js's own header for why this replaced two
+        // separate ad hoc destroy() methods the interactors used to carry.
+        var scope = createLifecycle();
+        function isDestroyed() { return !scope.isAlive(); }
 
         var store = createStore(createInitialResultsState(object));
         applyPersistedPreferences(store, movie); // one initial patch, before anyone subscribes
 
-        var episodes = createEpisodesInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed });
-        var selection = createSelectionInteractor({ store: store, object: object, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery, ensureSeasonLoaded: episodes.ensureSeasonLoaded });
+        var episodes = createEpisodesInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, scope: scope });
+        var selection = createSelectionInteractor({ store: store, object: object, hasSeasons: hasSeasons, isDestroyed: isDestroyed, requery: episodes.requery, ensureSeasonLoaded: episodes.ensureSeasonLoaded, scope: scope });
         var filters = createFiltersInteractor({ store: store, movie: movie });
 
         // Film vs series — two genuinely different flows (see docs/system-design/torrent-mod-unified-pool.md,
@@ -67,14 +74,12 @@
         }
 
         function destroy() {
-            // Idempotent via lifecycle.dispose() — a second destroy() call is a no-op instead of
-            // re-running teardown.
-            var disposed = lifecycle.dispose(function () {
-                // Cancel interactor timers (pending-retry, auto-retry) that would otherwise outlive
-                // the screen.
-                if (selection.destroy) selection.destroy();
-                if (episodes.destroy) episodes.destroy();
-            });
+            // Idempotent via scope.dispose() — a second destroy() call is a no-op instead of
+            // re-running teardown. Every timer/subscription the interactors AND the View registered
+            // into `scope` gets cleaned up here, in one call — neither interactor needs its own
+            // destroy() method to remember to keep in sync with whatever timers it happens to have
+            // added since (see scope's own header comment for the history behind this).
+            var disposed = scope.dispose();
             log('domain', disposed ? 'destroy()' : 'destroy() — уже уничтожен, повторный вызов проигнорирован');
         }
 
@@ -84,6 +89,7 @@
             selection: selection,
             filters: filters,
             start: start,
-            destroy: destroy
+            destroy: destroy,
+            scope: scope
         };
     }

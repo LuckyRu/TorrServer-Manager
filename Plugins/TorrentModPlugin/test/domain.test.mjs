@@ -21,11 +21,13 @@ import {
 import {
     selectBusy, selectFilterChipData, selectFilterItems, buildEpisodeTarget,
     selectCandidatesForEpisode, selectEpisodeBadges, selectStatusText, selectSearchProgress,
-    selectPickerData
+    selectPickerData, selectPoolIndexers
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
 import { pickBestFile } from '../playback/file-selection.js';
+import { createSeriesResultsViewModel } from '../domain/series-results-viewmodel.js';
+import { createMovieResultsViewModel } from '../domain/movie-results-viewmodel.js';
 
 const runner = createRunner();
 
@@ -186,17 +188,24 @@ runner.test('selectEpisodeBadges: "поиск…" вместо пустой ст
     // Раньше пустой pool (или poolStatus:'loading') давал ПУСТОЙ бейдж — неотличимо от
     // "ничего не искали" и "искали и не нашли". Первый холодный поиск против всех трекеров
     // Jackett может идти ~40с — на это время бейдж обязан явно сказать "поиск…".
-    const loadingByNullPool = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: null }));
-    if (loadingByNullPool[7].text !== 'поиск…' || !loadingByNullPool[7].loading) {
-        throw new Error('pool=null должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingByNullPool));
-    }
-
-    const loadingByStatus = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading' }));
+    //
+    // state.pool is now STRUCTURALLY always an array (results-state.js) — the pool search is
+    // progressive/parallel-per-indexer, so "not settled yet" and "genuinely empty" are both
+    // representable as `[]`, distinguished by poolStatus alone. There is no longer a `pool:
+    // null` case to cover here — candidatesForEpisode/applyStateFilters assume an array
+    // unconditionally now, by construction, not by a defensive check a test needs to exercise.
+    //
+    // Candidates are now checked FIRST (before loading/error — see this selector's own header
+    // comment): the base `state` fixture's pool already has real matches for episode 7, so these
+    // two loading sub-cases must ALSO clear `pool` to actually exercise "not settled, nothing yet"
+    // rather than "settled loading flag stayed on but data already arrived" (which correctly shows
+    // the real data, not a loading placeholder — that's the whole point of the progressive design).
+    const loadingByStatus = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading', pool: [] }));
     if (loadingByStatus[7].text !== 'поиск…' || !loadingByStatus[7].loading) {
         throw new Error('poolStatus=loading должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingByStatus));
     }
 
-    const loadingBySeason = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { seasonLoads: { 2: 'loading' } }));
+    const loadingBySeason = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { seasonLoads: { 2: 'loading' }, pool: [] }));
     if (loadingBySeason[7].text !== 'поиск…' || !loadingBySeason[7].loading) {
         throw new Error('seasonLoads[season]=loading должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingBySeason));
     }
@@ -206,6 +215,14 @@ runner.test('selectEpisodeBadges: "поиск…" вместо пустой ст
     const genuinelyEmpty = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: [] }));
     if (genuinelyEmpty[7].text !== 'раздачи не найдены' || genuinelyEmpty[7].loading) {
         throw new Error('пустой готовый пул должен давать "раздачи не найдены" (loading:false): ' + JSON.stringify(genuinelyEmpty));
+    }
+
+    // Обратный случай — данные УЖЕ пришли (быстрый трекер ответил), а poolStatus всё ещё
+    // 'loading' (другие трекеры не ответили) — бейдж обязан показать реальные данные, а не
+    // "поиск…", иначе прогрессивный поиск ничего не выигрывает у пользователя визуально.
+    const arrivedWhileStillLoading = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading' }));
+    if (arrivedWhileStillLoading[7].loading || arrivedWhileStillLoading[7].text === 'поиск…') {
+        throw new Error('данные для серии, уже пришедшие от быстрого трекера, не должны прятаться за "поиск…": ' + JSON.stringify(arrivedWhileStillLoading));
     }
 });
 runner.test('selectStatusText: статус пула — fallback, не перебивает statusText интеракторов', () => {
@@ -277,6 +294,36 @@ runner.test('selectPickerData: empty и error различаются, error не
     if (error.status !== 'error' || !error.retrySeason) {
         throw new Error('провалившийся поиск должен давать status=error, retrySeason=true: ' + JSON.stringify(error));
     }
+});
+runner.test('selectPoolIndexers: pending по имени, ok/error, reportedAt проходит без фильтрации по времени', () => {
+    // Домен/селектор больше не решают, когда прятать успешный чип — это презентационная политика
+    // View (ui/results-screen.js's TRACKER_SUCCESS_HIDE_MS + собственное планирование), не факт из
+    // стора. selectPoolIndexers всегда отдаёт все трекеры, включая давно ответившие — View сам
+    // решает, что с ними делать дальше.
+    const allIndexers = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }];
+    const longAgo = Date.now() - 60000;
+    const s = Object.assign({}, state, {
+        poolAllIndexers: allIndexers,
+        poolIndexers: [
+            { id: 'a', name: 'A', ok: true, error: null, elapsedMs: 42, reportedAt: longAgo }, // давний успех
+            { id: 'b', name: 'B', ok: false, error: 'Не ответил вовремя', elapsedMs: 30000, reportedAt: longAgo } // провал
+            // 'c' ещё не ответил вообще
+        ]
+    });
+    const progress = selectPoolIndexers(s);
+    if (progress.total !== 3) throw new Error('ожидал total=3: ' + JSON.stringify(progress));
+    if (progress.pending !== 1) throw new Error('ожидал pending=1 (только c): ' + JSON.stringify(progress));
+    if (progress.trackers.length !== 3) {
+        throw new Error('ожидал все 3 трекера видимыми — селектор больше не прячет давние успехи сам: ' + JSON.stringify(progress));
+    }
+    const a = progress.trackers.find((t) => t.id === 'a');
+    const b = progress.trackers.find((t) => t.id === 'b');
+    const c = progress.trackers.find((t) => t.id === 'c');
+    if (a.status !== 'ok' || a.elapsedMs !== 42 || a.reportedAt !== longAgo) {
+        throw new Error('a должен быть ok/42мс с исходным reportedAt (не отфильтрован по возрасту): ' + JSON.stringify(a));
+    }
+    if (b.status !== 'error' || b.error !== 'Не ответил вовремя') throw new Error('b должен быть error: ' + JSON.stringify(b));
+    if (c.status !== 'pending' || c.reportedAt !== null) throw new Error('c ещё не ответил, должен быть pending с reportedAt=null: ' + JSON.stringify(c));
 });
 runner.test('isConfidentMatch — высокий availability даёт уверенный матч', () => {
     const best = { _score: { availabilityScore: 18, value: 30 }, seeders: 12 };
@@ -400,6 +447,29 @@ runner.test('выбор файла: сериал сохраняет episode-awar
         episodeFrom: path.indexOf('E08') >= 0 ? 8 : 7, episodeTo: path.indexOf('E08') >= 0 ? 8 : 7
     }));
     if (!chosen || chosen.id !== 2) throw new Error('сериал потерял выбор по эпизоду: ' + JSON.stringify(chosen));
+});
+
+runner.test('createSeriesResultsViewModel/createMovieResultsViewModel forward domain.scope', () => {
+    // Both files are 22-line pass-throughs to createResultsDomain (CLAUDE.md) that explicitly
+    // re-list which fields to expose to the View rather than spreading the whole domain object —
+    // results-domain.js added a `scope` field for the shared lifecycle work, and both wrappers'
+    // own field lists were never updated to forward it. Every other test in this suite constructs
+    // via createResultsDomain directly, bypassing these wrappers entirely, so nothing caught the
+    // gap until it threw live in the browser: `TypeError: Cannot read properties of undefined
+    // (reading 'subscribe')` inside ui/results-screen.js's `domain.scope.subscribe(...)` call,
+    // silently swapped to Lampa's nocomponent empty-state screen by Component.create's own
+    // try/catch (see CLAUDE.md) instead of showing any visible error.
+    const seriesVm = createSeriesResultsViewModel({ object: { movie: tvMovie, season: 2 }, movie: tvMovie });
+    if (!seriesVm.scope || typeof seriesVm.scope.subscribe !== 'function') {
+        throw new Error('createSeriesResultsViewModel не прокинул рабочий scope: ' + JSON.stringify(seriesVm.scope));
+    }
+    seriesVm.destroy();
+
+    const movieVm = createMovieResultsViewModel({ object: { movie: movie, season: 0 }, movie: movie });
+    if (!movieVm.scope || typeof movieVm.scope.subscribe !== 'function') {
+        throw new Error('createMovieResultsViewModel не прокинул рабочий scope: ' + JSON.stringify(movieVm.scope));
+    }
+    movieVm.destroy();
 });
 
 await runner.run();

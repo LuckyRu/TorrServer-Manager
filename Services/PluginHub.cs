@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Diagnostics;
 using System.Net;
@@ -5,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 using TorrServerManager.Controllers;
 using TorrServerManager.Infrastructure;
 using TorrServerManager.Plugins;
@@ -252,12 +254,42 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
-            if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search", StringComparison.OrdinalIgnoreCase))
+            // Parallel-per-indexer search, replacing the old single blocking call to Jackett's own
+            // /indexers/all/results aggregate (see WriteTorrentSearchStartAsync's own comment for
+            // why: one slow/broken indexer used to hold up every OTHER indexer's already-ready
+            // results for up to the full 45s ceiling — a real, reported "мучительно больно ждать"
+            // complaint). start/poll/cancel instead of one request-response: /poll is plain
+            // Lampa.Reguest-compatible GET polling (matching this codebase's own established
+            // pattern, smart-preload.js's pollFiles), not HTTP streaming/SSE — the target device is
+            // an LG WebOS TV browser, and this project has repeatedly avoided browser APIs without a
+            // long compatibility track record there (see TorrentModPlugin.js's own IIFE-not-ESM
+            // bundling decision for the same underlying caution).
+            if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search/start", StringComparison.OrdinalIgnoreCase))
             {
                 var query = context.Request.QueryString["query"]?.Trim() ?? "";
                 if (query.Length is < 2 or > 200)
                     throw new InvalidDataException("Поисковый запрос должен содержать от 2 до 200 символов.");
-                await WriteTorrentSearchAsync(context.Response, query);
+                await WriteTorrentSearchStartAsync(context.Response, query);
+                return;
+            }
+
+            if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search/poll", StringComparison.OrdinalIgnoreCase))
+            {
+                var jobId = context.Request.QueryString["jobId"] ?? "";
+                await WriteTorrentSearchPollAsync(context.Response, jobId);
+                return;
+            }
+
+            // GET, not POST: this is an ephemeral, best-effort "stop bothering" signal (nothing
+            // persisted, no side effect worth REST purity over) — matches Lampa.Reguest's own plain
+            // GET-request shape everywhere else in this plugin, no Content-Length/POST-body handling
+            // needed on either side for what the server-side stale-job sweep already backstops if
+            // this call never lands at all.
+            if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search/cancel", StringComparison.OrdinalIgnoreCase))
+            {
+                var jobId = context.Request.QueryString["jobId"] ?? "";
+                RemoveSearchJob(jobId, cancel: true);
+                await WriteJsonAsync(context.Response, new { ok = true });
                 return;
             }
 
@@ -374,8 +406,55 @@ internal sealed class PluginHub : IDisposable
         });
     }
 
-    private async Task WriteTorrentSearchAsync(HttpListenerResponse response, string query)
+    // ---------- parallel per-indexer torrent search ----------
+    //
+    // Replaces a single blocking call to Jackett's own /indexers/all/results aggregate (Jackett's
+    // own internal fan-out, opaque and monolithic — one slow/broken indexer held up every OTHER
+    // indexer's already-ready results for up to the full 45s ceiling, confirmed live as a real,
+    // repeated pain point: "смотреть на таймер пустого ожидания мучительно больно"). Confirmed live
+    // against this project's own Jackett instance (not guessed from the README) that Jackett exposes
+    // the SAME JSON result shape per-indexer as it does for the aggregate
+    // (`/indexers/{id}/results?apikey=...&Query=...` → identical `{Results:[...],Indexers:[...]}`
+    // fields, just scoped to one tracker) — so this fires one such request PER configured indexer,
+    // in parallel, from our own code, instead of trusting Jackett's single internal aggregate call.
+    //
+    // A "job" (SearchJob) tracks one search's in-flight/completed per-indexer results in memory;
+    // start/poll/cancel replace the old single request-response, so the client can render whichever
+    // indexers have already answered while the rest are still working — plain GET polling
+    // (Lampa.Reguest-compatible, matching smart-preload.js's own established pollFiles pattern), not
+    // HTTP streaming/SSE, which would need a browser API (fetch()+ReadableStream) with no track
+    // record on the target LG WebOS TV browser this whole plugin is built around.
+    private sealed class IndexerSearchResult
     {
+        public required string Id { get; init; }
+        public required string Name { get; init; }
+        public required bool Ok { get; init; }
+        public string? Error { get; init; }
+        public required long ElapsedMs { get; init; }
+        public required string ResultsJson { get; init; } // raw JSON array text, already link-rewritten
+    }
+
+    private sealed class SearchJob
+    {
+        public required int TotalIndexers { get; init; }
+        public required CancellationTokenSource Cts { get; init; }
+        public ConcurrentBag<IndexerSearchResult> Completed { get; } = new();
+        public DateTimeOffset CreatedAtUtc { get; } = DateTimeOffset.UtcNow;
+        public bool Done => Completed.Count >= TotalIndexers;
+    }
+
+    private readonly ConcurrentDictionary<string, SearchJob> searchJobs = new();
+    private static readonly TimeSpan SearchJobTtl = TimeSpan.FromMinutes(3);
+
+    private readonly object indexerListLock = new();
+    private List<(string Id, string Name)>? cachedIndexerList;
+    private DateTimeOffset cachedIndexerListAtUtc;
+    private static readonly TimeSpan IndexerListCacheTtl = TimeSpan.FromMinutes(5);
+
+    private async Task WriteTorrentSearchStartAsync(HttpListenerResponse response, string query)
+    {
+        CleanupStaleSearchJobs();
+
         string apiKey;
         try
         {
@@ -387,64 +466,264 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/all/results" +
+        List<(string Id, string Name)> indexers;
+        try
+        {
+            indexers = await GetConfiguredIndexersAsync(apiKey);
+        }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Jackett не ответил вовремя (список трекеров).");
+            return;
+        }
+        catch (Exception)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Не удалось получить список трекеров Jackett.");
+            return;
+        }
+
+        if (indexers.Count == 0)
+        {
+            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "В Jackett не настроено ни одного трекера.");
+            return;
+        }
+
+        var jobId = Guid.NewGuid().ToString("N");
+        // Linked to the class-level `cancellation` token so a full PluginHub shutdown (Dispose())
+        // cancels every still-running per-indexer request too, not just ones a client explicitly
+        // cancelled or that reached their own 30s timeout naturally.
+        var job = new SearchJob { TotalIndexers = indexers.Count, Cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token) };
+        searchJobs[jobId] = job;
+
+        // Fire-and-forget background worker: starts every indexer's request immediately (all of them
+        // — materializing the list below is what actually starts each async call, not the loop), then
+        // records each one into job.Completed IN COMPLETION ORDER (Task.WhenAny), not original list
+        // order — this is what makes a fast tracker's results visible to /poll before a slow one has
+        // even finished, the whole point of this redesign. /poll itself never waits on anything; it
+        // only ever reads whatever's already landed in job.Completed.
+        _ = Task.Run(async () =>
+        {
+            var pending = indexers
+                .Select(indexer => SearchOneIndexerAsync(indexer.Id, indexer.Name, apiKey, query, job.Cts.Token))
+                .ToList();
+            while (pending.Count > 0)
+            {
+                var completedTask = await Task.WhenAny(pending);
+                pending.Remove(completedTask);
+                try
+                {
+                    job.Completed.Add(await completedTask);
+                }
+                catch (OperationCanceledException)
+                {
+                    // The whole job was cancelled (manual retry / user left the screen) — not a
+                    // per-indexer result, nothing to record.
+                }
+            }
+        });
+
+        // `indexers` (id/name only, nothing about outcome yet) lets the client show every configured
+        // tracker as a pending/spinner chip from the very first paint, not just a "ждём ещё N" count
+        // with no names — requested directly by the user ("в панели показывать со спиннером кого
+        // ещё ждём").
+        await WriteJsonAsync(response, new { jobId, totalIndexers = indexers.Count, indexers = indexers.Select(indexer => new { id = indexer.Id, name = indexer.Name }) });
+    }
+
+    private async Task WriteTorrentSearchPollAsync(HttpListenerResponse response, string jobId)
+    {
+        if (!searchJobs.TryGetValue(jobId, out var job))
+        {
+            await WriteErrorAsync(response, HttpStatusCode.NotFound, "Задача поиска не найдена или уже завершена.");
+            return;
+        }
+
+        // Always the full accumulated set, not just what's new since the last poll — simpler (no
+        // per-client cursor state to track server-side) and cheap enough at this scale (at most a
+        // handful of indexers, LAN-local, not internet-bandwidth-constrained); the client dedupes by
+        // indexer id itself, which it already needs to do to know when to stop polling anyway.
+        // Built as a raw JSON string rather than round-tripping through JsonSerializer/JsonDocument
+        // for each entry's `results` — that field is ALREADY serialized JSON text (Jackett's own
+        // response, only link-rewritten), and re-parsing it just to re-serialize it unchanged would
+        // be pure waste for what can just be concatenated directly.
+        var builder = new StringBuilder();
+        builder.Append("{\"done\":").Append(job.Done ? "true" : "false").Append(",\"indexers\":[");
+        var first = true;
+        foreach (var indexerResult in job.Completed)
+        {
+            if (!first) builder.Append(',');
+            first = false;
+            builder.Append('{')
+                .Append("\"id\":").Append(JsonSerializer.Serialize(indexerResult.Id)).Append(',')
+                .Append("\"name\":").Append(JsonSerializer.Serialize(indexerResult.Name)).Append(',')
+                .Append("\"ok\":").Append(indexerResult.Ok ? "true" : "false").Append(',')
+                .Append("\"error\":").Append(indexerResult.Error is null ? "null" : JsonSerializer.Serialize(indexerResult.Error)).Append(',')
+                .Append("\"elapsedMs\":").Append(indexerResult.ElapsedMs).Append(',')
+                .Append("\"results\":").Append(indexerResult.ResultsJson)
+                .Append('}');
+        }
+        builder.Append("]}");
+
+        // Done jobs are removed the moment a client observes `done:true` — no separate cleanup timer
+        // needed for the common (successful) case; CleanupStaleSearchJobs (above, run on every
+        // /start) is the backstop for a client that stops polling before ever seeing `done:true`
+        // (navigated away without calling /cancel, browser crashed, etc.).
+        if (job.Done) RemoveSearchJob(jobId, cancel: false);
+
+        await WriteTextAsync(response, builder.ToString(), "application/json; charset=utf-8");
+    }
+
+    private void RemoveSearchJob(string jobId, bool cancel)
+    {
+        if (!searchJobs.TryRemove(jobId, out var job)) return;
+        if (cancel) job.Cts.Cancel();
+        job.Cts.Dispose();
+    }
+
+    private void CleanupStaleSearchJobs()
+    {
+        var cutoff = DateTimeOffset.UtcNow - SearchJobTtl;
+        foreach (var (jobId, job) in searchJobs)
+        {
+            if (job.CreatedAtUtc < cutoff) RemoveSearchJob(jobId, cancel: true);
+        }
+    }
+
+    private async Task<List<(string Id, string Name)>> GetConfiguredIndexersAsync(string apiKey)
+    {
+        lock (indexerListLock)
+        {
+            if (cachedIndexerList is not null && DateTimeOffset.UtcNow - cachedIndexerListAtUtc < IndexerListCacheTtl)
+                return cachedIndexerList;
+        }
+
+        // Confirmed live: t=indexers&configured=true returns Torznab-capabilities XML (NOT the same
+        // JSON shape /results uses) — one <indexer id="..."><title>...</title></indexer> per
+        // configured tracker.
+        var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/all/results/torznab/api" +
+            $"?apikey={Uri.EscapeDataString(apiKey)}&t=indexers&configured=true";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var result = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+        result.EnsureSuccessStatusCode();
+        var xml = await result.Content.ReadAsStringAsync(cancellation.Token);
+        var document = XDocument.Parse(xml);
+        var list = (document.Root?.Elements("indexer") ?? Enumerable.Empty<XElement>())
+            .Select(element => (
+                Id: element.Attribute("id")?.Value ?? "",
+                Name: element.Element("title")?.Value ?? element.Attribute("id")?.Value ?? ""))
+            .Where(entry => entry.Id.Length > 0)
+            .ToList();
+
+        lock (indexerListLock)
+        {
+            cachedIndexerList = list;
+            cachedIndexerListAtUtc = DateTimeOffset.UtcNow;
+        }
+        return list;
+    }
+
+    // A single indexer failure (timeout or transient HTTP error) no longer gives up after one
+    // attempt — retried immediately, WITHOUT the whole-pool retry ladder's backoff delay
+    // (POOL_RETRY_DELAYS_MS, episodes-interactor.js), up to IndexerMaxAttempts total. Requested
+    // directly by the user: "по каждому трекеру ретраить до исчерпания попыток если идут ошибки...
+    // задержку повтора не использовать" — explicitly ruling out reusing the pool-level backoff
+    // shape here. The two retry mechanisms solve different problems: the pool ladder exists for the
+    // rare case where NOT ONE indexer answered at all (a real outage); this one exists because a
+    // single indexer timing out or erroring once is common and cheap to just try again immediately
+    // — parallelism already means a struggling tracker doesn't block the others, so there's nothing
+    // to gain by waiting before retrying it.
+    private const int IndexerMaxAttempts = 3;
+
+    private async Task<IndexerSearchResult> SearchOneIndexerAsync(string id, string name, string apiKey, string query, CancellationToken cancellationToken)
+    {
+        var totalStopwatch = Stopwatch.StartNew();
+        IndexerSearchResult result;
+        for (var attempt = 1; ; attempt++)
+        {
+            result = await SearchOneIndexerAttemptAsync(id, name, apiKey, query, cancellationToken);
+            if (result.Ok || attempt >= IndexerMaxAttempts) break;
+        }
+        totalStopwatch.Stop();
+        // ElapsedMs reported to the client is the CUMULATIVE time across every attempt (not just the
+        // last one) — the honest answer to "how long did this indexer take," matching what the
+        // widget/console log actually mean by the number.
+        return new IndexerSearchResult
+        {
+            Id = result.Id, Name = result.Name, Ok = result.Ok, Error = result.Error,
+            ElapsedMs = totalStopwatch.ElapsedMilliseconds, ResultsJson = result.ResultsJson
+        };
+    }
+
+    private async Task<IndexerSearchResult> SearchOneIndexerAttemptAsync(string id, string name, string apiKey, string query, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/{Uri.EscapeDataString(id)}/results" +
             $"?apikey={Uri.EscapeDataString(apiKey)}&Query={Uri.EscapeDataString(query)}";
 
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-        timeoutSource.CancelAfter(TimeSpan.FromSeconds(45));
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // Each indexer gets its OWN timeout now instead of sharing one 45s ceiling for the whole
+        // aggregate — it doesn't need to be shorter just because there are more of them; they no
+        // longer block each other, so the slowest one only delays itself, not the rest.
+        timeoutSource.CancelAfter(TimeSpan.FromSeconds(30));
 
-        JsonDocument document;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             using var result = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutSource.Token);
             result.EnsureSuccessStatusCode();
             var json = await result.Content.ReadAsStringAsync(timeoutSource.Token);
-            document = JsonDocument.Parse(json);
-        }
-        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
-        {
-            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Jackett не ответил вовремя (агрегированный поиск по всем источникам).");
-            return;
-        }
-        catch (HttpRequestException)
-        {
-            await WriteErrorAsync(response, HttpStatusCode.BadGateway, "Jackett недоступен на этом компьютере.");
-            return;
-        }
-
-        using (document)
-        {
+            using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             var resultsText = root.TryGetProperty("Results", out var results) && results.ValueKind == JsonValueKind.Array
                 ? results.GetRawText()
                 : "[]";
-            var indexersText = root.TryGetProperty("Indexers", out var indexers) && indexers.ValueKind == JsonValueKind.Array
-                ? indexers.GetRawText()
-                : "[]";
-
-            // Jackett fills each result's Link (and anything else HTTP) with its own loopback
-            // download endpoint (http://127.0.0.1:9117/dl/...). Those links are consumed ONLY by
-            // TorrServer on THIS machine (the plugin passes link into Lampa.Torserver.hash, which
-            // hands it straight to TorrServer — the TV never downloads the .torrent itself), so the
-            // address must be reachable FROM TorrServer. Rewriting to the request's LAN authority
-            // was a live-found bug: TorrServer couldn't dial its own LAN IP (192.168.10.108:8095 →
-            // connection refused, seen in server.log), so every .torrent-only release (all current
-            // indexers return link, no magnet) stalled forever. Rewrite to loopback + our /jackett
-            // reverse-proxy instead — TorrServer is co-located with the manager by design.
-            var proxyBase = $"http://127.0.0.1:{AppPaths.PluginHubPort}/jackett";
-            var port = AppPaths.JackettPort.ToString();
-            resultsText = resultsText
-                .Replace($"http://127.0.0.1:{port}", proxyBase)
-                .Replace($"https://127.0.0.1:{port}", proxyBase)
-                .Replace($"http://localhost:{port}", proxyBase)
-                .Replace($"https://localhost:{port}", proxyBase);
-
-            await WriteTextAsync(
-                response,
-                $"{{\"results\":{resultsText},\"indexers\":{indexersText}}}",
-                "application/json; charset=utf-8");
+            stopwatch.Stop();
+            return new IndexerSearchResult
+            {
+                Id = id,
+                Name = name,
+                Ok = true,
+                Error = null,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                ResultsJson = RewriteJackettLinks(resultsText)
+            };
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The whole job was cancelled (manual retry / user left the screen), not this one
+            // indexer's own timeout — rethrow so the caller's loop treats it as "job cancelled," not
+            // as a per-indexer result to record.
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            stopwatch.Stop();
+            return new IndexerSearchResult { Id = id, Name = name, Ok = false, Error = "Не ответил вовремя", ElapsedMs = stopwatch.ElapsedMilliseconds, ResultsJson = "[]" };
+        }
+        catch (HttpRequestException)
+        {
+            stopwatch.Stop();
+            return new IndexerSearchResult { Id = id, Name = name, Ok = false, Error = "Недоступен", ElapsedMs = stopwatch.ElapsedMilliseconds, ResultsJson = "[]" };
+        }
+    }
+
+    // Jackett fills each result's Link (and anything else HTTP) with its own loopback download
+    // endpoint (http://127.0.0.1:9117/dl/...). Those links are consumed ONLY by TorrServer on THIS
+    // machine (the plugin passes link into Lampa.Torserver.hash, which hands it straight to
+    // TorrServer — the TV never downloads the .torrent itself), so the address must be reachable
+    // FROM TorrServer. Rewriting to the request's LAN authority was a live-found bug: TorrServer
+    // couldn't dial its own LAN IP (192.168.10.108:8095 → connection refused, seen in server.log),
+    // so every .torrent-only release (all current indexers return link, no magnet) stalled forever.
+    // Rewrite to loopback + our /jackett reverse-proxy instead — TorrServer is co-located with the
+    // manager by design.
+    private static string RewriteJackettLinks(string resultsJson)
+    {
+        var proxyBase = $"http://127.0.0.1:{AppPaths.PluginHubPort}/jackett";
+        var port = AppPaths.JackettPort.ToString();
+        return resultsJson
+            .Replace($"http://127.0.0.1:{port}", proxyBase)
+            .Replace($"https://127.0.0.1:{port}", proxyBase)
+            .Replace($"http://localhost:{port}", proxyBase)
+            .Replace($"https://localhost:{port}", proxyBase);
     }
 
     private async Task<string> ReadJackettApiKeyAsync()
@@ -1451,6 +1730,10 @@ internal sealed class PluginHub : IDisposable
         listener.Close();
         try { listenerTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
         try { refreshTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        // Each job's Cts is linked to `cancellation` above, so cancellation.Cancel() already signals
+        // every still-running per-indexer request to stop — this just disposes the now-unneeded
+        // CancellationTokenSource objects themselves and clears the dictionary.
+        foreach (var jobId in searchJobs.Keys.ToList()) RemoveSearchJob(jobId, cancel: false);
         httpClient.Dispose();
         refreshLock.Dispose();
         cancellation.Dispose();

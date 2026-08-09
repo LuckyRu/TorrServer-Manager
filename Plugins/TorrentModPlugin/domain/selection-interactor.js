@@ -26,6 +26,13 @@
         var isDestroyed = options.isDestroyed;
         var requery = options.requery;
         var ensureSeasonLoaded = options.ensureSeasonLoaded;
+        // Shared lifecycle scope (shared/core/lifecycle.js, results-domain.js) — the watcher
+        // subscription and the pending-retry timer below register into it instead of each keeping
+        // its own destroy()-method bookkeeping (see the scope's own header comment for why: two
+        // separately hand-written destroy() methods across this file and episodes-interactor.js
+        // were exactly the kind of thing a future timer is one missed edit away from outliving its
+        // screen — this happened for real, twice).
+        var scope = options.scope;
 
         // A click made while its season's lazy fetch was still in flight — replayed by the watcher
         // below once seasonLoads[season] settles. The LAST such click wins (a newer pick made while
@@ -54,7 +61,7 @@
         // minute at most — see store.js's own header comment) since both checks below are a handful
         // of property reads, `ensureSeasonLoaded` itself is idempotent, and this only matters at all
         // while a picker is open or a click is pending.
-        var unsubscribeWatcher = store.subscribe(function () {
+        scope.subscribe(store, function () {
             if (isDestroyed()) return;
             var state = store.get();
             // Picker open with nothing to show for its episode yet — make sure that season's lazy
@@ -78,8 +85,7 @@
 
         function schedulePendingRetry() {
             if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
-            pendingRetryTimer = setTimeout(function () {
-                if (isDestroyed()) { pendingSelection = null; return; }
+            pendingRetryTimer = scope.setTimeout(function () {
                 var state = store.get();
                 if (pendingSelection && (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
                     var pending = pendingSelection;
@@ -460,16 +466,6 @@
             startDownload(item, target);
         }
 
-        function destroy() {
-            // Cancel the pending-retry timer immediately (it used to keep ticking until the next
-            // 400ms fire, holding the interactor/store alive — found by the architect).
-            if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
-            pendingRetryTimer = null;
-            pendingSelection = null;
-            pendingClick = null;
-            unsubscribeWatcher();
-        }
-
         return {
             startMovie: startMovie,
             selectEpisode: selectEpisode,
@@ -480,7 +476,6 @@
             closePicker: closePicker,
             playPickerCandidate: playPickerCandidate,
             getSavedEpisode: getSavedEpisode,
-            getSeasonDefault: getSeasonDefault,
-            destroy: destroy
+            getSeasonDefault: getSeasonDefault
         };
     }

@@ -45,7 +45,30 @@
 
             // Data
             episodesCache: null,      // TMDB season episodes (scoped to state.season)
-            pool: null,               // ALL torrents for the work, any season — local filtering only
+            // ALWAYS an array, never null — the pool search is now progressive (parallel-per-
+            // indexer, search/parallel-search.js): results merge in as each tracker answers, so
+            // "not settled yet" and "genuinely empty" are BOTH representable as `[]`, distinguished
+            // by poolStatus alone. Used to start `null` specifically to mean "hasn't even started" —
+            // a real, live-caught crash (`TypeError: Cannot read properties of null (reading
+            // 'filter')`, see CLAUDE.md) came from code that forgot pool could be null and touched
+            // it anyway; making it structurally always-an-array removes that whole class of bug
+            // rather than relying on every caller remembering to check first.
+            pool: [],
+            // Per-tracker progress for the CURRENT pool search — `{id, name, ok, error, elapsedMs,
+            // reportedAt}` per indexer, appended as each one answers (fastest first), reset to `[]`
+            // at the start of every fresh search. Lets the widget show which specific tracker is
+            // slow/broken instead of one opaque "Ищем…" for the whole aggregate — requested directly
+            // by the user ("будет визуально видно какой трекер говнит"). `reportedAt` (a plain
+            // Date.now() timestamp, set when the entry is appended) drives the widget's own
+            // hide-successful-after-a-few-seconds declutter behaviour (selectPoolIndexers).
+            poolIndexers: [],
+            // The FULL configured-indexer list for the CURRENT pool search — `{id, name}[]`, set
+            // once from /api/torrent-search/start's own response (search/parallel-search.js's
+            // onIndexerList callback), before any individual indexer has necessarily answered.
+            // selectPoolIndexers diffs this against poolIndexers to render every not-yet-reported
+            // tracker as its own named, spinning "pending" chip — requested directly by the user
+            // ("в панели показывать со спиннером кого ещё ждём"), not just an opaque count.
+            poolAllIndexers: [],
             seasonEpisodeCount: 0,
             avgRuntimeMinutes: 0,
 
