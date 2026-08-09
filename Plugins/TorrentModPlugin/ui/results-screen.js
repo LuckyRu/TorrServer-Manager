@@ -352,16 +352,20 @@
             refreshGrid();
             if (!hasSeasons || firstNumber == null) return;
 
-            // First render only: move focus into the list (Lampa starts on the left Explorer
-            // card). Every later rebuild of this list (season switch, or "← К списку серий"
-            // returning here from the candidate list) rebuilds fresh DOM row nodes, so
-            // restoreFocus()'s own lastFocusedNode (a stale reference to a now-removed node) can't
-            // help here — refreshGrid() above already fell back to focusing the FIRST row. The
-            // block below always corrects that to wherever the user should actually land.
-            if (!initialFocusDone) {
-                initialFocusDone = true;
-                try { Lampa.Controller.toggle('content'); } catch (e) {}
-            }
+            // Figure out where the cursor SHOULD land before touching Controller.toggle('content')
+            // below — every row's own hover:focus dispatches setActiveEpisode(), which persists
+            // whatever gets focused (saveLastEpisode). Computing the target first and pre-seeding
+            // lastFocusedNode with it means restoreFocus() (called from inside content's own
+            // toggle()) lands there directly, instead of first landing on the FIRST row (the
+            // fallback when lastFocusedNode is still null) and clobbering the very value we're
+            // about to restore before we ever get to apply it — this was the actual bug behind a
+            // real, reported regression: a saved last-watched episode surviving in localStorage
+            // across a browser reload, but STILL never actually being restored, because the
+            // toggle('content') call a few lines below immediately overwrote it with whichever
+            // episode the generic "focus first" fallback landed on, before this function's own
+            // restore logic ever ran (confirmed live: reading the saved value here, right after
+            // toggle('content'), already showed episode 1, though it was still 5 in localStorage
+            // one line earlier).
             var state = domain.store.get();
             var focusNumber = firstNumber;
             if (season === lastEpisodeGridSeason && state.activeEpisode && episodeRows[state.activeEpisode]) {
@@ -382,7 +386,19 @@
             }
             lastEpisodeGridSeason = season;
             var node = episodeRows[focusNumber];
-            if (node && node[0] && node[0].offsetParent) {
+            var nodeReady = node && node[0] && node[0].offsetParent;
+
+            // First render only: move focus into the list (Lampa starts on the left Explorer
+            // card). Every later rebuild of this list (season switch, or "← К списку серий"
+            // returning here from the candidate list) rebuilds fresh DOM row nodes, so
+            // restoreFocus()'s own lastFocusedNode (a stale reference to a now-removed node) can't
+            // help here — the explicit collectionFocus below always corrects that regardless.
+            if (!initialFocusDone) {
+                initialFocusDone = true;
+                if (nodeReady) lastFocusedNode = node;
+                try { Lampa.Controller.toggle('content'); } catch (e) {}
+            }
+            if (nodeReady) {
                 try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e3) {}
             }
         }

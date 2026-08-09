@@ -1107,6 +1107,37 @@ entry-point/build-config layer above all of them.
     `localStorage` is title+size-based (no embedded apikey/path), did a real page reload (not a
     simulated re-render), and confirmed both the badge (5 сид., not the top-ranked 4 сид.) and the
     console log itself ("сохранённый дефолт") reflect the persisted pick post-reload.
+  - **A second, independent persistence bug in the same area, reported right after the one above
+    shipped**: "Осталась бага с запоминанием серии сезона. Запускаю 5 серию, перезагружую браузер,
+    захожу в сериал и вот я на первой серии." — the per-movie last-watched-episode memory
+    (`torrent_mod_last_episode`, `saveLastEpisode`/`getSavedEpisode` in `selection-interactor.js`)
+    looked identical in shape to the torrent-default bug just fixed, but the root cause here was
+    entirely different — found by adding temporary `console.log` instrumentation
+    (`ui/results-screen.js`'s `renderEpisodes`) and reading the actual values at runtime rather
+    than guessing twice: `localStorage` correctly held `{season:2, episode:5}` all the way up to
+    the moment `renderEpisodes` ran on the reloaded page, but by the time that function's own
+    restore logic called `getSavedEpisode()`, the stored value had ALREADY become `{season:2,
+    episode:1}` — clobbered inside the very same function, one line earlier. Cause:
+    `Lampa.Controller.toggle('content')` (called once per screen, to move focus off the left
+    Explorer card) unconditionally re-runs `'content'`'s own `toggle()` handler regardless of
+    whether it's already active (confirmed by reading `vendor/lampa-source/src/core/
+    controller.js` in an earlier session pass) — which calls `restoreFocus()`, which found
+    `lastFocusedNode` still `null` on a fresh page load and fell back to focusing the FIRST row.
+    That fallback isn't inert: the row's own `hover:focus` handler synchronously dispatches
+    `setActiveEpisode(1)`, which persists `{season:2, episode:1}` via `saveLastEpisode` —
+    overwriting the real saved value (5) BEFORE the explicit restore-to-saved-episode code a few
+    lines below ever got to read it. A self-inflicted race within a single synchronous function,
+    not a storage bug at all. Fixed by reordering `renderEpisodes`: compute the target
+    `focusNumber`/`node` FIRST, pre-seed `lastFocusedNode` with it, and only THEN call
+    `Controller.toggle('content')` — so `restoreFocus()`'s fallback path is never taken, the
+    correct row gets real focus (and therefore the correct, harmless re-save) on the first attempt,
+    and the explicit `collectionFocus` call right after just confirms the same target. Verified
+    live end to end with the debug logging in place first (confirming the exact clobbering
+    sequence), then again after the fix with logging removed: cleared `torrent_mod_last_episode`,
+    opened Season 2, clicked episode 5 (confirmed saved), destroyed the player, did a REAL page
+    reload (`navigate`, not a simulated re-render), reopened the same series — season chip read
+    "Сезон 2" and the focused row was genuinely `data-episode="5"`, with `localStorage` still
+    intact and unclobbered afterward.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:
