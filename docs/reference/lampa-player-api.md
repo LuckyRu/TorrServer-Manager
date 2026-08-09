@@ -104,8 +104,10 @@ TorrServer. `data.ffprobe` — путь, которым эта задача ре
 
 `Torserver.gstWork()` (`interaction/torserver.js:137-139`) остаётся настройкой нативной Lampa.
 Torrent Mod строит GST URL самостоятельно, поэтому его GST-first путь не зависит от этого
-глобального тумблера. `Lampa.Torserver.stream()` используется только для тихого cache-preload URL,
-никогда как Player transport.
+глобального тумблера. Для тихого cache-preload он тоже не вызывает `Lampa.Torserver.stream()`:
+при включённом тумблере тот вернул бы GST master и создал бы audio=0 task до preflight. Вместо этого
+плагин строит явный `/stream/{name}?link={hash}&index={fileId}&preload`; это cache nudge, не Player
+transport.
 
 ## Плейлист: `data.playlist`, переключение серий
 

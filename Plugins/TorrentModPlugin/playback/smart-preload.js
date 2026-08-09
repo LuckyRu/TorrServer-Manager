@@ -51,17 +51,16 @@
     var AUDIO_PREFERENCE_CACHE = 'torrent_mod_audio_preference';
     var AUDIO_PREFERENCE_CACHE_MAX = 200;
 
-    // The stream URL built by Lampa.Torserver.stream() ends with `&play` (or `&preload` when the
-    // torrserver_preload setting is on). The `&preload` variant is TorrServer's "start filling the
-    // cache" command — fire-and-forget (the response body is a long-lived stream; we resolve on
-    // headers via fetch and never read/abort it). Only the play→preload parameter of the OFFICIAL
-    // URL is swapped, no invented endpoints.
+    // The normal TorrServer stream endpoint accepts `&preload` to start filling the torrent cache.
+    // Do not obtain this URL from Lampa.Torserver.stream(): when its global `torrserver_gts` switch
+    // is on, it returns a GST master URL instead and a cache nudge would accidentally create an
+    // audio=0 GST task before our probe has selected the real track.
     function preloadUrlFor(file, hash) {
-        var url;
-        try { url = Lampa.Torserver.stream(file.path, hash, file.id); } catch (e) { return ''; }
-        var preloadUrl = url.replace(/([?&])play$/, '$1preload');
-        if (preloadUrl === url && url.indexOf('preload') < 0) preloadUrl = url + '&preload';
-        return preloadUrl;
+        var base = torrServerBase();
+        if (!base || !file) return '';
+        var sourceName = String(file.path || '').split(/[\\/]/).pop();
+        if (!sourceName) return '';
+        return base + '/stream/' + encodeURIComponent(sourceName) + '?link=' + encodeURIComponent(hash) + '&index=' + encodeURIComponent(file.id) + '&preload';
     }
 
     function gstStreamUrl(session, file, audioIndex, seconds) {

@@ -24,8 +24,17 @@ async function waitForPlay(count) {
 runner.test('GST preflight строит единственный GST URL и передаёт все voiceovers', async () => {
     globalThis.__clearStorage();
     globalThis.__resetPlaybackMock();
-    startDownload(candidate(), target());
-    await waitForPlay(1);
+    const nativeStream = Lampa.Torserver.stream;
+    // A global Lampa `torrserver_gts` setting makes this method return a GST master URL. The
+    // plugin must not call it for cache preload, otherwise it creates an audio=0 GST task before
+    // the probe chooses the actual track.
+    Lampa.Torserver.stream = () => { throw new Error('cache preload must not call Torserver.stream'); };
+    try {
+        startDownload(candidate(), target());
+        await waitForPlay(1);
+    } finally {
+        Lampa.Torserver.stream = nativeStream;
+    }
 
     const data = globalThis.__playerPlays[0];
     if (!data.url.includes('/gst/mock-torrent-hash/master.m3u8?index=1&audio=3')) throw new Error('неверный GST URL: ' + data.url);
