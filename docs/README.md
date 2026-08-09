@@ -60,5 +60,7 @@ ADR/system-design/reference там, где одно объясняет друг�
 - **План перестройки Torrent Mod на единый пул раздач** →
   [`system-design/torrent-mod-unified-pool.md`](system-design/torrent-mod-unified-pool.md)
 - **Бэклог: выбор аудиодорожки** (почему субтитры уже работают, а звук нет; что нужно поменять в
-  самом TorrServer; отложено) → [`system-design/torrent-mod-audio-tracks-backlog.md`](system-design/torrent-mod-audio-tracks-backlog.md)
+  самом TorrServer; история исследования) → [`system-design/torrent-mod-audio-tracks-backlog.md`](system-design/torrent-mod-audio-tracks-backlog.md)
+- **MVP: предпочтительная аудиодорожка в сериалах** (probe-preflight, выбор студии для каждой
+  серии и контролируемый GST-перезапуск с сохранением позиции) → [`system-design/torrent-mod-audio-track-mvp.md`](system-design/torrent-mod-audio-track-mvp.md)
 - **Все зафиксированные архитектурные решения** → [`adr/`](adr/) (см. `adr/README.md` за списком)
