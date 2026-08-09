@@ -50,7 +50,15 @@
             '.torrent-mod-picker-item__title{font-size:1em;padding-right:4.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '.torrent-mod-picker-item__badge{font-size:.72em;opacity:.85;margin-top:.35em}',
             '.torrent-mod-picker-item__details{font-size:.72em;opacity:.6;margin-top:.2em}',
-            '.torrent-mod-picker-item__mark{position:absolute;top:.5em;right:.6em;color:#58d68d;font-size:.8em}'
+            '.torrent-mod-picker-item__mark{position:absolute;top:.5em;right:.6em;color:#58d68d;font-size:.8em}',
+            // Search-progress widget: a small inline spinner for the head status line (shown only
+            // while selectSearchProgress().stage === 'loading') and a shimmering skeleton bar that
+            // replaces the "поиск…" text badge on episode rows — both plain CSS, no image assets or
+            // animation library (this bundle stays a single classic <script>, see CLAUDE.md).
+            '@keyframes torrent-mod-spin{to{transform:rotate(360deg)}}',
+            '.torrent-mod__spinner{display:inline-block;width:.9em;height:.9em;margin-right:.6em;vertical-align:-.15em;border:.15em solid rgba(255,255,255,.25);border-top-color:currentColor;border-radius:50%;animation:torrent-mod-spin .8s linear infinite}',
+            '@keyframes torrent-mod-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}',
+            '.torrent-mod-row__badge--shimmer{display:inline-block;width:6em;max-width:60%;height:.85em;border-radius:.2em;background:linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.22),rgba(255,255,255,.08));background-size:200% 100%;animation:torrent-mod-shimmer 1.4s ease-in-out infinite}'
         ].join('');
         document.head.appendChild(style);
     }

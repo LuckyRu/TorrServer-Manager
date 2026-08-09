@@ -174,10 +174,18 @@
         // as a search that ran cleanly and found nothing — reported directly by the user testing
         // this live. When it's the pool that actually failed (not just empty), offer a real retry
         // via requery() (the same re-fetch searchWithQuery already uses) instead of a dead end.
+        // The attempt suffix ("попытка N") uses state.poolAttempt — requery's own isRetry=true bumps
+        // it, so pressing "Повторить" repeatedly climbs the counter visibly (product decision,
+        // search-progress-widget consilium: a display-only counter, no gating role — poolGeneration
+        // alone still protects against a stale response, see requery's own comment).
         function emptyPoolMessage(onRetryComplete) {
             var state = store.get();
             if (state.poolStatus === 'error') {
-                return { text: 'Не удалось получить раздачи — Jackett не ответил', retry: requery ? function () { requery(onRetryComplete); } : null };
+                var attempt = state.poolAttempt || 1;
+                return {
+                    text: 'Не удалось получить раздачи — Jackett не ответил' + (attempt > 1 ? ' (попытка ' + attempt + ')' : ''),
+                    retry: requery ? function () { requery(onRetryComplete, true); } : null
+                };
             }
             return { text: 'Раздач не нашлось', retry: null };
         }

@@ -615,4 +615,57 @@ runner.test('панель, закрытая во время дозагрузки
     if (state.picker.open) throw new Error('панель не должна была открыться заново сама по себе после закрытия');
 });
 
+runner.test('retrySeasonLoad: ручной повтор после провала дозагрузки сезона восстанавливает панель', async () => {
+    // Часть виджета прогресса поиска (консилиум дизайнер/продакт/инженер, см. CLAUDE.md): панель
+    // теперь различает status='empty' (реально пусто) и status='error' (поиск не удался), и для
+    // error появляется ручная кнопка «Повторить» — episodes.retrySeasonLoad(season) сбрасывает
+    // settled-статус сезона и заново запускает ensureSeasonLoaded. Только по нажатию, без авто-ретрая.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
+    });
+    // Общий пул сразу пуст и успешен; первый вызов ленивой дозагрузки сезона (запущенный watcher'ом
+    // при открытии панели) проваливается; второй — уже после ручного retrySeasonLoad — успешен.
+    let torrentSearchCalls = 0;
+    globalThis.__mockReguest((url) => {
+        if (!url.includes('/api/torrent-search')) return false;
+        torrentSearchCalls++;
+        return torrentSearchCalls === 1;
+    }, { results: [], indexers: [] }, 0);
+    globalThis.__mockReguest((url) => {
+        if (!url.includes('/api/torrent-search')) return false;
+        return torrentSearchCalls === 2;
+    }, null); // unmatched-shaped: passing null data makes mock-Reguest call the fail callback
+
+    const object = { movie: tvMovie, season: 2 };
+    const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    domain.selection.setActiveEpisode(1);
+    domain.selection.openPicker();
+    await new Promise((r) => setTimeout(r, 10));
+
+    let picker = pickerData(domain, object);
+    if (picker.status !== 'error' || !picker.retrySeason) {
+        throw new Error('ожидал status=error после провала дозагрузки, получил ' + JSON.stringify(picker));
+    }
+
+    // Третий мок (свежий успешный ответ) для повторной попытки после ручного retry.
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E01 1080p WEB-DL', 8, 4, 'eeee')],
+        indexers: []
+    });
+
+    domain.episodes.retrySeasonLoad(2);
+    await new Promise((r) => setTimeout(r, 10));
+
+    picker = pickerData(domain, object);
+    if (picker.status !== 'ready' || !picker.items.length) {
+        throw new Error('ожидал восстановление после retrySeasonLoad, получил ' + JSON.stringify(picker));
+    }
+});
+
 await runner.run();

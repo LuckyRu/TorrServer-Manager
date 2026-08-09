@@ -21,7 +21,7 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
     import { candidateBadgeText, candidateSubtitleText, searchQueryText, candidateIdentity } from '../domain/results-core.js';
-    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData } from '../domain/results-selectors.js';
+    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress } from '../domain/results-selectors.js';
 
     // Primary content is EPISODE metadata (from TMDB), not raw torrent search results — matching
     // an episode to an actual torrent is a secondary, mostly-automatic step that happens only
@@ -92,7 +92,21 @@
             picker.show();
             var selectedNode = null;
             if (st.status === 'loading') {
-                pickerBody.append($('<div class="torrent-mod-picker__empty">Ищем раздачи…</div>'));
+                pickerBody.append($('<div class="torrent-mod-picker__empty"><span class="torrent-mod__spinner"></span>Ищем раздачи…</div>'));
+            } else if (st.status === 'error') {
+                // Settled with a real failure (Jackett didn't respond), not just genuinely empty —
+                // distinguished from 'empty' below so a retry affordance only shows where retrying
+                // could plausibly help (product decision, search-progress-widget consilium, see
+                // CLAUDE.md). Manual retry only, no auto-retry: retrySeasonLoad clears this season's
+                // settled status and re-triggers ensureSeasonLoaded.
+                pickerBody.append($('<div class="torrent-mod-picker__empty">Не удалось получить раздачи</div>'));
+                var retryRow = $('<div class="torrent-mod-picker-item selector"><div class="torrent-mod-picker-item__title">Повторить</div></div>');
+                retryRow.on('hover:focus', function (e) { pickerScroll.update($(e.target), true); });
+                retryRow.on('hover:enter', function () {
+                    if (viewDestroyed) return;
+                    domain.episodes.retrySeasonLoad(domain.store.get().season);
+                });
+                pickerBody.append(retryRow);
             } else if (!st.items || !st.items.length) {
                 pickerBody.append($('<div class="torrent-mod-picker__empty">Раздач не найдено</div>'));
             } else {
@@ -584,9 +598,15 @@
             });
         }
 
+        // badgeMap entries are {text, loading} (selectEpisodeBadges) — a loading row gets a
+        // shimmering skeleton bar instead of the "поиск…" text itself (search-progress-widget work,
+        // see CLAUDE.md), everything else stays a plain text badge exactly as before.
         function updateEpisodeBadges(badgeMap) {
             Object.keys(episodeRows).forEach(function (key) {
-                episodeRows[key].find('.torrent-mod-row__badge').text(badgeMap[key] || '');
+                var entry = badgeMap[key];
+                var el = episodeRows[key].find('.torrent-mod-row__badge');
+                if (entry && entry.loading) el.html('<span class="torrent-mod-row__badge--shimmer"></span>');
+                else el.text((entry && entry.text) || '');
             });
         }
 
@@ -614,8 +634,31 @@
             if (filterParams) filterParams.search = text;
         }
 
-        function setStatus(text) {
-            status.text(text);
+        // `loading` prepends a small spinner (torrent-mod__spinner, styles.js) — status.text() would
+        // wipe it on every call, so this builds markup instead of using jQuery's plain .text().
+        function setStatus(text, loading) {
+            status.html((loading ? '<span class="torrent-mod__spinner"></span>' : '') + escapeHtml(text));
+        }
+
+        // The status line's wording escalates past ~15s of a cold search (selectStatusText, via
+        // selectSearchProgress) purely as a function of wall-clock time — nothing else in the store
+        // necessarily changes during that wait, so without an explicit tick nothing would ever
+        // re-check it and the escalation would silently never appear. A single interval, started only
+        // while search is actually loading and cleared the moment it isn't (or the view is destroyed),
+        // is cheap: this is a TV remote UI, a slow poll while genuinely waiting on a ~40s network call
+        // is not meaningfully different from the render cadence store.patch already produces elsewhere.
+        var statusTickTimer = null;
+        function ensureStatusTicking(loading) {
+            if (loading && !statusTickTimer) {
+                statusTickTimer = setInterval(function () {
+                    if (viewDestroyed) return;
+                    var state = domain.store.get();
+                    setStatus(selectStatusText(state), selectSearchProgress(state).stage === 'loading');
+                }, 5000);
+            } else if (!loading && statusTickTimer) {
+                clearInterval(statusTickTimer);
+                statusTickTimer = null;
+            }
         }
 
         // Renders torrent candidates as the screen's own primary content instead of a Select overlay —
@@ -689,8 +732,16 @@
             // (it runs silently in the background by design), which used to leave the head line
             // blank for however long that search took with nothing else on screen saying so either
             // (see selectEpisodeBadges' own comment on the same underlying report).
+            var progressNow = selectSearchProgress(state);
             var statusTextNow = selectStatusText(state);
-            if (statusTextNow !== selectStatusText(previous)) setStatus(statusTextNow);
+            var loadingNow = progressNow.stage === 'loading';
+            if (statusTextNow !== selectStatusText(previous) || loadingNow !== (selectSearchProgress(previous).stage === 'loading')) {
+                setStatus(statusTextNow, loadingNow);
+            }
+            // The 15s-escalation wording depends on wall-clock elapsed time, not on any single state
+            // transition — nothing else may patch the store during a long wait, so a ticking timer
+            // (only while actually loading) is what makes the escalation actually appear on screen.
+            ensureStatusTicking(loadingNow);
             // Side picker panel: open/close on the flag, re-render its list whenever anything
             // selectPickerData reads from could have changed its output — the picker's own content
             // isn't stored (state.picker only ever carries open/episode now, see its own comment in
@@ -734,6 +785,7 @@
                 // Lampa re-registers it on the next Activity start anyway, and leaving it alone
                 // avoids a global controller pointing at a dead screen.
                 viewDestroyed = true;
+                if (statusTickTimer) { clearInterval(statusTickTimer); statusTickTimer = null; }
                 try { if (unsubscribe) unsubscribe(); } catch (e) {}
                 try { picker.remove(); } catch (e) {}
                 try { pickerScroll.destroy(); } catch (e) {}

@@ -1381,6 +1381,95 @@ entry-point/build-config layer above all of them.
       refresh, confirmed the served bundle contains `unsubscribeWatcher`/`selectPickerData` and no
       longer has a live `fillPicker` function (one remaining match is a historical comment), fresh
       page load with no new console errors.
+  - **Dynamic search-progress widget (spinner/stages/retry) replacing static loading text** —
+    requested directly by the user, who explicitly asked for a UX/UI designer, a product owner, and
+    an error/retry-domain engineer to weigh in before building it ("Лучше привлечь UX/UI дизайнера…
+    продакта… программиста по обработке ошибок"). Ran that as three parallel research-agent
+    consultations (not a real cross-functional team, but genuinely independent passes briefed on
+    the real constraints — no live per-indexer streaming exists today, only a final `{results,
+    indexers}` breakdown; a cold search can take ~40s; three independent async resources
+    (`poolStatus`/`seasonLoads[season]`/`searchStatus`) can be in flight at once) before writing any
+    code, then presented the synthesis back to the user as a tiered scope choice
+    (`AskUserQuestion`) rather than assuming how much to build — they picked the "full first
+    package": spinner + escalating wording, shimmer badges, empty/error distinction with attempt-
+    numbered retry, all via a clean selector, no backend changes. The live per-indexer streaming
+    panel (needs `PluginHub.cs` changes) was explicitly scoped OUT as a separate future phase.
+    - **Product decision, followed literally in the implementation**: collapse the three independent
+      async resources into ONE user-facing stage per season (worst-of: loading beats error beats
+      idle) — "is THIS season ready" is the only question that matters to the user, not which of
+      three operations is currently running. The lazy per-season background retry stays invisible as
+      its own stage (it's automatic recovery plumbing, not a milestone worth naming). No countdown
+      timer — a raw "00:23" reads as frozen on a slow connection; the wording ESCALATES instead, at a
+      fixed 15s threshold, from `'Ищем раздачи по всем трекерам…'` to `'Опрашиваем трекеры —
+      некоторые отвечают медленно, обычно до 40 секунд'`. No auto-retry-with-backoff — a screen
+      changing state on its own while the user's attention/remote cursor is elsewhere is disorienting
+      on a D-pad interface; retry is always an explicit button press, exactly where the plugin's
+      existing `message.retry` convention already puts it.
+    - **`selectSearchProgress(state)` (new, `results-selectors.js`)** — the single source of truth for
+      "is search loading/failed, and how long has it been." Pure derivation over `poolStatus`/
+      `seasonLoads[state.season]`/`searchStatus` (loading wins, then error, then idle) plus two new
+      **cosmetic-only** stored fields with no gating role at all (`poolGeneration` alone still
+      guards staleness, same as before this feature): `poolStartedAt` (a plain timestamp, set by
+      `loadAllTorrents` when a fetch actually starts, read only to compute `elapsedMs`/`slow` for the
+      escalating wording) and `poolAttempt` (a display-only "попытка N" counter, bumped by
+      `requery(onLoaded, isRetry)`'s new second parameter — `true` only when the caller is genuinely
+      retrying a failed search via a "Повторить" press, left `false`/omitted for a fresh query
+      context like `searchWithQuery`, so a new manual-name search doesn't inherit a stale attempt
+      count from an unrelated earlier failure). `selectStatusText` now delegates its
+      loading/error branches to this selector instead of duplicating the poolStatus checks inline —
+      one source of truth shared with the spinner and the shimmer badges.
+    - **Spinner**: a plain CSS `@keyframes torrent-mod-spin` rotating-border circle
+      (`.torrent-mod__spinner`, `styles.js`) — no image assets, no animation library, consistent with
+      this bundle staying a single classic `<script>`. `setStatus(text, loading)`
+      (`ui/results-screen.js`) now builds `<span class="torrent-mod__spinner"></span>` + escaped text
+      via `.html()` instead of jQuery's plain `.text()` (which would otherwise wipe the spinner
+      element on every call). Because the 15s-escalation wording depends on wall-clock elapsed time,
+      not on any single state transition — nothing else necessarily patches the store during a long
+      wait — a small `setInterval` (`ensureStatusTicking`, 5s cadence, started only while
+      `selectSearchProgress` reports `'loading'` and cleared the moment it isn't or the view is
+      destroyed) is what actually makes the escalation appear on screen; without it the wording would
+      correctly compute as "slow" internally but nothing would ever re-render to show it.
+    - **Shimmer skeleton badges replace the "поиск…" text badge itself** while a season is loading.
+      `selectEpisodeBadges` now returns `{text, loading}` per episode instead of a plain string (a
+      breaking shape change — `updateEpisodeBadges`, `ui/results-screen.js`, and every test reading
+      badge values were updated to match); the View renders a shimmering `<span
+      class="torrent-mod-row__badge--shimmer">` (CSS `background-position` gradient sweep,
+      `torrent-mod-shimmer` keyframes) instead of the text whenever `loading` is true, and the plain
+      text badge otherwise — `text` still carries a value either way so nothing downstream needs a
+      separate loading-aware branch.
+    - **The side picker now distinguishes `status:'empty'` from `status:'error'`** (`selectPickerData`)
+      instead of one identical "Раздач не найдено" for both — a real, product-flagged gap: empty and
+      failed are semantically opposite (nothing exists vs. the app couldn't check), and only a
+      failure is worth a retry affordance. `status:'error'` additionally carries `retrySeason: true`;
+      the View renders a focusable "Повторить" row (`.torrent-mod-picker-item`, same markup
+      convention as a real torrent row, wired to `hover:enter`) that calls the new
+      `episodes.retrySeasonLoad(season)` (`episodes-interactor.js`) — `ensureSeasonLoaded` itself is
+      a no-op once a season has ANY settled status (by design, for its normal idempotent callers), so
+      a manual retry has to explicitly clear `seasonLoads[season]` first before calling it again.
+      User-triggered only, never automatic, per the product decision above.
+    - **`emptyPoolMessage()`'s (`selection-interactor.js`) movie-flow failure message** now suffixes
+      `' (попытка N)'` once `poolAttempt > 1`, and its retry closure calls `requery(onRetryComplete,
+      true)` — the one existing call site that genuinely represents a user re-trying the same failed
+      search, as opposed to `searchWithQuery`'s fresh-query-context `requery()` call (unchanged,
+      still resets the counter to 1). `loadEpisodes`'s TMDB-failure retry and `freshSearch`'s
+      Jackett-failure retry were deliberately left without attempt counters in this pass — scoped
+      out, not overlooked: the ~40s cold pool search was the one path the product consultation
+      specifically called out as needing this treatment.
+    - Five new automated tests (`domain.test.mjs`: `selectSearchProgress`'s loading/error/idle +
+      15s-escalation + attempt number; `selectPickerData`'s empty-vs-error split;
+      `smoke.test.mjs`: a full `retrySeasonLoad` round trip — picker shows `status:'error'` after a
+      season's lazy fetch fails, a manual retry clears it and re-fetches, the picker recovers to
+      real candidates). All 119 tests (`npm run test:plugin`) green.
+    - **Verified live against the real running app, not just tests**: pushed `Lampa.Activity` directly
+      via console script (`component:'torrent_mod'`) for a real, well-seeded show (Fallout) —
+      confirmed a genuine ~178-candidate Jackett search completing normally end to end. Then, using
+      the session's established `Lampa.Reguest` constructor-wrapper technique to force an artificial
+      20s delay on `/api/torrent-search` for a second push (Game of Thrones), captured the DOM
+      mid-flight: `.torrent-mod__spinner` present, `.torrent-mod-row__badge--shimmer` present on the
+      loading rows, and the status line reading the exact escalated string `"Опрашиваем трекеры —
+      некоторые отвечают медленно, обычно до 40 секунд"` with the spinner prefixed — the intended
+      behavior confirmed rendering for real, not just asserted by a unit test. No new console errors
+      beyond the same pre-existing unrelated noise documented throughout this file.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

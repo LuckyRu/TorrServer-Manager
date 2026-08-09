@@ -110,7 +110,11 @@
                 customQuery: state.customQuery
             };
             log('episodes', 'loadAllTorrents старт, generation=' + generation + (state.customQuery ? ', customQuery=' + state.customQuery : ''));
-            store.patch({ poolStatus: 'loading' });
+            // poolStartedAt: plain wall-clock timestamp, read only by selectSearchProgress to
+            // escalate the head status line's wording past ~15s of a cold search — not a
+            // generation/staleness concern, just cosmetic timing data (still "plain data only" per
+            // this file's own state-shape rule: a number, not a timer/Promise).
+            store.patch({ poolStatus: 'loading', poolStartedAt: Date.now() });
             var search = hasSeasons ? searchSeriesTorrents : searchMovieTorrents;
             search(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
@@ -212,6 +216,19 @@
             });
         }
 
+        // Manual retry for a season whose lazy fetch already settled as 'error' — ensureSeasonLoaded
+        // itself is a no-op once a season has a status at all (by design, to stay idempotent for its
+        // normal callers), so retrying means explicitly clearing that status first. User-triggered
+        // only (a picker's "Повторить" row), never automatic — product decision, no auto-retry.
+        function retrySeasonLoad(season) {
+            var state = store.get();
+            var loads = Object.assign({}, state.seasonLoads || {});
+            delete loads[season];
+            log('episodes', 'retrySeasonLoad: сброс статуса сезона ' + season + ', повторная попытка');
+            store.patch({ seasonLoads: loads });
+            ensureSeasonLoaded(season);
+        }
+
         // Same identity as search-backend's dedup: magnet first, then link, then title+size.
         // The pool must grow monotonically within one query context — never shrink or replace.
         function mergePools(existing, incoming) {
@@ -236,11 +253,20 @@
         // the pool (and therefore the row badges) is re-fetched, the same way Online Mod re-fetches
         // its balancer's data for a re-worded query without leaving its screen. `onLoaded` fires
         // after the fresh pool lands (movie flow: then show the local candidate pick).
-        function requery(onLoaded) {
+        // `isRetry` distinguishes WHY requery is being called, for the attempt counter only (it has
+        // no gating role — poolGeneration alone is what protects against a stale response landing,
+        // same as before): a fresh query context (searchWithQuery, a new customQuery) resets the
+        // counter to 1, since it's not "trying the same search again," it's a different search. A
+        // user pressing "Повторить" on a failed search (emptyPoolMessage) IS retrying the same
+        // thing, so that counter should climb — shown as "попытка N" in the retry message.
+        function requery(onLoaded, isRetry) {
             var state = store.get();
-            log('episodes', 'requery: сброс пула под новым запросом, customQuery=' + state.customQuery);
+            log('episodes', 'requery: сброс пула под новым запросом, customQuery=' + state.customQuery + (isRetry ? ', попытка ' + ((state.poolAttempt || 1) + 1) : ''));
             // New query context: old pool and per-season coverage are both invalid.
-            store.patch({ pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {} });
+            store.patch({
+                pool: null, poolStatus: 'idle', poolGeneration: state.poolGeneration + 1, seasonLoads: {},
+                poolAttempt: isRetry ? (state.poolAttempt || 1) + 1 : 1
+            });
             loadAllTorrents(onLoaded);
         }
 
@@ -255,6 +281,7 @@
             loadEpisodes: loadEpisodes,
             loadAllTorrents: loadAllTorrents,
             ensureSeasonLoaded: ensureSeasonLoaded,
+            retrySeasonLoad: retrySeasonLoad,
             setSeason: setSeason,
             showEpisodeList: showEpisodeList,
             requery: requery

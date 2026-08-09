@@ -20,7 +20,8 @@ import {
 } from '../domain/results-core.js';
 import {
     selectBusy, selectFilterChipData, selectFilterItems, buildEpisodeTarget,
-    selectCandidatesForEpisode, selectEpisodeBadges, selectStatusText
+    selectCandidatesForEpisode, selectEpisodeBadges, selectStatusText, selectSearchProgress,
+    selectPickerData
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
@@ -179,25 +180,33 @@ runner.test('badgeText предпочитает сохранённый дефо�
 runner.test('selectEpisodeBadges прокидывает seasonDefault в каждую серию', () => {
     const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
     const badges = selectEpisodeBadges({ movie: tvMovie }, state, saved);
-    if (badges[7].indexOf(String(single.seeders)) < 0) throw new Error('серия 7 должна показывать saved-дефолт: ' + JSON.stringify(badges));
+    if (badges[7].text.indexOf(String(single.seeders)) < 0) throw new Error('серия 7 должна показывать saved-дефолт: ' + JSON.stringify(badges));
 });
 runner.test('selectEpisodeBadges: "поиск…" вместо пустой строки, пока пул/сезон грузятся', () => {
     // Раньше пустой pool (или poolStatus:'loading') давал ПУСТОЙ бейдж — неотличимо от
     // "ничего не искали" и "искали и не нашли". Первый холодный поиск против всех трекеров
     // Jackett может идти ~40с — на это время бейдж обязан явно сказать "поиск…".
     const loadingByNullPool = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: null }));
-    if (loadingByNullPool[7] !== 'поиск…') throw new Error('pool=null должен давать "поиск…": ' + JSON.stringify(loadingByNullPool));
+    if (loadingByNullPool[7].text !== 'поиск…' || !loadingByNullPool[7].loading) {
+        throw new Error('pool=null должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingByNullPool));
+    }
 
     const loadingByStatus = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading' }));
-    if (loadingByStatus[7] !== 'поиск…') throw new Error('poolStatus=loading должен давать "поиск…": ' + JSON.stringify(loadingByStatus));
+    if (loadingByStatus[7].text !== 'поиск…' || !loadingByStatus[7].loading) {
+        throw new Error('poolStatus=loading должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingByStatus));
+    }
 
     const loadingBySeason = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { seasonLoads: { 2: 'loading' } }));
-    if (loadingBySeason[7] !== 'поиск…') throw new Error('seasonLoads[season]=loading должен давать "поиск…": ' + JSON.stringify(loadingBySeason));
+    if (loadingBySeason[7].text !== 'поиск…' || !loadingBySeason[7].loading) {
+        throw new Error('seasonLoads[season]=loading должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingBySeason));
+    }
 
     // Пул реально готов и пуст (а не всё ещё грузится) — должно остаться настоящее
-    // "раздачи не найдены" от badgeText, не "поиск…".
+    // "раздачи не найдены" от badgeText, не "поиск…", и loading:false.
     const genuinelyEmpty = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: [] }));
-    if (genuinelyEmpty[7] !== 'раздачи не найдены') throw new Error('пустой готовый пул должен давать "раздачи не найдены": ' + JSON.stringify(genuinelyEmpty));
+    if (genuinelyEmpty[7].text !== 'раздачи не найдены' || genuinelyEmpty[7].loading) {
+        throw new Error('пустой готовый пул должен давать "раздачи не найдены" (loading:false): ' + JSON.stringify(genuinelyEmpty));
+    }
 });
 runner.test('selectStatusText: статус пула — fallback, не перебивает statusText интеракторов', () => {
     if (selectStatusText(Object.assign({}, state, { statusText: 'Загрузка списка серий…', poolStatus: 'loading' })) !== 'Загрузка списка серий…') {
@@ -208,6 +217,44 @@ runner.test('selectStatusText: статус пула — fallback, не пере
     }
     if (selectStatusText(Object.assign({}, state, { statusText: '', poolStatus: 'ready' })) !== '') {
         throw new Error('пустой statusText при готовом пуле должен остаться пустым');
+    }
+});
+runner.test('selectSearchProgress: loading/error/idle, эскалация формулировки на 15с, номер попытки', () => {
+    const idle = selectSearchProgress(Object.assign({}, state, { poolStatus: 'ready' }));
+    if (idle.stage !== 'idle') throw new Error('ожидал stage=idle, получил ' + JSON.stringify(idle));
+
+    const freshLoading = selectSearchProgress(Object.assign({}, state, { poolStatus: 'loading', poolStartedAt: Date.now() }));
+    if (freshLoading.stage !== 'loading' || freshLoading.slow) {
+        throw new Error('свежий поиск (<15с) не должен быть "slow": ' + JSON.stringify(freshLoading));
+    }
+
+    const slowLoading = selectSearchProgress(Object.assign({}, state, { poolStatus: 'loading', poolStartedAt: Date.now() - 20000 }));
+    if (slowLoading.stage !== 'loading' || !slowLoading.slow) {
+        throw new Error('поиск дольше 15с должен быть "slow": ' + JSON.stringify(slowLoading));
+    }
+    if (selectStatusText(Object.assign({}, state, { statusText: '', poolStatus: 'loading', poolStartedAt: Date.now() - 20000 }))
+        .indexOf('до 40 секунд') < 0) {
+        throw new Error('эскалированный текст статуса не подтянулся');
+    }
+
+    // Сезон, у которого своя ленивая дозагрузка сейчас грузится — тоже 'loading', даже если сам
+    // пул уже осел (loading побеждает error/idle — «жив ли поиск», а не «какая именно из трёх
+    // независимых операций сейчас идёт»).
+    const seasonLoading = selectSearchProgress(Object.assign({}, state, { poolStatus: 'error', seasonLoads: { 2: 'loading' } }));
+    if (seasonLoading.stage !== 'loading') throw new Error('loading сезона должен перебивать error пула: ' + JSON.stringify(seasonLoading));
+
+    const failed = selectSearchProgress(Object.assign({}, state, { poolStatus: 'error', poolAttempt: 3 }));
+    if (failed.stage !== 'error' || failed.attempt !== 3) throw new Error('ожидал stage=error, attempt=3: ' + JSON.stringify(failed));
+});
+runner.test('selectPickerData: empty и error различаются, error несёт retrySeason', () => {
+    const emptyState = Object.assign({}, state, { pool: [], poolStatus: 'ready', picker: { open: true, episode: 99 } });
+    const empty = selectPickerData({ movie: tvMovie }, emptyState, null);
+    if (empty.status !== 'empty') throw new Error('genuinely empty должен давать status=empty: ' + JSON.stringify(empty));
+
+    const errorState = Object.assign({}, state, { pool: [], poolStatus: 'error', picker: { open: true, episode: 99 } });
+    const error = selectPickerData({ movie: tvMovie }, errorState, null);
+    if (error.status !== 'error' || !error.retrySeason) {
+        throw new Error('провалившийся поиск должен давать status=error, retrySeason=true: ' + JSON.stringify(error));
     }
 });
 runner.test('isConfidentMatch — высокий availability даёт уверенный матч', () => {
@@ -225,7 +272,7 @@ runner.test('selectFilterChipData — содержит seasonItems с актив
 runner.test('selectFilterItems/selectEpisodeBadges/selectBusy не бросают', () => {
     if (!Array.isArray(selectFilterItems(state, tvMovie, true))) throw new Error('selectFilterItems');
     const badges = selectEpisodeBadges({ movie: tvMovie }, state);
-    if (typeof badges[7] !== 'string' || !badges[7].length) throw new Error('бейдж серии 7 пуст: ' + JSON.stringify(badges));
+    if (typeof badges[7].text !== 'string' || !badges[7].text.length) throw new Error('бейдж серии 7 пуст: ' + JSON.stringify(badges));
     if (selectBusy({ episodesStatus: 'loading' }) !== true) throw new Error('selectBusy');
     if (selectBusy({ episodesStatus: 'ready' }) !== false) throw new Error('selectBusy ready');
 });

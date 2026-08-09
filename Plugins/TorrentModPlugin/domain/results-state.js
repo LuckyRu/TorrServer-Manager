@@ -29,6 +29,14 @@
             poolGeneration: 0,        // guards whole-work pool fetches (pool/requery)
             searchGeneration: 0,      // guards explicit manual-query searches
 
+            // Cosmetic-only timing/counter data for the search-progress widget (selectSearchProgress,
+            // results-selectors.js) — neither has any gating role, generation counters above already
+            // own staleness. poolStartedAt escalates the head status line's wording past ~15s of a
+            // cold search; poolAttempt is a display-only "попытка N" counter bumped by requery()
+            // when explicitly called as a user-triggered retry (not on a fresh query context).
+            poolStartedAt: null,
+            poolAttempt: 1,
+
             // Data
             episodesCache: null,      // TMDB season episodes (scoped to state.season)
             pool: null,               // ALL torrents for the work, any season — local filtering only
