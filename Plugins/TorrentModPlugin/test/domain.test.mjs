@@ -16,7 +16,7 @@ import { scoreCandidate, applyStateFilters } from '../search/scoring.js';
 import {
     createInitialState, isSeriesWithSeasons, searchQueryText, poolValues, currentSeasonLabel,
     buildFilterItems, activeFilterLabels, candidatesForEpisode, badgeText, isConfidentMatch,
-    publishedText, candidateBadgeText, candidateSubtitleText
+    publishedText, candidateBadgeText, candidateSubtitleText, candidateIdentity
 } from '../domain/results-core.js';
 import {
     selectBusy, selectFilterChipData, selectFilterItems, buildEpisodeTarget,
@@ -148,6 +148,38 @@ runner.test('badgeText/candidateBadgeText/candidateSubtitleText/publishedText н
     if (!candidateBadgeText(single)) throw new Error('candidateBadgeText');
     if (!candidateSubtitleText(single)) throw new Error('candidateSubtitleText');
     if (!publishedText(single)) throw new Error('publishedText');
+});
+runner.test('candidateIdentity: magnet-less раздача стабильна между поисками, magnet приоритетнее', () => {
+    // Реальный баг: NoNaMe Club (и другие magnet-less индексаторы) отдают через Jackett
+    // download-proxy ссылку с закодированным путём, который отличается между двумя отдельными
+    // поисками одной и той же раздачи — link не должен участвовать в identity вообще.
+    const first = { title: single.title, size: single.size, magnet: '', link: 'http://jackett/dl?path=AAA111' };
+    const second = { title: single.title, size: single.size, magnet: '', link: 'http://jackett/dl?path=ZZZ999' };
+    if (candidateIdentity(first) !== candidateIdentity(second)) {
+        throw new Error('identity разъехалась между поисками из-за разного link: ' + candidateIdentity(first) + ' vs ' + candidateIdentity(second));
+    }
+    // Magnet, когда есть, приоритетнее — тоже стабилен и точнее title+size.
+    const withMagnet = { title: single.title, size: single.size, magnet: 'magnet:?xt=urn:btih:abc', link: 'http://jackett/dl?path=AAA111' };
+    if (candidateIdentity(withMagnet) === candidateIdentity(first)) {
+        throw new Error('magnet-кандидат не должен совпадать по identity с magnet-less при том же title+size');
+    }
+});
+runner.test('badgeText предпочитает сохранённый дефолт top-ranked кандидату', () => {
+    const c = candidatesForEpisode(state.pool, target, state);
+    // seasonPack (30 сидов) ранжируется выше single (12 сидов) по умолчанию — без saved
+    // бэйдж должен показывать его.
+    if (badgeText(c).indexOf(String(seasonPack.seeders)) < 0) throw new Error('без saved ожидал top-ranked (seasonPack): ' + badgeText(c));
+    // saved указывает на single — бэйдж обязан показать именно его данные, не top-ranked,
+    // раз клик по серии реально запустит сохранённый дефолт (findSavedDefault), а не лучший
+    // по рейтингу.
+    const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
+    const withSaved = badgeText(c, saved);
+    if (withSaved.indexOf(String(single.seeders)) < 0) throw new Error('с saved ожидал данные single: ' + withSaved);
+});
+runner.test('selectEpisodeBadges прокидывает seasonDefault в каждую серию', () => {
+    const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
+    const badges = selectEpisodeBadges({ movie: tvMovie }, state, saved);
+    if (badges[7].indexOf(String(single.seeders)) < 0) throw new Error('серия 7 должна показывать saved-дефолт: ' + JSON.stringify(badges));
 });
 runner.test('isConfidentMatch — высокий availability даёт уверенный матч', () => {
     const best = { _score: { availabilityScore: 18, value: 30 }, seeders: 12 };

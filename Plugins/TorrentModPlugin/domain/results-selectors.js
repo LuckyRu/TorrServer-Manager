@@ -57,12 +57,16 @@
         return candidatesForEpisode(state.pool, target, state);
     }
 
-    export function selectEpisodeBadges(object, state) {
+    // `seasonDefault` (the persisted per-season default torrent, if any — read by the caller via
+    // Lampa.Storage, since this module stays framework-agnostic) is threaded through to badgeText
+    // so every episode's badge reflects what a click would actually start playing, not just the
+    // top-ranked candidate.
+    export function selectEpisodeBadges(object, state, seasonDefault) {
         if (!state.pool) return {};
         var map = {};
         (state.episodesCache || []).forEach(function (episode) {
             var number = parseInt(episode.episode_number, 10);
-            map[number] = badgeText(selectCandidatesForEpisode(object, state, number));
+            map[number] = badgeText(selectCandidatesForEpisode(object, state, number), seasonDefault);
         });
         return map;
     }

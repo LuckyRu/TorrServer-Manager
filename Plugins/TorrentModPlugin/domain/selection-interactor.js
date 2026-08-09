@@ -75,8 +75,16 @@
             });
         }
 
-        // Saved per-season default torrent, keyed movie.id → season. Only set by an explicit pick in
-        // the side picker — NOT by an auto-click (the user asked for it to be "remembered").
+        // Saved per-season default torrent, keyed movie.id → season. Only set by an explicit pick
+        // — a plain Enter on a candidate row (playCandidate) or a pick from the side picker
+        // (playPickerCandidate) — NEVER by an auto-play (the user asked for it to be "remembered").
+        // Deliberately season-wide, not per-episode: confirmed directly by the user ("Запоминать
+        // выбор на весь сезон - хорошая практика") after a brief detour into a per-episode design —
+        // a season pack is one torrent for the whole season, and remembering it once should cover
+        // every episode, not need re-picking per episode. "As long as it still exists":
+        // findSavedDefault (results-core.js) only returns a saved pick that's still present in the
+        // CURRENT candidates list, so a torrent that drops out of search results naturally stops
+        // being auto-played/marked without any extra expiry logic here.
         function readSeasonDefault(movie, season) {
             try {
                 var all = Lampa.Storage.cache(DEFAULT_KEY, PER_MOVIE_CACHE_MAX, {});
@@ -93,6 +101,14 @@
                 all[movie.id][season] = { id: candidateIdentity(item), title: item.title, size: item.size, savedAt: Date.now() };
                 Lampa.Storage.set(DEFAULT_KEY, all);
             } catch (e) {}
+        }
+
+        // Public read-only accessor for the view — it needs the saved default to show the picker's
+        // initial cursor on the right row and to make the main episode list's badges reflect what a
+        // click would actually play, not just the top-ranked candidate (both this module's own
+        // domain state, `results-core.js`/`results-selectors.js` stay Lampa-agnostic on purpose).
+        function getSeasonDefault(season) {
+            return readSeasonDefault(object.movie, season);
         }
 
         // Remember where the user was (season + episode) so the screen can restore focus there on
@@ -221,8 +237,13 @@
             var candidates = selectCandidatesForEpisode(object, state, episode);
             if (candidates.length) {
                 var saved = readSeasonDefault(object.movie, state.season);
-                var chosen = findSavedDefault(candidates, saved) || candidates[0];
-                log('selection', 'selectEpisode(' + episode + '): запуск — ' + chosen.title + (chosen === saved ? ' (сохранённый дефолт)' : ' (лучший по рейтингу)'));
+                var savedMatch = findSavedDefault(candidates, saved);
+                var chosen = savedMatch || candidates[0];
+                // `chosen === saved` never worked here (found while chasing the persistence bug
+                // below) — `chosen` is a pool candidate, `saved` the persisted {id,title,size}
+                // record itself, always a different object even on a genuine match; the label was
+                // silently always "лучший по рейтингу" regardless of which one actually launched.
+                log('selection', 'selectEpisode(' + episode + '): запуск — ' + chosen.title + (savedMatch ? ' (сохранённый дефолт)' : ' (лучший по рейтингу)'));
                 startDownload(chosen, target);
                 return;
             }
@@ -460,6 +481,7 @@
             closePicker: closePicker,
             playPickerCandidate: playPickerCandidate,
             getSavedEpisode: getSavedEpisode,
+            getSeasonDefault: getSeasonDefault,
             destroy: destroy
         };
     }

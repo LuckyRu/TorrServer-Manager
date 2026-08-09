@@ -1042,6 +1042,71 @@ entry-point/build-config layer above all of them.
     to Season 2 correctly used the existing per-movie last-episode memory (unaffected, pre-existing
     behaviour, not per-season — a separate, not-yet-raised design question, see `readSeasonDefault`'s
     own comment on the picker's "Выбрано" marker being per-season for the same reason).
+  - **The "not-yet-raised design question" above got raised and resolved the same session**: the
+    user asked for the picker's cursor to land directly on the already-selected torrent on open,
+    and for the persisted choice's info to actually show up in the main episode list (not just the
+    picker). A brief detour explored making the persisted default per-EPISODE instead of
+    per-season — reverted within the same exchange on explicit correction ("Посезонный блин" /
+    "Запоминать выбор на весь сезон - хорошая практика"): per-season stays the design, a season
+    pack is one torrent for the whole season and shouldn't need re-picking per episode.
+    Two real fixes landed instead, both season-default-compatible:
+    - **Picker initial cursor** (`ui/results-screen.js`'s `openPickerPanel`) — `selectedNode` is
+      captured while building the item rows (the same `selected` flag that already drove the
+      "Выбрано" marker) and consumed by the picker's own `toggle()`, replacing the previous blind
+      `collectionFocus(false, ...)` (always the first item) with `collectionFocus(selectedNode ||
+      false, ...)`. Verified live: picked a season-pack candidate at index 1 of 23, closed and
+      reopened the panel — cursor landed exactly on index 1, not index 0.
+    - **Episode badge shows what a click would actually play, not just the top-ranked candidate**
+      (`domain/results-core.js`'s `badgeText`, `domain/results-selectors.js`'s
+      `selectEpisodeBadges`) — both gained an optional `saved`/`seasonDefault` parameter,
+      preferred over `matches[0]` via the already-existing `findSavedDefault` (same function
+      `selectEpisode`'s own auto-play decision already uses, so the badge and the actual play
+      choice can no longer visibly disagree). The domain layer stays Lampa-agnostic on purpose —
+      `selection-interactor.js` gained a `getSeasonDefault(season)` read-only accessor (thin
+      wrapper over the already-private `readSeasonDefault`) so the view can pass the value in
+      without either pure module touching `Lampa.Storage` directly. `ui/results-screen.js`'s
+      `render()` widened the badge-recompute condition to also fire on a `stage` change (covers
+      "← К списку серий" rebuilding episode rows with stale badge text) and whenever the picker
+      just closed (`previous.picker.open && !state.picker.open` — a pick there updates the
+      persisted default directly via `Lampa.Storage`, bypassing the reactive store entirely, so
+      `pool`/`episodesCache` alone can never signal it changed; recomputing on every close is cheap
+      and correct even when it was just a cancel). Two new `domain.test.mjs` cases lock in the
+      preference (`badgeText` with vs. without `saved`, `selectEpisodeBadges` threading it through
+      per episode) using the suite's existing season-pack/single fixtures. Verified live: picked a
+      non-top-ranked candidate for episode 1 — its badge (5 сид.) replaced the previous top-ranked
+      one's (4 сид.) immediately, with no unrelated regression to the picker-close focus-restore or
+      back-navigation fixes from earlier the same session.
+  - **The persistence itself turned out to be broken for a whole class of torrents — found while
+    verifying the above two fixes across a real browser reload, not guessed.** The user reported
+    it directly right after the picker/badge fixes shipped: "Персист-то не настоящий. После
+    перезагрузки браузера я снова на первой серии и на автовыборе." Root cause, confirmed live:
+    `candidateIdentity()` (`domain/results-core.js`) preferred `item.link` over `title+size` when
+    `item.magnet` was empty — and at least one real indexer (NoNaMe Club, already flagged
+    elsewhere in this file as magnet-less) returns that link through Jackett's own download-proxy
+    with an encoded `path` query param that **differs between two separate searches for the exact
+    same release** (confirmed by comparing the raw `torrent_mod_default_torrent` localStorage
+    entry against a fresh `/api/torrent-search` pool fetch for the same episode — same title/size,
+    different `path` token). Every magnet-less save was therefore silently unmatchable the moment
+    the pool was re-fetched from scratch, i.e. on every browser reload — `season` persistence
+    looked fine only because `torrent_mod_last_season` is keyed by a plain season NUMBER, immune
+    to this. Fixed by reordering `candidateIdentity` to `magnet || title+'|'+size` — dropping
+    `link` entirely, since a string concatenation of title+size is always truthy and so `link`
+    could never actually be reached anyway (removed as dead code rather than left in). Diverges
+    on purpose from `search/search-backend.js`'s own dedup identity (magnet → link → title+size,
+    unchanged) — dedup only needs consistency **within one response**, where `link` is harmless;
+    a persisted pick needs identity stable **across separate searches over time**, a strictly
+    stronger requirement `link` doesn't meet for this indexer. Also fixed in the same pass, found
+    while reading this exact code path: `selectEpisode`'s own diagnostic log compared `chosen ===
+    saved` to decide whether to print "(сохранённый дефолт)" — `chosen` is always a pool candidate
+    object and `saved` the raw persisted `{id,title,size}` record, never the same reference even on
+    a genuine match, so the label had silently always printed "(лучший по рейтингу)" regardless of
+    which one actually launched; now compares against `findSavedDefault`'s own return value
+    directly. New `domain.test.mjs` case asserts `candidateIdentity` returns the same value for two
+    magnet-less items sharing title+size but different `link`. Verified live end to end, the exact
+    reported scenario: picked a non-top-ranked torrent for episode 1, confirmed the new id in
+    `localStorage` is title+size-based (no embedded apikey/path), did a real page reload (not a
+    simulated re-render), and confirmed both the badge (5 сид., not the top-ranked 4 сид.) and the
+    console log itself ("сохранённый дефолт") reflect the persisted pick post-reload.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

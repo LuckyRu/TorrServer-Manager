@@ -83,6 +83,7 @@
             var st = domain.store.get().picker || {};
             pickerBody.empty();
             picker.show();
+            var selectedNode = null;
             if (st.status === 'loading') {
                 pickerBody.append($('<div class="torrent-mod-picker__empty">Ищем раздачи…</div>'));
             } else if (!st.items || !st.items.length) {
@@ -93,6 +94,7 @@
                 st.items.forEach(function (item) {
                     var selected = !!(selectedId && candidateIdentity(item) === selectedId);
                     var node = torrentRow(item, selected);
+                    if (selected) selectedNode = node;
                     node.on('hover:enter', function () { domain.selection.playPickerCandidate(item, target); });
                     pickerBody.append(node);
                 });
@@ -103,7 +105,13 @@
                     toggle: function () {
                         if (viewDestroyed) return;
                         Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
-                        Lampa.Controller.collectionFocus(false, pickerScroll.render(true));
+                        // Land the cursor directly on the already-selected torrent (the persisted
+                        // season default, if this episode has one and it's still a candidate), not
+                        // the top of the list — asked for directly by the user: reopening the panel
+                        // should show exactly where they left off, not force scrolling past
+                        // everything they already looked at to find it again.
+                        var focusTarget = selectedNode && selectedNode[0] && selectedNode[0].offsetParent ? selectedNode[0] : false;
+                        Lampa.Controller.collectionFocus(focusTarget, pickerScroll.render(true));
                     },
                     left: requestClosePicker,
                     back: requestClosePicker,
@@ -595,8 +603,14 @@
                 else if (state.stage === 'candidates') renderCandidateList(state.candidates.items, state.candidates.target, state.candidates.canReturnToEpisodeList);
                 else if (state.stage === 'message') showMessage(state.message.text, state.message.retry);
             }
-            if (state.pool !== previous.pool || state.episodesCache !== previous.episodesCache) {
-                updateEpisodeBadges(selectEpisodeBadges(object, state));
+            // Also recompute on a stage change (covers "← К списку серий" rebuilding episodeRows
+            // with possibly-stale badge text) and whenever the picker just closed (a pick there —
+            // playPickerCandidate — updates the persisted season default directly via Lampa.Storage,
+            // bypassing the store entirely, so pool/episodesCache alone can't tell us it changed;
+            // recomputing on every close is cheap and correct even when it was just a cancel).
+            if (state.pool !== previous.pool || state.episodesCache !== previous.episodesCache ||
+                state.stage !== previous.stage || (previous.picker.open && !state.picker.open)) {
+                updateEpisodeBadges(selectEpisodeBadges(object, state, domain.selection.getSeasonDefault(state.season)));
             }
             // Same distinction the old code's own comment called out: touching filter.chosen() (the
             // collapsed-chip summary text) when only the pool's *available options* changed, not the

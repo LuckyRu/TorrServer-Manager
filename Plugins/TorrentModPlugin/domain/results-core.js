@@ -162,9 +162,15 @@
         return scored;
     }
 
-    export function badgeText(matches) {
+    // `saved` (the persisted per-season default, if any) is preferred over the top-ranked match
+    // when it's still among the candidates — the badge shows what a click would ACTUALLY start
+    // playing, not just the auto-selection ranking, which used to silently diverge from it the
+    // moment the user picked something else from the side picker (reported directly by the user:
+    // "надо в основном списке серий данные торрента от выбранного к воспроизведению показывать
+    // (сейчас только первый похоже, под автовыбора по сути)").
+    export function badgeText(matches, saved) {
         if (!matches.length) return 'раздачи не найдены';
-        var best = matches[0];
+        var best = findSavedDefault(matches, saved) || matches[0];
         var bits = [];
         if (best.release.resolution) bits.push(best.release.resolution);
         if (best.release.translator || best.release.voiceType) bits.push(best.release.translator || best.release.voiceType);
@@ -222,11 +228,25 @@
         return bits.join(' · ');
     }
 
-    // The stable identity of a torrent candidate — same rule search-backend uses for dedup
-    // (magnet infoHash → link → title+size). Shared so the saved season default can be matched
-    // against current pool entries with the exact same notion of "same release".
+    // The identity of a torrent candidate used to match a PERSISTED pick (the saved season
+    // default) against a freshly re-fetched pool, potentially days later and definitely a
+    // different Jackett query than the one that found it originally — this needs identity that's
+    // stable ACROSS separate searches over time, a stricter requirement than search-backend's own
+    // dedup (magnet → link → title+size), which only needs consistency WITHIN one response and so
+    // can safely prefer `link`. Preferring `link` here could not: confirmed live (reported
+    // directly by the user — a saved default silently stopped auto-playing after a browser
+    // reload, "Персист-то не настоящий... на автовыборе") that at least one real indexer (NoNaMe
+    // Club, already flagged elsewhere in this file as magnet-less) returns a Jackett download-proxy
+    // `link` whose encoded `path` differs between two separate searches for the exact same
+    // release — every magnet-less save was silently unmatchable the moment the pool was re-fetched
+    // from scratch. `title + '|' + size` is what search-backend's OWN dedup already falls back to
+    // when magnet AND link are both absent, and it survives a repeat search unchanged, so it's
+    // promoted ahead of `link` here — magnet stays first (a real content hash, the only source
+    // fully immune to this). No `|| item.link` fallback below it: `title + '|' + size` is a
+    // string concatenation, always truthy even with missing fields, so `link` could never be
+    // reached anyway — dropped rather than left as dead code.
     export function candidateIdentity(item) {
-        return compact(item.magnet || item.link || (item.title + '|' + item.size));
+        return compact(item.magnet || (item.title + '|' + item.size));
     }
 
     // Looks a saved season default (as stored by selection-interactor: {id, title, size}) up in the
