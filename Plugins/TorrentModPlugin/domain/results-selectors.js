@@ -158,14 +158,26 @@
     // and passed in, same convention selectEpisodeBadges already uses.
     export function selectPickerData(object, state, seasonDefault) {
         var episode = state.picker.episode;
+        // MUST check poolLoading (which includes `!state.pool`) BEFORE ever touching the pool —
+        // state.pool is `null` by design until the whole-work search resolves at least once
+        // (results-state.js), and applyStateFilters (search/scoring.js, reached via
+        // selectCandidatesForEpisode → candidatesForEpisode) calls `pool.filter(...)` with no
+        // null-guard of its own. TMDB's episode list (which is what makes an episode row focusable
+        // at all) typically resolves far faster than the Jackett aggregate search (up to ~40s) —
+        // real crash, confirmed live: right-arrow on an episode row before the pool has EVER
+        // resolved threw `TypeError: Cannot read properties of null (reading 'filter')`. Every
+        // other caller of selectCandidatesForEpisode (selectEpisodeBadges, the reactive watcher,
+        // selectEpisode/startMovie/showMoviePool) already checks poolStatus/pool first — this one
+        // didn't, a regression from the reactive-architecture rewrite that dropped openPicker's own
+        // pre-check without replacing it here.
+        var poolLoading = !state.pool || state.poolStatus === 'loading';
+        var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
+        if (poolLoading || seasonLoading) return { status: 'loading', items: [], target: null, selectedId: null };
         var items = selectCandidatesForEpisode(object, state, episode);
         var selectedId = seasonDefault ? seasonDefault.id : null;
         if (items.length) {
             return { status: 'ready', items: items, target: buildEpisodeTarget(object, state, episode), selectedId: selectedId };
         }
-        var poolLoading = !state.pool || state.poolStatus === 'loading';
-        var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
-        if (poolLoading || seasonLoading) return { status: 'loading', items: [], target: null, selectedId: null };
         // Settled with zero candidates — now split the same way row badges already do
         // (selectEpisodeBadges: 'ошибка поиска' vs 'раздачи не найдены'), instead of one identical
         // "Раздач не найдено" for both (product decision, CLAUDE.md consilium: empty and failed are

@@ -1470,6 +1470,35 @@ entry-point/build-config layer above all of them.
       некоторые отвечают медленно, обычно до 40 секунд"` with the spinner prefixed — the intended
       behavior confirmed rendering for real, not just asserted by a unit test. No new console errors
       beyond the same pre-existing unrelated noise documented throughout this file.
+  - **`selectPickerData` crashed on `state.pool === null`** — a real, already-shipped regression from
+    the reactive-architecture rewrite above, caught by the user asking directly whether the state was
+    actually null-safe rather than by a live report. `state.pool` is `null` by design until the
+    whole-work search resolves at least once (`results-state.js`); `selectPickerData` called
+    `selectCandidatesForEpisode` (→ `candidatesForEpisode` → `applyStateFilters`, `search/scoring.js`,
+    which does `pool.filter(...)` with no null-guard of its own) **before** its own `poolLoading`
+    check, unlike every other caller of `selectCandidatesForEpisode` in the codebase
+    (`selectEpisodeBadges`, the reactive watcher, `selectEpisode`/`startMovie`/`showMoviePool`), which
+    all check `poolStatus`/`pool` first. Reachable because TMDB's episode list (what makes an episode
+    row focusable via right-arrow at all) typically resolves far faster than the whole-work Jackett
+    search (up to ~40s) — a user could open a series, see episodes render, and press right-arrow
+    before the pool had ever resolved even once, throwing `TypeError: Cannot read properties of null
+    (reading 'filter')`. Root cause: the old `openPicker()` used to guard this exact case itself
+    (`if (poolStatus==='loading'||'idle') { defer via pendingSelection; return; }`) before ever
+    calling `fillPicker` — the reactive rewrite removed that guard (reasoning the selector would show
+    "loading" naturally) without checking that the selector's OWN internal ordering still protected
+    the pool access it removed the guard for. Confirmed with a standalone reproduction script driving
+    the real `createResultsDomain` before writing the fix, not guessed. Fixed by reordering
+    `selectPickerData` to check `poolLoading`/`seasonLoading` first, matching `selectEpisodeBadges`'s
+    already-correct pattern exactly. Audited every other `state.pool`/`state.episodesCache`/
+    `state.candidates`/`state.message` access in the plugin for the same class of bug while at
+    it — no other unguarded access found; `stage:'candidates'`/`stage:'message'` are always set
+    atomically together with their payload field in the same `store.patch()` call everywhere in the
+    codebase, so those stay safe by construction. New `test/smoke.test.mjs` regression case drives
+    the real domain with `/api/torrent-search` deliberately left unresolved long enough to guarantee
+    `state.pool` is still `null`, then calls `openPicker()` + `selectPickerData` (the exact path the
+    View takes) and asserts no exception. Verified live: pushed a real `torrent_mod` Activity with
+    the search artificially delayed and triggered the content controller's `right()` before it
+    resolved — no crash, only the same pre-existing unrelated console noise.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

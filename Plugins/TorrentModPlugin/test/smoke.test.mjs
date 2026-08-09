@@ -668,4 +668,46 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     }
 });
 
+runner.test('панель, открытая ДО того как пул хоть раз ответил, не падает на null pool', async () => {
+    // Реальный краш, найденный при ревью (не пойман руками): TMDB (список серий) обычно резолвится
+    // намного быстрее агрегатного поиска Jackett (до ~40с) — значит строка серии становится
+    // фокусируемой и доступной для right-arrow ЗАДОЛГО до того, как state.pool перестаёт быть null
+    // (его стартовое значение, results-state.js). selectPickerData звало
+    // selectCandidatesForEpisode (→ applyStateFilters → pool.filter(...)) РАНЬШЕ проверки
+    // poolLoading — TypeError: Cannot read properties of null (reading 'filter'). Не мокаем
+    // /api/torrent-search вообще (искусственно "вечно висящий" ответ), чтобы pool гарантированно
+    // остался null на момент открытия панели.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
+    });
+    // Задержка намного больше окна проверки ниже (30мс), но не настолько огромная, чтобы
+    // болтающийся таймер держал процесс теста надолго после его завершения (мок не отменяется
+    // domain.destroy() — это таймер уровня mock-Reguest, не связанный с generation-guard'ами).
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] }, 200);
+
+    const object = { movie: tvMovie, season: 2 };
+    const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    // Достаточно для TMDB (быстрый), недостаточно для /api/torrent-search (200мс) —
+    // state.pool гарантированно всё ещё null здесь.
+    await new Promise((r) => setTimeout(r, 30));
+    if (domain.store.get().pool !== null) throw new Error('тест сломан: pool уже не null, сценарий не воспроизведён');
+
+    domain.selection.setActiveEpisode(1);
+    let threw = null;
+    try {
+        domain.selection.openPicker();
+        pickerData(domain, object); // именно это (через View) раньше падало
+    } catch (e) {
+        threw = e;
+    }
+    if (threw) throw new Error('открытие панели до ответа пула выбросило исключение: ' + threw.message);
+
+    const picker = pickerData(domain, object);
+    if (picker.status !== 'loading') throw new Error('ожидал status=loading пока pool ещё null, получил ' + JSON.stringify(picker));
+});
+
 await runner.run();
