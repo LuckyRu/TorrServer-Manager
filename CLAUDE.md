@@ -1248,6 +1248,73 @@ entry-point/build-config layer above all of them.
       picker with **no crash** (confirmed by wrapping the call in try/catch and checking for a thrown
       error, not just "the page didn't visibly break"); for a movie, the same failure produced a
       `'Повторить'` row whose click correctly re-searched and recovered to 15 real candidates.
+  - **A second, structurally-identical `RangeError: Maximum call stack size exceeded` crash, reported
+    live the next day after updating to the fix above** ("Обновился. Словил дедлок во время активного
+    поиска дополнительно по сезону") — same `fillPicker ↔ ensureSeasonLoaded` recursive pair, but
+    through a DIFFERENT early-bail branch the previous fix never touched. Root cause, confirmed by
+    reading the post-fix source directly: `ensureSeasonLoaded`'s `status === 'loading'` check (a
+    per-season fetch already in flight from an EARLIER call) still called `onComplete()`
+    synchronously with nothing having changed — and `fillPicker` had no special case for
+    `loadStatus === 'loading'` at all, so reopening the side picker for a DIFFERENT episode of the
+    same still-loading season (close panel → right-arrow on another row, confirmed live in the
+    user's own console log: `openPicker(1)` → `ensureSeasonLoaded` starts a season-1 fetch that takes
+    ~30s against a degraded Jackett → `closePicker()` → `openPicker(6)` 11s later, still loading)
+    fell through to calling `ensureSeasonLoaded` again, which bailed via the SAME synchronous
+    `onComplete()` call — bouncing straight back into `fillPicker`, an unbounded synchronous
+    recursion identical in shape to the first crash, just via the `'loading'` branch instead of
+    `'error'`. While tracing this, found the SAME bail-then-synchronous-`onComplete` shape was ALSO
+    still present, unreported but equally reachable, in two more branches: `ensureSeasonLoaded`'s
+    `!hasSeasons || state.customQuery` bail (reachable from `fillPicker` whenever a customQuery
+    search leaves an episode with zero pool candidates — the picker's own retry-on-callback would
+    hit this on every re-entry, since `customQuery` doesn't change) and its `poolStatus ===
+    'loading'/'idle'` bail (reachable only via a narrow async-gap race — a `requery()` landing
+    between an `ensureSeasonLoaded` call starting and its own `onComplete` firing). Fixed properly
+    instead of patching just the reported branch, since all four bail branches shared one design
+    flaw: **`ensureSeasonLoaded`'s contract let it fire `onComplete()` synchronously with nothing
+    having changed, and both callers' retry shape (`fillPicker`/`selectEpisode`: "call me back and
+    I'll re-check state") assumed a callback always means real news.** Two-part fix:
+    - **`ensureSeasonLoaded` (`domain/episodes-interactor.js`) never fires `onComplete` synchronously
+      again for a not-yet-settled reason.** `status === 'ready'/'error'` still calls back immediately
+      (safe — neither caller retries off a settled answer, they show it). `status === 'loading'` now
+      queues the callback into a new per-instance `pendingSeasonCallbacks[season]` array instead of
+      firing it — every queued callback (there can be several, from multiple picker opens against the
+      same still-loading season) fires once, in order, when the real fetch's own `.then()` resolves
+      and merges the pool. The remaining two bails (`!hasSeasons||customQuery`, `poolStatus` not
+      settled) now do nothing at all — no `onComplete` ever, not even later — since these are
+      permanently-inapplicable-for-this-context conditions with nothing to eventually promise; kept
+      only as a defensive backstop for a future caller that skips its own pre-check (see below), not
+      as the primary mechanism.
+    - **Both real callers now pre-check what `ensureSeasonLoaded` can actually do BEFORE calling
+      it**, instead of relying on it to sort that out via a synchronous bail. `fillPicker`
+      (`domain/selection-interactor.js`) gained an explicit `canLazyLoad = ensureSeasonLoaded &&
+      hasSeasons && !state.customQuery && (poolStatus==='ready'||poolStatus==='error')` guard,
+      applied whenever `loadStatus !== 'loading'` — a structurally-impossible ask now shows
+      "не найдено" directly instead of ever calling `ensureSeasonLoaded` at all. `selectEpisode`'s own
+      lazy-load branch turned out to already be safe without changes — its earlier code already
+      short-circuits both `hasSeasons` (the movie branch returns via `showMoviePool` before ever
+      reaching this code) and `customQuery` (returns via `freshSearch` earlier in the same function)
+      before it can reach its own `ensureSeasonLoaded` call, and `poolStatus` is already guaranteed
+      settled by an even earlier guard in the same function — confirmed by re-reading the full
+      function top to bottom, not assumed from the shared bug class alone.
+    - **Queueing introduced its own resurrection risk, fixed in the same pass**: since a queued
+      callback can now fire well after the user closed the picker (previously it always fired
+      synchronously, before the user could possibly have closed anything yet), `fillPicker`'s
+      retry-callback now checks `store.get().picker.open` before calling itself again — otherwise a
+      slow per-season fetch resolving after the user backed out of the picker entirely would silently
+      reopen it mid-episode-list-browsing.
+    - **Two new `test/smoke.test.mjs` regression cases**, both driving the real `createResultsDomain`
+      composition root with a real (delayed, via the mock `Reguest`'s existing `delay` param) async
+      per-season fetch: one reproduces the EXACT reported sequence (`openPicker(1)` → `closePicker()`
+      → `openPicker(6)` while season 2 is still `'loading'`) and asserts no exception plus the correct
+      final state (episode 6's real candidates, not episode 1's stale "not found" — confirmed the two
+      queued callbacks resolve in the right order, the later one winning); the other asserts a picker
+      closed mid-fetch stays closed once that fetch resolves (locks in the resurrection fix above).
+      All 116 tests (`npm run test:plugin`) pass, including the pre-existing `'error'`-branch
+      regression test from the first crash, unchanged.
+    - Verified live: rebuilt the dev-override bundle (`npm run install:plugin-dev`), refreshed Plugin
+      Hub's cache, confirmed the served bundle contains the new `pendingSeasonCallbacks`/`canLazyLoad`
+      identifiers, loaded the live app in a browser with no new console errors beyond the same
+      pre-existing unrelated noise documented throughout this file.
 - **`AppPaths.cs`** — single source of truth for every on-disk path and port used across the app
   (install dir under `%LocalAppData%\Programs\TorrServer`, state/data/logs under
   `%LocalAppData%\TorrServer`, Jackett's install dir under `%ProgramData%\Jackett`, and the three ports:

@@ -501,4 +501,102 @@ runner.test('крах после провала поиска: открытие �
     if (state.picker.status !== 'error') throw new Error('ожидал picker.status=error, получил ' + state.picker.status);
 });
 
+runner.test('дедлок при переоткрытии панели для другой серии, пока идёт дозагрузка сезона', async () => {
+    // Второй реальный краш пользователя, тот же RangeError, тот же fillPicker↔ensureSeasonLoaded
+    // цикл, но другой триггер: не провал поиска, а закрытие и повторное открытие боковой панели
+    // ДЛЯ ДРУГОЙ СЕРИИ, пока ленивая дозагрузка сезона (запущенная первым открытием) ещё не
+    // завершилась. ensureSeasonLoaded раньше безусловно вызывало onComplete() синхронно, когда
+    // seasonLoads[season] уже 'loading' — тот же класс бага, что и в тесте выше, но в ветке
+    // 'loading', не 'error'. Первый вызов /api/torrent-search (общий пул) резолвится сразу и
+    // пусто; второй (ленивая дозагрузка сезона) — с задержкой 60мс, чтобы успеть закрыть и
+    // переоткрыть панель до его завершения.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }, { episode_number: 6, name: 'Эпизод 6', runtime: 22 }]
+    });
+    let torrentSearchCalls = 0;
+    globalThis.__mockReguest((url) => {
+        if (!url.includes('/api/torrent-search')) return false;
+        torrentSearchCalls++;
+        return torrentSearchCalls === 1;
+    }, { results: [], indexers: [] }, 0);
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E06 1080p WEB-DL', 10, 5, 'cccc')],
+        indexers: []
+    }, 60);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    const afterPool = domain.store.get();
+    if (afterPool.poolStatus !== 'ready') throw new Error('ожидал poolStatus=ready, получил ' + afterPool.poolStatus);
+
+    domain.selection.setActiveEpisode(1);
+    domain.selection.openPicker();
+    if (domain.store.get().seasonLoads[2] !== 'loading') {
+        throw new Error('ожидал seasonLoads[2]=loading сразу после openPicker, получил ' + domain.store.get().seasonLoads[2]);
+    }
+
+    domain.selection.closePicker();
+    // Переоткрытие ДЛЯ ДРУГОЙ серии, пока сезон ещё грузится — раньше здесь падал
+    // RangeError: Maximum call stack size exceeded.
+    domain.selection.setActiveEpisode(6);
+    let threw = null;
+    try {
+        domain.selection.openPicker();
+    } catch (e) {
+        threw = e;
+    }
+    if (threw) throw new Error('openPicker(6) во время дозагрузки сезона выбросил исключение: ' + threw.message);
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    const state = domain.store.get();
+    if (state.seasonLoads[2] !== 'ready') throw new Error('ожидал seasonLoads[2]=ready, получил ' + state.seasonLoads[2]);
+    if (!state.picker.open) throw new Error('ожидал открытую панель');
+    if (state.picker.episode !== 6) throw new Error('ожидал панель для серии 6, получил ' + state.picker.episode);
+    if (state.picker.status !== 'ready' || !state.picker.items.length) {
+        throw new Error('ожидал готовые кандидаты для серии 6, получил status=' + state.picker.status + ' items=' + state.picker.items.length);
+    }
+});
+
+runner.test('панель, закрытая во время дозагрузки сезона, не открывается заново сама по себе', async () => {
+    // Побочный эффект того же фикса (очередь колбэков в ensureSeasonLoaded вместо синхронного
+    // отскока): колбэк fillPicker теперь может сработать заметно позже, уже после того как
+    // пользователь закрыл панель — без явной проверки picker.open это воскресило бы закрытую
+    // панель прямо во время просмотра списка серий.
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
+    });
+    let torrentSearchCalls = 0;
+    globalThis.__mockReguest((url) => {
+        if (!url.includes('/api/torrent-search')) return false;
+        torrentSearchCalls++;
+        return torrentSearchCalls === 1;
+    }, { results: [], indexers: [] }, 0);
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [jackettRaw('Футурама / Futurama S02E01 1080p WEB-DL', 10, 5, 'dddd')],
+        indexers: []
+    }, 60);
+
+    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+
+    domain.selection.setActiveEpisode(1);
+    domain.selection.openPicker();
+    domain.selection.closePicker();
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    const state = domain.store.get();
+    if (state.picker.open) throw new Error('панель не должна была открыться заново сама по себе после закрытия');
+});
+
 await runner.run();

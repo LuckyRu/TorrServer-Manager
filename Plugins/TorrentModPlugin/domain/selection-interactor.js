@@ -342,11 +342,38 @@
                 store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
                 return;
             }
-            if (ensureSeasonLoaded) {
-                ensureSeasonLoaded(state.season, function () { fillPicker(episode); });
-            } else {
-                store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
+            // Only ask for a lazy per-season fetch when it can actually do something: a series
+            // context with no customQuery override (ensureSeasonLoaded's own hasSeasons/customQuery
+            // bail is now a silent no-op with no eventual callback at all — see its own comment),
+            // and a SETTLED whole-work pool — openPicker already defers calling this function at
+            // all while the pool itself is loading/idle; this repeats that same check for the rare
+            // case this runs from ensureSeasonLoaded's own queued callback after a real async gap
+            // (e.g. a requery() landed in between). Any of these NOT holding used to still call
+            // ensureSeasonLoaded anyway, which bailed out with nothing changed and, via this
+            // function's own retry-on-callback shape, bounced straight back here — an unbounded
+            // *synchronous* recursion, crashed live twice (RangeError: Maximum call stack size
+            // exceeded) via two different bail branches. ensureSeasonLoaded is now safe against
+            // that by itself too (see its own comment), but a caller asking for something
+            // structurally impossible has the identical failure mode regardless of how well-behaved
+            // the callee is, so the ask itself is gated here as well — loadStatus 'loading' is the
+            // one case excluded from this gate, since that one DOES resolve on its own (queued).
+            if (loadStatus !== 'loading') {
+                var canLazyLoad = ensureSeasonLoaded && hasSeasons && !state.customQuery &&
+                    (state.poolStatus === 'ready' || state.poolStatus === 'error');
+                if (!canLazyLoad) {
+                    store.patch({ picker: { open: true, episode: episode, items: [], target: null, status: 'error', selectedId: null } });
+                    return;
+                }
             }
+            ensureSeasonLoaded(state.season, function () {
+                // ensureSeasonLoaded now queues this callback (rather than firing it
+                // synchronously) whenever the season is already 'loading' from an earlier call —
+                // see its own comment. That means this callback can resolve well after the user
+                // closed the panel; re-opening it here would resurrect a picker the user no longer
+                // has on screen (found alongside the recursion fix above).
+                if (!store.get().picker.open) return;
+                fillPicker(episode);
+            });
         }
 
         function buildPickerTarget(episode) {

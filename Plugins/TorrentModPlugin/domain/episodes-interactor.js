@@ -35,6 +35,11 @@
         var hasSeasons = options.hasSeasons;
         var isDestroyed = options.isDestroyed;
 
+        // Callbacks queued behind an ALREADY-in-flight per-season fetch (ensureSeasonLoaded called
+        // again for a season whose seasonLoads status is already 'loading'), keyed by season. See
+        // ensureSeasonLoaded's own comment on why these must be queued, not fired synchronously.
+        var pendingSeasonCallbacks = {};
+
         function loadEpisodes() {
             var state = store.get();
             var requestedSeason = state.season;
@@ -174,28 +179,49 @@
         // season is marked ready/error so it is never re-fetched until requery resets the map.
         function ensureSeasonLoaded(season, onComplete) {
             var state = store.get();
-            if (!hasSeasons || state.customQuery) { if (typeof onComplete === 'function') onComplete(); return; }
-            // Only bail for the genuinely NOT-YET-SETTLED states — 'idle'/'loading' — where there's
-            // nothing sensible to check zero-candidates against yet and the caller (openPicker
-            // already defers via schedulePendingRetry while poolStatus is loading/idle) will retry
-            // once it resolves. 'error' is a SETTLED state with a well-defined (empty) pool array,
-            // not a reason to skip a narrower retry — a real, serious bug (not just a UX gap):
-            // bailing out here unconditionally, without ever touching seasonLoads[season], meant
-            // this function's own onComplete callback (always "try the exact same thing again" —
-            // fillPicker/selectEpisode's lazy-load retry) looped back into an identical call with
-            // nothing having changed, a tight *synchronous* recursion with no base case —
-            // confirmed live by the user hitting a real `RangeError: Maximum call stack size
-            // exceeded` crash from opening the side picker right after the whole-work pool search
-            // itself failed (a Jackett 502/timeout on the aggregate all-indexers query). A narrower
-            // single-season query is also a legitimate, independently-useful retry on its own
-            // merits — the aggregate query timing out doesn't guarantee a smaller one will too.
-            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
+            // Both of these are conditions under which this function fundamentally cannot do
+            // anything (no per-season query makes sense without seasons/outside a customQuery
+            // context, or the whole-work pool itself hasn't settled enough yet to know if a
+            // per-season top-up is even needed) — deliberately do NOT call onComplete()
+            // synchronously here (the original behaviour). Both real callers (fillPicker,
+            // selectEpisode's lazy-load branch) treat "onComplete fired" as "something may have
+            // changed, re-check state and retry the same operation" — firing it here with nothing
+            // having changed bounces straight back into an identical call, an unbounded
+            // *synchronous* recursion with no base case. Confirmed live, twice, via two different
+            // bail branches on two separate days: opening the side picker right after the
+            // whole-work pool search failed (that path fell into the 'error' branch below, now
+            // fixed by treating 'error' as settled instead of bailing here), then reopening the
+            // picker for another episode while an earlier per-season fetch was still pending (see
+            // the 'loading' branch below). Both crashed with `RangeError: Maximum call stack size
+            // exceeded`. Callers now pre-check these same conditions themselves before ever calling
+            // this function (see fillPicker's own comment) — these two checks stay here only as a
+            // defensive backstop for any future caller that doesn't, and silence is the only safe
+            // thing to do for a caller that skips its own check: a fake synchronous "done" is what
+            // caused the crash in the first place, and there's nothing correct to promise it either.
+            if (!hasSeasons || state.customQuery) return;
+            if (state.poolStatus === 'loading' || state.poolStatus === 'idle') return;
+            var status = state.seasonLoads && state.seasonLoads[season];
+            if (status === 'ready' || status === 'error') {
                 if (typeof onComplete === 'function') onComplete();
                 return;
             }
-            var status = state.seasonLoads && state.seasonLoads[season];
-            if (status === 'loading' || status === 'ready' || status === 'error') {
-                if (typeof onComplete === 'function') onComplete();
+            if (status === 'loading') {
+                // A fetch for this season is ALREADY running (started by an earlier call, not yet
+                // resolved) — queue this caller's callback instead of firing it synchronously with
+                // nothing having changed. Firing immediately here (the original behaviour) bounced
+                // straight back into the caller's own "retry the same thing" callback
+                // (fillPicker/selectEpisode), which re-enters this exact function with status still
+                // 'loading' — an unbounded *synchronous* recursion, crashed live a second time
+                // (RangeError: Maximum call stack size exceeded) reopening the side picker for
+                // another episode while an earlier openPicker's lazy per-season fetch was still
+                // pending (the first such crash, fixed earlier, was the poolStatus==='error' bail
+                // just above doing the same thing — this is the same bug class via a different
+                // early-bail branch). Every queued callback fires once, in the order queued, when
+                // the real fetch actually resolves below.
+                if (typeof onComplete === 'function') {
+                    pendingSeasonCallbacks[season] = pendingSeasonCallbacks[season] || [];
+                    pendingSeasonCallbacks[season].push(onComplete);
+                }
                 return;
             }
             var generation = state.poolGeneration;
@@ -208,6 +234,10 @@
             searchSeriesTorrents(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
                     log('episodes', 'ensureSeasonLoaded(' + season + ') отброшен как устаревший');
+                    // Same "silently drop" behaviour the primary onComplete already had on
+                    // staleness — a stale generation invalidates whatever these callbacks were
+                    // waiting to react to (e.g. requery() reset the whole pool since they queued).
+                    delete pendingSeasonCallbacks[season];
                     return;
                 }
                 var current = store.get();
@@ -217,6 +247,9 @@
                 log('episodes', 'ensureSeasonLoaded(' + season + ') ' + (response.failed ? 'ошибка' : 'успех') + ', пул после мержа=' + merged.length);
                 store.patch({ pool: merged, seasonLoads: loads2 });
                 if (typeof onComplete === 'function') onComplete();
+                var queued = pendingSeasonCallbacks[season] || [];
+                delete pendingSeasonCallbacks[season];
+                queued.forEach(function (cb) { cb(); });
             });
         }
 
