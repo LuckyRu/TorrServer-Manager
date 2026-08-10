@@ -1,9 +1,3 @@
-// ---------- movie player adapter ----------
-//
-// Movie playback has no season/episode metadata and no episode playlist. Keep that contract explicit
-// instead of passing a series-shaped `{season: 0, episode: 0}` object into Lampa.Player.
-//
-// URLs and audio metadata are injected by smart-preload.js, the one place that owns GST preflight.
 function parseMovieFile(file, files, movie) {
     try {
         return Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }) || {};

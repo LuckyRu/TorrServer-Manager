@@ -1,9 +1,3 @@
-// ---------- domain/search unit tests (npm run test:plugin) ----------
-//
-// Calls every non-UI function of the plugin (query-building, results-core, results-selectors,
-// scoring, metadata, season-picker) with real-shaped data under mocked browser globals. The main
-// value: an undefined identifier (like the buildSeasonItems ReferenceError that crashed the real
-// screen) throws here, in CI/on the dev machine, instead of at runtime on the TV.
 import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { parseRelease } from '../search/release-parsing.js';
@@ -111,17 +105,6 @@ runner.test('baseTitles возвращает оба названия', () => {
     if (t.indexOf('Футурама') < 0 || t.indexOf('Futurama') < 0) throw new Error(JSON.stringify(t));
 });
 runner.test('baseTitles/defaultSearchName с englishTitle: используется вместо native-script original для азиатского тайтла', () => {
-    // original_title для азиатского произведения — язык оригинала (тут условно кириллица как
-    // заглушка для "не-английского нечитаемого на русских трекерах названия"), а englishTitle —
-    // отдельный TMDB en-US lookup (metadata/tmdb.js fetchEnglishTitle). Требование пользователя
-    // напрямую: "используя язык оригинала на русских торрентах это пиздец. Надо использовать
-    // английский перевод из TMDB для поиска."
-    // original_title in a script compact() doesn't tokenize at all (only a-z/а-я/0-9 — see
-    // shared/utils.js) compacts to an empty string, and unique() (shared/utils.js) drops any
-    // candidate with an empty dedup key — already true before this change, just never surfaced:
-    // a Japanese-script original_title was ALREADY useless for search/matching (an empty query,
-    // an empty match key), so dropping it outright is correct, not a regression. englishTitle is
-    // exactly what makes this show searchable/matchable at all.
     const asianMovie = { id: 999, name: 'Демон-истребитель', original_name: '鬼滅の刃', title: 'Демон-истребитель', original_title: '鬼滅の刃' };
     const withEnglish = baseTitles(asianMovie, 'Demon Slayer');
     if (withEnglish.indexOf('Demon Slayer') < 0) throw new Error('englishTitle отсутствует в baseTitles: ' + JSON.stringify(withEnglish));
@@ -130,8 +113,6 @@ runner.test('baseTitles/defaultSearchName с englishTitle: использует�
     const name = defaultSearchName(asianMovie, 'Demon Slayer');
     if (name !== 'Demon Slayer') throw new Error('defaultSearchName должен предпочесть englishTitle: ' + name);
 
-    // Западный тайтл: englishTitle совпадает с original_title — не должно давать лишний
-    // дублирующий вариант (unique() уже дедуплицирует по compact()).
     const westernWithEnglish = baseTitles(tvMovie, 'Futurama');
     if (westernWithEnglish.length !== 2) throw new Error('дубликат original_title/englishTitle не должен добавлять третий вариант: ' + JSON.stringify(westernWithEnglish));
 });
@@ -179,9 +160,6 @@ runner.test('badgeText/candidateBadgeText/candidateSubtitleText/publishedText н
     if (!publishedText(single)) throw new Error('publishedText');
 });
 runner.test('candidateIdentity: magnet-less раздача стабильна между поисками, magnet приоритетнее', () => {
-    // Реальный баг: NoNaMe Club (и другие magnet-less индексаторы) отдают через Jackett
-    // download-proxy ссылку с закодированным путём, который отличается между двумя отдельными
-    // поисками одной и той же раздачи — link не должен участвовать в identity вообще.
     const first = { title: single.title, size: single.size, magnet: '', link: 'http://jackett/dl?path=AAA111' };
     const second = { title: single.title, size: single.size, magnet: '', link: 'http://jackett/dl?path=ZZZ999' };
     if (candidateIdentity(first) !== candidateIdentity(second)) {
@@ -195,12 +173,7 @@ runner.test('candidateIdentity: magnet-less раздача стабильна м
 });
 runner.test('badgeText предпочитает сохранённый дефолт top-ranked кандидату', () => {
     const c = candidatesForEpisode(state.pool, target, state);
-    // seasonPack (30 сидов) ранжируется выше single (12 сидов) по умолчанию — без saved
-    // бэйдж должен показывать его.
     if (badgeText(c).indexOf(String(seasonPack.seeders)) < 0) throw new Error('без saved ожидал top-ranked (seasonPack): ' + badgeText(c));
-    // saved указывает на single — бэйдж обязан показать именно его данные, не top-ranked,
-    // раз клик по серии реально запустит сохранённый дефолт (findSavedDefault), а не лучший
-    // по рейтингу.
     const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
     const withSaved = badgeText(c, saved);
     if (withSaved.indexOf(String(single.seeders)) < 0) throw new Error('с saved ожидал данные single: ' + withSaved);
@@ -211,21 +184,6 @@ runner.test('selectEpisodeBadges прокидывает seasonDefault в каж�
     if (badges[7].text.indexOf(String(single.seeders)) < 0) throw new Error('серия 7 должна показывать saved-дефолт: ' + JSON.stringify(badges));
 });
 runner.test('selectEpisodeBadges: "поиск…" вместо пустой строки, пока пул/сезон грузятся', () => {
-    // Раньше пустой pool (или poolStatus:'loading') давал ПУСТОЙ бейдж — неотличимо от
-    // "ничего не искали" и "искали и не нашли". Первый холодный поиск против всех трекеров
-    // Jackett может идти ~40с — на это время бейдж обязан явно сказать "поиск…".
-    //
-    // state.pool is now STRUCTURALLY always an array (results-state.js) — the pool search is
-    // progressive/parallel-per-indexer, so "not settled yet" and "genuinely empty" are both
-    // representable as `[]`, distinguished by poolStatus alone. There is no longer a `pool:
-    // null` case to cover here — candidatesForEpisode/applyStateFilters assume an array
-    // unconditionally now, by construction, not by a defensive check a test needs to exercise.
-    //
-    // Candidates are now checked FIRST (before loading/error — see this selector's own header
-    // comment): the base `state` fixture's pool already has real matches for episode 7, so these
-    // two loading sub-cases must ALSO clear `pool` to actually exercise "not settled, nothing yet"
-    // rather than "settled loading flag stayed on but data already arrived" (which correctly shows
-    // the real data, not a loading placeholder — that's the whole point of the progressive design).
     const loadingByStatus = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading', pool: [] }));
     if (loadingByStatus[7].text !== 'поиск…' || !loadingByStatus[7].loading) {
         throw new Error('poolStatus=loading должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingByStatus));
@@ -236,16 +194,11 @@ runner.test('selectEpisodeBadges: "поиск…" вместо пустой ст
         throw new Error('seasonLoads[season]=loading должен давать "поиск…" (loading:true): ' + JSON.stringify(loadingBySeason));
     }
 
-    // Пул реально готов и пуст (а не всё ещё грузится) — должно остаться настоящее
-    // "раздачи не найдены" от badgeText, не "поиск…", и loading:false.
     const genuinelyEmpty = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { pool: [] }));
     if (genuinelyEmpty[7].text !== 'раздачи не найдены' || genuinelyEmpty[7].loading) {
         throw new Error('пустой готовый пул должен давать "раздачи не найдены" (loading:false): ' + JSON.stringify(genuinelyEmpty));
     }
 
-    // Обратный случай — данные УЖЕ пришли (быстрый трекер ответил), а poolStatus всё ещё
-    // 'loading' (другие трекеры не ответили) — бейдж обязан показать реальные данные, а не
-    // "поиск…", иначе прогрессивный поиск ничего не выигрывает у пользователя визуально.
     const arrivedWhileStillLoading = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading' }));
     if (arrivedWhileStillLoading[7].loading || arrivedWhileStillLoading[7].text === 'поиск…') {
         throw new Error('данные для серии, уже пришедшие от быстрого трекера, не должны прятаться за "поиск…": ' + JSON.stringify(arrivedWhileStillLoading));
@@ -280,9 +233,6 @@ runner.test('selectSearchProgress: loading/error/idle, эскалация фор
         throw new Error('эскалированный текст статуса не подтянулся');
     }
 
-    // Сезон, у которого своя ленивая дозагрузка сейчас грузится — тоже 'loading', даже если сам
-    // пул уже осел (loading побеждает error/idle — «жив ли поиск», а не «какая именно из трёх
-    // независимых операций сейчас идёт»).
     const seasonLoading = selectSearchProgress(Object.assign({}, state, { poolStatus: 'error', seasonLoads: { 2: 'loading' } }));
     if (seasonLoading.stage !== 'loading') throw new Error('loading сезона должен перебивать error пула: ' + JSON.stringify(seasonLoading));
 
@@ -302,9 +252,6 @@ runner.test('selectSearchProgress/selectStatusText: стадия retrying с ч�
     }));
     if (text.indexOf('повтор через') < 0) throw new Error('ожидал честный текст про авто-повтор, получил: ' + text);
 
-    // Момент авто-повтора уже прошёл (таймер вот-вот сработает по-настоящему) — это уже не
-    // "retrying", а обычный "error" (не должно вечно висеть в retrying, если реальный вызов почему-то
-    // задержался).
     const overdue = selectSearchProgress(Object.assign({}, state, {
         poolStatus: 'error', poolAttempt: 2, poolAutoRetryAt: Date.now() - 10
     }));
@@ -322,10 +269,6 @@ runner.test('selectPickerData: empty и error различаются, error не
     }
 });
 runner.test('selectPoolIndexers: pending по имени, ok/error, reportedAt проходит без фильтрации по времени', () => {
-    // Домен/селектор больше не решают, когда прятать успешный чип — это презентационная политика
-    // View (ui/results-screen.js's TRACKER_SUCCESS_HIDE_MS + собственное планирование), не факт из
-    // стора. selectPoolIndexers всегда отдаёт все трекеры, включая давно ответившие — View сам
-    // решает, что с ними делать дальше.
     const allIndexers = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }];
     const longAgo = Date.now() - 60000;
     const s = Object.assign({}, state, {
@@ -384,12 +327,6 @@ runner.test('scoreCandidate: гейт пропускает правильный 
     if (wrong.passes) throw new Error('раздача S02E07 прошла гейт для S03E07');
 });
 runner.test('titleSimilarity (через гейт): отсеивает шум для однословной цели "The Boys", реальные совпадения проходят', () => {
-    // Живой репорт пользователя: поиск "Пацаны"/"The Boys" был крайне шумным — старый scattered
-    // bag-of-words гейт считал "the" полноценным сигналом совпадения (входит почти в любой
-    // английский тайтл), а после его исключения оставалось только "boys" — слишком частое слово
-    // само по себе (Pet Shop Boys, The Beach Boys, The Hardy Boys, Monster Boy, Lost Boys...),
-    // чтобы что-либо различить. Живая проверка через реальный /api/torrent-search дала 11 из 12
-    // руками отобранных заведомо левых тайтлов, проходящих старый гейт — см. CLAUDE.md.
     const boysMovie = {
         id: 76479, name: 'Пацаны', original_name: 'The Boys', title: 'Пацаны', original_title: 'The Boys',
         first_air_date: '2019-07-25', number_of_seasons: 5
@@ -449,9 +386,6 @@ runner.test('fetchEnglishTitle: TMDB en-US lookup, ok(\'\') (не error) при 
         throw new Error('ожидал английское название сериала: ' + JSON.stringify(result));
     }
 
-    // Best-effort фича — сбой сети не должен всплывать как error, только как пустая строка,
-    // чтобы вызывающий код тихо продолжил работать с original_title (см. metadata/tmdb.js's
-    // own comment on fetchEnglishTitle).
     globalThis.__clearReguest();
     const failed = await fetchEnglishTitle({ id: 778 }, MODE_MOVIE);
     if (!failed.ok || failed.value !== '') throw new Error('при сбое сети ожидал ok(\'\'), не error: ' + JSON.stringify(failed));
@@ -526,15 +460,6 @@ runner.test('выбор файла: сериал сохраняет episode-awar
 });
 
 runner.test('createSeriesResultsViewModel/createMovieResultsViewModel forward domain.scope', () => {
-    // Both files are 22-line pass-throughs to createResultsDomain (CLAUDE.md) that explicitly
-    // re-list which fields to expose to the View rather than spreading the whole domain object —
-    // results-domain.js added a `scope` field for the shared lifecycle work, and both wrappers'
-    // own field lists were never updated to forward it. Every other test in this suite constructs
-    // via createResultsDomain directly, bypassing these wrappers entirely, so nothing caught the
-    // gap until it threw live in the browser: `TypeError: Cannot read properties of undefined
-    // (reading 'subscribe')` inside ui/results-screen.js's `domain.scope.subscribe(...)` call,
-    // silently swapped to Lampa's nocomponent empty-state screen by Component.create's own
-    // try/catch (see CLAUDE.md) instead of showing any visible error.
     const seriesVm = createSeriesResultsViewModel({ object: { movie: tvMovie, season: 2 }, movie: tvMovie });
     if (!seriesVm.scope || typeof seriesVm.scope.subscribe !== 'function') {
         throw new Error('createSeriesResultsViewModel не прокинул рабочий scope: ' + JSON.stringify(seriesVm.scope));

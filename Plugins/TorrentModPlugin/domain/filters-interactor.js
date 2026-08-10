@@ -1,16 +1,3 @@
-    // ---------- domain: filters interactor ----------
-    //
-    // Deliberately separate from episodes/selection: these are synchronous, no network call, no
-    // staleness/generation concern at all — a genuinely different *shape* of process. Grouping them
-    // with the async interactors would dilute that distinction rather than clarify it.
-    //
-    // Two-tier persistence, same shape Online Mod uses for its own balancer choice
-    // (Storage.get('online_balanser', ...) + Storage.cache('online_last_balanser', 200, {}),
-    // confirmed live in vendor/lampa-source/plugins/online/component.js): a global default plus a
-    // per-movie override cache that takes priority when present. Storage.cache(name, max, empty)
-    // only *reads* (and prunes down to `max` entries if over) — confirmed against the real source,
-    // core/storage/storage.js — it does not auto-persist further mutations, so every write still
-    // needs its own explicit Storage.set() call, same as Online Mod's own read-mutate-set sequence.
     import { SEASON_CACHE_KEY } from '../shared/state.js';
 
     var VOICE_DEFAULT_KEY = 'torrent_mod_voice';
@@ -52,9 +39,6 @@
         var store = options.store;
         var movie = options.movie;
 
-        // "Reset" is an explicit choice too, same as picking a value — persisting 'any' here is
-        // what makes reset actually *stick* next time this movie's screen opens, instead of the
-        // per-movie memory silently overriding it right back on the next visit.
         function resetFilters() {
             rememberVoice(movie, 'any');
             rememberQuality(movie, 'any');
@@ -85,8 +69,6 @@
         };
     }
 
-    // Exported separately (not part of the interactor's own returned API) since it has to run once
-    // at composition time, before the store's first subscriber attaches — see results-domain.js.
     export function applyPersistedPreferences(store, movie) {
         try {
             var state = store.get();

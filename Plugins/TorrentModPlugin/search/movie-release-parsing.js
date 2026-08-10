@@ -1,7 +1,3 @@
-// ---------- movie release parsing ----------
-//
-// Movie search must not expose series-only season/episode signals to the movie selector. The lexical
-// parser remains shared, while this adapter defines the movie contract explicitly.
 import { parseRelease } from './release-parsing.js';
 
 export function parseMovieRelease(title) {

@@ -1,13 +1,3 @@
-// ---------- parsing tests (npm run test:plugin) ----------
-//
-// Node harness for the pure parsing functions (search/release-parsing.js). The plugin sources are
-// real ES modules in .js files without a package.json "type" — Node 22+ auto-detects the module
-// syntax, so no bundling step is needed; run from the repo root:  node Plugins/TorrentModPlugin/test/parsing.test.mjs
-//
-// Fixtures (test/fixtures/*.json) were collected live from this project's own Jackett instance
-// (RuTracker/NoNaMe/BigFANGroup/MegaPeer/Anilibria) in 2026-08 — one set per use case: fresh
-// movies, decade-top movies, classic movies, series, anime. Only Russian. See
-// docs/system-design/torrent-mod-unified-pool.md (Этап 0).
 import { parseSignals, parseRelease } from '../search/release-parsing.js';
 import fs from 'node:fs';
 import path from 'node:path';

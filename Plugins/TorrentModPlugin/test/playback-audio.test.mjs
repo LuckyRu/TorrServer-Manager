@@ -69,9 +69,6 @@ runner.test('GST preflight строит единственный GST URL и пе
     globalThis.__clearStorage();
     globalThis.__resetPlaybackMock();
     const nativeStream = Lampa.Torserver.stream;
-    // A global Lampa `torrserver_gts` setting makes this method return a GST master URL. The
-    // plugin must not call it for cache preload, otherwise it creates an audio=0 GST task before
-    // the probe chooses the actual track.
     Lampa.Torserver.stream = () => { throw new Error('cache preload must not call Torserver.stream'); };
     try {
         startDownload(candidate(), target());

@@ -1,7 +1,3 @@
-// ---------- movie query building ----------
-//
-// A movie is searched as one whole work. It never gets season/episode suffixes, even when an
-// accidental `season` field is present on the Lampa object.
 import { defaultSearchName } from './query-building.js';
 import { compact, unique } from '../shared/utils.js';
 

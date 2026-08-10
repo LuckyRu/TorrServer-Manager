@@ -35,8 +35,6 @@
         });
     }
 
-    // Lampa.Utils has no HTML-escaping helper (confirmed live against a real Lampa instance —
-    // Lampa.Utils.escape does not exist there), so this is our own.
     export function escapeHtml(text) {
         return String(text == null ? '' : text)
             .replace(/&/g, '&amp;')
@@ -51,10 +49,6 @@
         else console.log('Torrent Mod:', message);
     }
 
-    // Behind the `torrent_mod_debug` setting (off by default). Prints a table of every scored
-    // candidate for a search — raw title, everything parseRelease() extracted from it, and the
-    // three score components — so parsing/scoring quality on real raздачи (especially season
-    // packs with inconsistent naming) can be checked directly in devtools without guessing.
     export function debugLogCandidates(candidates, target) {
         try {
             var rows = candidates.map(function (item) {

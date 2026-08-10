@@ -1,7 +1,3 @@
-// ---------- shared/core unit tests (npm run test:plugin) ----------
-//
-// Pure functions, no Lampa globals needed — unlike domain.test.mjs/smoke.test.mjs, this file does
-// not import helpers/mock-lampa.mjs.
 import { createRunner } from './helpers/test-runner.mjs';
 import { ok, err } from '../shared/core/result.js';
 import { isCurrentGeneration } from '../shared/core/generation-guard.js';

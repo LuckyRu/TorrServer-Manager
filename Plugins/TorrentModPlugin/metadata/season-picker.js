@@ -1,9 +1,6 @@
     // ---------- season/episode picker (reused pattern from Smart TS) ----------
     import { canonicalTimeline, scanProgress, getSeasonMeta } from './tmdb.js';
 
-    // Builds the season picker list shown inline in TorrentModComponent's toolbar (the slot
-    // Online Mod uses for its balancer picker) — no separate pre-screen anymore, episode-level
-    // choice happens naturally when the user opens a multi-file torrent's file list.
     export function buildSeasonItems(movie, currentSeason) {
         var continueAt = scanProgress(movie);
         return getSeasonMeta(movie).map(function (meta) {

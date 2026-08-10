@@ -1,13 +1,3 @@
-// ---------- E2E (headless Chromium via Playwright) — npm run test:e2e ----------
-//
-// Loads the REAL hosted Lampa app from a running TorrServerManager (PluginHub on :8095), opens the
-// Futurama TV card, clicks the Torrent Mod button and asserts the episodes screen actually renders
-// and no runtime errors (ReferenceError/TypeError/nocomponent swap) appear in the console.
-//
-// The only mocked request is /api/torrent-search (so the test doesn't depend on live Jackett);
-// everything else (TMDB via the proxy, Lampa boot) is real. Requires: a running manager on :8095
-// (or TORRENT_MOD_E2E_URL override) and the Playwright chromium browser (npx playwright install
-// chromium). Not part of `npm run test:plugin` for that reason.
 import { chromium } from 'playwright';
 
 const BASE = process.env.TORRENT_MOD_E2E_URL || 'http://192.168.10.108:8095';
@@ -38,19 +28,11 @@ page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg
 page.on('pageerror', (err) => consoleErrors.push('PAGEERROR: ' + err.message));
 
 try {
-    // Fresh headless profile has no Lampa settings: skip the first-run language picker and register
-    // our own plugin source (the same thing the user does in Настройки → Расширения) BEFORE Lampa
-    // boots, so the plugin actually loads.
     await page.addInitScript((base) => {
         localStorage.setItem('language', 'ru');
         localStorage.setItem('plugins', JSON.stringify([{ url: base + '/lampa.js', status: true }]));
     }, BASE);
 
-    // Two-step parallel-per-indexer protocol (PluginHub.cs /api/torrent-search/{start,poll,cancel} —
-    // replaced the old single blocking /api/torrent-search call). A single fixed jobId is fine here:
-    // every /start this page ever issues gets the same immediate one-shot /poll answer, which is all
-    // this test needs (it doesn't exercise progressive multi-tick arrival, that's covered by the
-    // Node-side smoke tests' mock-Reguest shim instead).
     await page.route('**/api/torrent-search/start*', (route) => route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ jobId: 'e2e-job', totalIndexers: 1, indexers: [{ id: 'mock', name: 'mock' }] })
@@ -68,8 +50,6 @@ try {
     await page.goto(CARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     console.log('E2E: жду кнопку Torrent Mod на карточке…');
-    // visible is not required: Lampa keeps .full-start__buttons hidden until the card fully
-    // renders, but the plugin listens to 'hover:enter' which we dispatch ourselves.
     await page.waitForSelector('.view--torrent-mod', { state: 'attached', timeout: 60000 });
     await page.locator('.view--torrent-mod').dispatchEvent('hover:enter');
 
@@ -84,8 +64,6 @@ try {
     if (rows === 0) throw new Error('экран серий пуст — вероятно nocomponent');
     if (hasStatus === 0) throw new Error('нет статус-строки');
 
-    // клик по серии: с мок-кандидатами с высоким availability это уходит в автоплей (overlay),
-    // с низким — в список кандидатов; главное, что путь hover:enter → selectEpisode не падает
     await page.locator('.torrent-mod__list .torrent-mod-row').first().dispatchEvent('hover:enter');
     await page.waitForTimeout(2000);
 

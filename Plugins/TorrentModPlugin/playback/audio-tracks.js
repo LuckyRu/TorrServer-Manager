@@ -1,8 +1,3 @@
-// ---------- GST audio track metadata and preference matching ----------
-//
-// TorrServer's /gst/:hash/probe response is the only authoritative mapping between a media file
-// and the `audio=N` parameter accepted by its HLS endpoint. Keep parsing and preference matching
-// pure: the player/session layer owns network requests and Lampa callbacks.
 
 function value(raw, upper, lower) {
     if (!raw) return undefined;
@@ -16,8 +11,6 @@ export function normalizeTrackName(value) {
 
 function trackLabel(track, position) {
     if (track.title) return track.title;
-    // Lampa already renders `language` as a localized name. Repeating its raw code as label would
-    // produce `Английский · ... · EN`.
     if (track.language) return '';
     return 'Дорожка ' + (position + 1);
 }
@@ -28,16 +21,10 @@ function cleanTitle(title, language) {
     return result;
 }
 
-// GstDiscoverer may return the whole caps string in Codec, for example
-// `AC3, framed=(boolean)true, rate=(int)48000, channels=(int)6`. Lampa expects only a codec name
-// and formats channels separately; passing caps through makes every implementation detail visible
-// in the track picker. Keep the media type/name before the first caps separator.
 function cleanCodec(value) {
     return String(value || '').split(/[;,]/)[0].trim();
 }
 
-// Accept both Go's default JSON field names (`Tracks`, `Index`) and camelCase. The latter keeps
-// this code compatible with a future API that adds explicit JSON tags.
 export function normalizeAudioTracks(probe) {
     var source = (probe && (probe.Tracks || probe.tracks)) || [];
     var result = [];

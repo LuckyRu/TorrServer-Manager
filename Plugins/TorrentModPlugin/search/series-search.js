@@ -8,8 +8,6 @@ export function searchSeriesTorrents(target) {
     return searchTorrentMod(Object.assign({}, target, { mode: MODE_SERIES }), parseSeriesRelease, buildSeriesQueries);
 }
 
-// Progressive (per-indexer, as they answer) variant for the whole-work pool search — see
-// search-backend.js's own searchTorrentModProgressive for the full contract.
 export function searchSeriesTorrentsProgressive(target, onIndexerResult, onDone, scope, onIndexerList) {
     return searchTorrentModProgressive(Object.assign({}, target, { mode: MODE_SERIES }), parseSeriesRelease, buildSeriesQueries, onIndexerResult, onDone, scope, onIndexerList);
 }

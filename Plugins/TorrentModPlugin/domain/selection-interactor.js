@@ -34,9 +34,6 @@
         // Kept alive while the pool grows so a fast tracker's results can render before the whole job settles.
         var moviePresentation = null;
 
-        // ---------- reactive watcher: replaces the old callback-threading pattern ----------
-        // ensureSeasonLoaded only writes state; this watcher reacts to it — see
-        // docs/system-design/torrent-mod-domain-architecture.md for the generation-guard rationale.
         scope.subscribe(store, function (state, previous) {
             if (isDestroyed()) return;
             // ensureSeasonLoaded no-ops once already loading/settled, safe to call unconditionally.
@@ -346,31 +343,18 @@
             moviePresentation = null;
             store.patch({ customQuery: value, searchText: value, searchGeneration: current.searchGeneration + 1, searchStatus: 'idle' });
             if (hasSeasons) {
-                // Stay on the episode list (it's TMDB data, independent of the query) and just
-                // re-fetch the whole-work pool under the new name — the row badges then reflect it.
                 var state = store.get();
                 if (state.episodesCache) store.patch({ stage: 'episodes', statusText: '', searchStatus: 'idle' });
                 if (requery) requery();
             } else {
-                // Movie: no episode list, the candidate list IS the primary content — re-fetch the
-                // pool under the new name, then show the local candidate pick (picker-only: no
-                // auto-play while the user is actively searching). showMoviePool reads the pool
-                // requery() just populated directly — it must NOT go through selectEpisode, whose
-                // customQuery branch would fire a second, identical network search on top of it.
                 if (requery) {
                     requery();
-                    // requery() synchronously resets the pool and starts its progressive job;
-                    // register the presentation intent immediately so the first indexer response
-                    // can render, instead of attaching a callback that fires only on final onDone.
                     showMoviePool(true);
                 }
             }
         }
 
         function playCandidate(item, target) {
-            // Picking a torrent from a list is an explicit user choice — persist it as the default
-            // for this season (0 for movies), so the next entry auto-plays it (found by the architect:
-            // movie picks from the full list were never remembered before).
             log('selection', 'playCandidate: ' + item.title + ' (сезон ' + (target.season || 0) + ')');
             moviePresentation = null;
             pendingSelection = null;

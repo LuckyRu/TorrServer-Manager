@@ -1,9 +1,3 @@
-// ---------- domain flow smoke test (npm run test:plugin) ----------
-//
-// Drives the real composition root (createResultsDomain) with mocked browser globals and mocked
-// network (TMDB season fetch + /api/torrent-search): start → pool load → season switch → filters →
-// episode click → manual query. Catches the same class of runtime ReferenceErrors as domain.test.mjs,
-// but through the async interactor chains instead of isolated pure calls.
 import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { flushMicrotasks } from './helpers/mock-lampa.mjs';
@@ -19,11 +13,6 @@ const tvMovie = {
     first_air_date: '1999-03-28', number_of_seasons: 10,
     seasons: [{ season_number: 1, episode_count: 13 }, { season_number: 2, episode_count: 19 }, { season_number: 3, episode_count: 22 }]
 };
-// Real TMDB title for the 2024 film — matters now that titleSimilarity (search/scoring.js)
-// requires a candidate's own clean title segment to have the SAME WORD COUNT as the target, not
-// just contain its words somewhere: a stub title of plain "Дюна"/"Dune" (missing "Часть
-// вторая"/"Part Two") used to still match "Дюна: Часть вторая / Dune: Part Two..." raw titles
-// under the old scattered bag-of-words check, papering over this fixture being inaccurate.
 const movie = { id: 1, title: 'Дюна: Часть вторая', original_title: 'Dune: Part Two', release_date: '2024-02-01' };
 
 function jackettRaw(title, seeders, peers, hash) {
@@ -48,8 +37,6 @@ function mappedCandidate(title, hash, mode) {
     };
 }
 
-// The side picker's own items/status/target/selectedId are no longer stored (state.picker only
-// carries open/episode) — selectPickerData derives them fresh, same as the real View does.
 function pickerData(domain, object) {
     const state = domain.store.get();
     return selectPickerData(object, state, domain.selection.getSeasonDefault(state.season));
@@ -81,14 +68,10 @@ runner.test('сериал: start → пул → смена сезона → фи
     if (state.poolStatus !== 'ready') throw new Error('пул не загрузился: ' + state.poolStatus);
     if (!state.pool || state.pool.length !== 2) throw new Error('ожидал 2 раздачи в пуле, получил ' + (state.pool || []).length);
     if (!state.episodesCache || state.episodesCache.length !== 2) throw new Error('серии не загрузились');
-    // /start's own indexer list (mock-Reguest synthesizes one "mock" tracker) реально доходит до
-    // стора — это то, что позволяет виджету показывать спиннер по имени трекера, а не только счётчик.
     if (!state.poolAllIndexers || state.poolAllIndexers.length !== 1 || state.poolAllIndexers[0].id !== 'mock') {
         throw new Error('poolAllIndexers не заполнился из /start: ' + JSON.stringify(state.poolAllIndexers));
     }
 
-    // смена сезона — локально, пул не перезагружается (тот же объект) и НЕ отправляется новый
-    // torrent-search запрос (только TMDB season)
     const poolBefore = state.pool;
     const searchCallsBefore = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
     domain.episodes.setSeason(3);
@@ -132,8 +115,6 @@ runner.test('сериал: кандидат из частичного пула �
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
     });
-    // Держим реальный progressive job открытым; готовый ответ быстрого трекера моделируется тем
-    // же store.patch, который loadAllTorrents делает в onIndexerResult.
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] }, 200);
 
     const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
@@ -308,8 +289,6 @@ runner.test('ленивая дозагрузка сезона: пустой се
         results: [jackettRaw('Футурама / Futurama S07E01 1080p WEB-DL', 5, 2, 'aaaa')],
         indexers: []
     });
-    // дозагрузка сезона 2 — запросы «Имя S02» и «Имя 2 сезон»; ответ содержит и новую раздачу,
-    // и дубль уже имеющейся (S07E01) — мерж не должен задвоить
     globalThis.__mockReguest((url) => url.includes('torrent-search') && /(S02|сезон)/i.test(decodeURIComponent(url)), {
         results: [
             jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'bbbb'),
@@ -395,8 +374,6 @@ runner.test('дозагрузка: смена сезона до ответа н�
     domain.start();
     await new Promise((r) => setTimeout(r, 100)); // пул готов (пустой)
 
-    // первый пул готов, клик по серии 7 сезона 2 запускает дозагрузку (пустую)…
-    // сделаем дозагрузку медленной, чтобы успеть сменить сезон до ответа
     globalThis.__clearReguest();
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 7, runtime: 22 }, { episode_number: 8, runtime: 22 }]
@@ -473,9 +450,6 @@ runner.test('TMDB сезон недоступен: ошибка retryable, по�
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
-    // Нарочно НЕ регистрируем хендлер для /season/ — mock Reguest.native вызывает fail-колбэк на
-    // непойманном URL, что даёт ровно тот же путь, что и реальный сетевой сбой (request() резолвит
-    // null; fetchSeason теперь возвращает err('network', ...)).
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
         results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
         indexers: []
@@ -523,9 +497,6 @@ runner.test('freshSearch: Jackett недоступен при активном c
     await flushMicrotasks();
     if (domain.store.get().customQuery !== 'Futurama') throw new Error('customQuery не сохранился');
 
-    // убираем torrent-search хендлер — клик по серии уходит в freshSearch (customQuery активен) и
-    // не находит ответа, mock Reguest.native вызывает fail-колбэк на непойманном URL — тот же путь,
-    // что и реальная недоступность Jackett
     globalThis.__clearReguest();
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
@@ -538,8 +509,6 @@ runner.test('freshSearch: Jackett недоступен при активном c
     if (state.stage !== 'message') throw new Error('ожидал stage=message, получил ' + state.stage);
     if (typeof state.message.retry !== 'function') throw new Error('retry должен быть функцией: ' + JSON.stringify(state.message));
 
-    // регистрируем хендлер снова и вызываем сохранённый retry — переиздаёт идентичный поиск и
-    // восстанавливается
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
         results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
         indexers: []
@@ -555,10 +524,6 @@ runner.test('destroy() мид-флайт: поздний ответ после d
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
-    // Задерживаем оба сетевых ответа (сезон + пул), чтобы успеть вызвать destroy() до того, как
-    // хоть один из них резолвится — это единственный путь, которым сейчас проверяется isDestroyed()
-    // (найдено при плане: ни domain.destroy()/isDestroyed(), ни playback/smart-preload.js вообще не
-    // покрыты тестами до этого прохода).
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
     }, 50);
@@ -580,20 +545,10 @@ runner.test('destroy() мид-флайт: поздний ответ после d
     if (stateAfter.episodesStatus !== 'loading') throw new Error('поздний TMDB-ответ изменил стор после destroy(): episodesStatus=' + stateAfter.episodesStatus);
     if (stateAfter.poolStatus !== 'loading') throw new Error('поздний torrent-search-ответ изменил стор после destroy(): poolStatus=' + stateAfter.poolStatus);
     if (stateAfter.episodesCache !== null) throw new Error('episodesCache не должен был заполниться после destroy()');
-    // pool is now always an array (results-state.js) — "didn't get filled in" is `length === 0`,
-    // not `=== null` (that check was for the old nullable-pool design).
     if (stateAfter.pool.length !== 0) throw new Error('pool не должен был заполниться после destroy()');
 });
 
 runner.test('крах после провала поиска: открытие панели после ошибки пула не уходит в бесконечную рекурсию', async () => {
-    // Реальный краш, пойманный пользователем вживую: RangeError "Maximum call stack size exceeded"
-    // при открытии боковой панели (right-arrow на серии) сразу после того, как основной поиск по
-    // всем трекерам провалился (Jackett 502/таймаут). Причина: ensureSeasonLoaded безусловно
-    // выходило через onComplete() при poolStatus !== 'ready' — включая 'error' — НИКОГДА не
-    // трогая seasonLoads[season], так что fillPicker → ensureSeasonLoaded → onComplete (=fillPicker
-    // снова) зацикливались синхронно без базового случая. Не мокаем /api/torrent-search вообще —
-    // необработанный URL в mock-Reguest вызывает fail-колбэк, тот же путь, что и реальная
-    // недоступность Jackett.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -613,10 +568,6 @@ runner.test('крах после провала поиска: открытие �
     domain.selection.setActiveEpisode(1);
     domain.selection.openPicker();
     await flushMicrotasks();
-    // /api/torrent-search всё ещё не замокан — ленивая дозагрузка сезона (ensureSeasonLoaded,
-    // теперь запускаемая реактивным watcher'ом внутри selection-interactor, а не самим openPicker)
-    // тоже проваливается, но КОРРЕКТНО (без рекурсии). Сезонный авто-повтор (SEASON_RETRY_DELAYS_MS)
-    // держит seasonLoads[2] в 'loading' ещё некоторое время — ждём весь путь до 'error'.
     await new Promise((r) => setTimeout(r, 2800));
 
     const state = domain.store.get();
@@ -629,14 +580,6 @@ runner.test('крах после провала поиска: открытие �
 });
 
 runner.test('дедлок при переоткрытии панели для другой серии, пока идёт дозагрузка сезона', async () => {
-    // Второй реальный краш пользователя, тот же RangeError, тот же fillPicker↔ensureSeasonLoaded
-    // цикл, но другой триггер: не провал поиска, а закрытие и повторное открытие боковой панели
-    // ДЛЯ ДРУГОЙ СЕРИИ, пока ленивая дозагрузка сезона (запущенная первым открытием) ещё не
-    // завершилась. ensureSeasonLoaded раньше безусловно вызывало onComplete() синхронно, когда
-    // seasonLoads[season] уже 'loading' — тот же класс бага, что и в тесте выше, но в ветке
-    // 'loading', не 'error'. Первый вызов /api/torrent-search (общий пул) резолвится сразу и
-    // пусто; второй (ленивая дозагрузка сезона) — с задержкой 60мс, чтобы успеть закрыть и
-    // переоткрыть панель до его завершения.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -669,8 +612,6 @@ runner.test('дедлок при переоткрытии панели для д
     }
 
     domain.selection.closePicker();
-    // Переоткрытие ДЛЯ ДРУГОЙ серии, пока сезон ещё грузится — раньше здесь падал
-    // RangeError: Maximum call stack size exceeded.
     domain.selection.setActiveEpisode(6);
     let threw = null;
     try {
@@ -693,10 +634,6 @@ runner.test('дедлок при переоткрытии панели для д
 });
 
 runner.test('панель, закрытая во время дозагрузки сезона, не открывается заново сама по себе', async () => {
-    // Побочный эффект того же фикса (очередь колбэков в ensureSeasonLoaded вместо синхронного
-    // отскока): колбэк fillPicker теперь может сработать заметно позже, уже после того как
-    // пользователь закрыл панель — без явной проверки picker.open это воскресило бы закрытую
-    // панель прямо во время просмотра списка серий.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -729,20 +666,12 @@ runner.test('панель, закрытая во время дозагрузки
 });
 
 runner.test('retrySeasonLoad: ручной повтор после провала дозагрузки сезона восстанавливает панель', async () => {
-    // Часть виджета прогресса поиска (консилиум дизайнер/продакт/инженер, см. CLAUDE.md): панель
-    // теперь различает status='empty' (реально пусто) и status='error' (поиск не удался), и для
-    // error появляется ручная кнопка «Повторить» — episodes.retrySeasonLoad(season) сбрасывает
-    // settled-статус сезона и заново запускает ensureSeasonLoaded. Только по нажатию, без авто-ретрая.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
     });
-    // Общий пул сразу пуст и успешен; первая попытка ленивой дозагрузки сезона (запущенная
-    // watcher'ом при открытии панели) проваливается, ЕЁ СОБСТВЕННЫЙ авто-повтор (SEASON_RETRY_DELAYS_MS,
-    // ровно одна попытка) тоже проваливается — сезон реально исчерпывает авто-повторы и оседает в
-    // 'error'; только ПОСЛЕ этого проверяем ручной retrySeasonLoad.
     let torrentSearchCalls = 0;
     globalThis.__mockReguest((url) => {
         if (!url.includes('/api/torrent-search')) return false;
@@ -768,8 +697,6 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
         throw new Error('ожидал status=loading (сезонный авто-повтор ещё не сработал), получил ' + JSON.stringify(picker));
     }
 
-    // Дождаться срабатывания сезонного авто-повтора (SEASON_RETRY_DELAYS_MS[0]) — тоже провал,
-    // авто-повторы исчерпаны, сезон реально оседает в 'error'.
     await new Promise((r) => setTimeout(r, 2800));
 
     picker = pickerData(domain, object);
@@ -794,32 +721,17 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
 });
 
 runner.test('панель, открытая ДО того как пул хоть раз ответил, не падает на пустой pool', async () => {
-    // Реальный краш, найденный при ревью (не пойман руками): TMDB (список серий) обычно резолвится
-    // намного быстрее агрегатного поиска Jackett (до ~40с) — значит строка серии становится
-    // фокусируемой и доступной для right-arrow ЗАДОЛГО до того, как state.pool получает хоть один
-    // результат. selectPickerData звало selectCandidatesForEpisode (→ applyStateFilters →
-    // pool.filter(...)) РАНЬШЕ проверки poolLoading — TypeError: Cannot read properties of null
-    // (reading 'filter'), поскольку pool тогда стартовал как `null`. state.pool теперь ВСЕГДА
-    // массив (results-state.js — пул стал прогрессивным), так что тот КОНКРЕТНЫЙ null-краш больше
-    // структурно невозможен; тест по-прежнему стоит того, чтобы проверить, что открытие панели ДО
-    // первого ответа пула (пустой `pool: []`, ещё не settled) не падает и корректно даёт
-    // status='loading'.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
     globalThis.__mockReguest((url) => url.includes('/season/'), {
         episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 22 }]
     });
-    // Задержка намного больше окна проверки ниже (30мс), но не настолько огромная, чтобы
-    // болтающийся таймер держал процесс теста надолго после его завершения (мок не отменяется
-    // domain.destroy() — это таймер уровня mock-Reguest, не связанный с generation-guard'ами).
     globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), { results: [], indexers: [] }, 200);
 
     const object = { movie: tvMovie, season: 2 };
     const domain = createResultsDomain({ object: object, movie: tvMovie, hasSeasons: true });
     domain.start();
-    // Достаточно для TMDB (быстрый), недостаточно для /api/torrent-search (200мс) —
-    // state.pool гарантированно всё ещё пуст здесь.
     await new Promise((r) => setTimeout(r, 30));
     if (domain.store.get().pool.length !== 0) throw new Error('тест сломан: pool уже не пуст, сценарий не воспроизведён');
 
@@ -836,19 +748,10 @@ runner.test('панель, открытая ДО того как пул хоть
     const picker = pickerData(domain, object);
     if (picker.status !== 'loading') throw new Error('ожидал status=loading пока pool ещё null, получил ' + JSON.stringify(picker));
     domain.destroy();
-    // Дать 200мс-мок реально отработать ВНУТРИ этого теста, а не позже, посреди следующего —
-    // mock-Reguest'а собственный setTimeout не привязан ни к domain.destroy(), ни к generation-guard,
-    // так что не дождавшийся ответа мок иначе "выстреливает" во время следующего теста и путает его
-    // собственный счётчик вызовов /api/torrent-search (нашлось именно так — следующий тест ловил
-    // лишний вызов).
     await new Promise((r) => setTimeout(r, 200));
 });
 
 runner.test('loadAllTorrents: сетевой сбой авто-повторяется и восстанавливается без ручного действия', async () => {
-    // Требование пользователя напрямую: "повторы при сетевых сбоях нужны обязательно" — реальный
-    // репорт про "Менталист 2008", где поиск падал дважды подряд и помогал только ручной перезапуск
-    // плагина. Первая попытка проваливается, вторая (реальный запланированный авто-повтор,
-    // POOL_RETRY_DELAYS_MS[0]=5с) успешна — без единого ручного действия.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -888,8 +791,6 @@ runner.test('loadAllTorrents: сетевой сбой авто-повторяе�
 });
 
 runner.test('domain.destroy() отменяет запланированный авто-повтор пула', async () => {
-    // Без отмены таймера домен, уже уничтоженный (пользователь ушёл с экрана), продолжал бы молча
-    // повторять поиск в фоне и в итоге дёрнул бы store.patch() у мёртвого стора.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -915,13 +816,6 @@ runner.test('domain.destroy() отменяет запланированный а
 });
 
 runner.test('виджет трекеров: домен не планирует никакого скрытия — это презентационная политика View', async () => {
-    // Раньше episodes-interactor.js само планировало store.patch через несколько секунд, чтобы
-    // "скрыть" успешно ответивший трекер — пользователь прямо поправил архитектуру: "таймер фейда —
-    // это UI логика, а не домена... Процесс поиска спокойно наполняет стор, а во вьюмодели
-    // создаются мягкий плавный вид". Домен теперь только пишет факты (ok/error/elapsedMs/reportedAt)
-    // и останавливается на этом; ничего в domain/ больше не отслеживает время после этого события.
-    // Фактическое затухание чипа — DOM/CSS-анимация внутри ui/results-screen.js, за пределами
-    // границы "verified live" для доменных тестов (см. CLAUDE.md) — здесь не проверяется.
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -942,8 +836,6 @@ runner.test('виджет трекеров: домен не планирует �
     }
     const poolIndexersRef = afterSearch.poolIndexers;
 
-    // Пережидаем даже дольше старого TRACKER_SUCCESS_HIDE_MS (4с) — если бы домен всё ещё
-    // что-то планировал сам, ссылка бы сменилась.
     await new Promise((resolve) => setTimeout(resolve, 4300));
 
     const afterWait = domain.store.get();

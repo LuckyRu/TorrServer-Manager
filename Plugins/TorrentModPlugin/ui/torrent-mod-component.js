@@ -1,8 +1,3 @@
-// ---------- Torrent Mod component composition root ----------
-//
-// The Lampa registration stays one component, while movie and series get separate ViewModel and
-// View factories. This keeps the public Component contract stable and makes a movie playback bug
-// impossible to hide inside the series screen's lifecycle.
 import { isSeriesWithSeasons } from '../domain/results-core.js';
 import { createMovieResultsViewModel } from '../domain/movie-results-viewmodel.js';
 import { createSeriesResultsViewModel } from '../domain/series-results-viewmodel.js';

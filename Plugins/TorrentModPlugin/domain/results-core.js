@@ -1,11 +1,3 @@
-    // ---------- results screen: core (pure state shape + pure logic) ----------
-    //
-    // Zero DOM/jQuery/Lampa.Explorer/Filter/Controller/Scroll awareness by design — every function
-    // here takes its inputs as plain parameters and returns plain data, so it's the one layer of
-    // the results screen that could in principle be exercised without a browser at all. Calling
-    // into the already-separated search/metadata modules (scoring, season data) is fine — those
-    // are data-layer, not UI-layer, dependencies. See domain/results-domain.js for the composition
-    // root that owns mutable state and calls these, and ui/results-screen.js for the Lampa-facing view.
     import { defaultSearchName } from '../search/query-building.js';
     import { formatSize, compact } from '../shared/utils.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
@@ -24,18 +16,10 @@
         return !!(movie.number_of_seasons);
     }
 
-    // The search chip text: Lampa's own parse_lang search name — the exact thing the pool is
-    // actually queried with (see query-building.js defaultSearchName). Deliberately NO season/
-    // episode suffix: the whole-work pool is a plain title query, so showing "Футурама S02" in the
-    // chip while searching just "Футурама" was a lie (and with the local pool model, clicking an
-    // episode doesn't change the underlying query either).
     export function searchQueryText(target) {
         return defaultSearchName(target.movie, target.englishTitle);
     }
 
-    // Options come from what's actually in the whole-work pool once it's loaded — no point offering
-    // a "4K" filter for a season nothing 4K was ever found in — falling back to a generic static
-    // list only while the pool is still loading (or for movies, which never populate one).
     export function poolValues(state, pluck, order) {
         var pool = state.pool || [];
         var present = {};
@@ -54,20 +38,6 @@
         return found ? found.title : ('Сезон ' + state.season);
     }
 
-    // Two of Lampa.Filter's three built-in chips ('sort'/'filter'), repurposed — confirmed live
-    // this is exactly the native pattern, not a shortcut: Online Mod's own results screen does the
-    // same thing (new Lampa.Filter(object), then filter.set('sort', its balancer list) and
-    // filter.set('filter', its quality list)) rather than appending extra hand-built chips of its
-    // own. 'sort' here is season (not literal sort order — Online Mod repurposes it too, for an
-    // unrelated balancer picker, so the label/semantics aren't locked to the chip's own name).
-    //
-    // The 'filter' panel's shape (reset row first, then one row per dimension showing its current
-    // value as a subtitle, each opening a nested Select on pick) is copied from Online Mod's own
-    // `this.filter()` method, read directly rather than guessed — its `add(type, title)` helper
-    // builds exactly this: `{title, subtitle: currentValue, items: subitems, stype: type}`, plus
-    // a `{title: 'Сбросить фильтр', reset: true}` leaf with no `.items` (so Filter.show() calls
-    // onSelect(type, a) directly, no nested submenu, on pick). Online Mod also repeats its 'sort'
-    // dimension (balancer) inside this same panel for a one-stop view — we do the same with season.
     export function buildFilterItems(movie, hasSeasons, state) {
         var select = [{ title: 'Сбросить фильтр', reset: true }];
 
@@ -81,9 +51,6 @@
         }
 
         var voiceFound = poolValues(state, function (item) { return item.release.voiceType; });
-        // Static fallback list only while the pool is still loading (pool === null); once loaded,
-        // offer exactly what's in it — a ready-but-empty pool must not advertise options that
-        // don't exist (found in review).
         var voiceOptions = state.pool ? (voiceFound.length ? voiceFound : []) : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал'];
         var voiceItems = [{ title: 'Любой', value: 'any', selected: state.voiceType === 'any' }].concat(
             voiceOptions.map(function (v) {
@@ -112,9 +79,6 @@
             items: qualityItems
         });
 
-        // Bitrate dimension (Etap 3): the primary quality signal for anyone who understands it —
-        // more informative than file size. Options are built ONLY from buckets actually present in
-        // the pool (same poolValues mechanism as voice/quality), estimated per-episode bitrate.
         var bitrateOrder = ['b2', 'b2-5', 'b5-12', 'b12'];
         var bitrateFound = poolValues(state, function (item) {
             return bitrateBucket(estimateBitrateForState(item, state));
@@ -135,10 +99,6 @@
         return select;
     }
 
-    // Season already has its own fast-access chip ('sort'), so the 'filter' chip's own summary
-    // (shown on the collapsed toolbar chip itself, via filter.chosen) only needs voice+quality+
-    // bitrate — repeating the season label there too would just duplicate what's already visible
-    // next to it.
     export function activeFilterLabels(state) {
         var labels = [];
         if (state.voiceType !== 'any') labels.push(state.voiceType);
@@ -147,11 +107,6 @@
         return labels;
     }
 
-    // Same gate + scoring pipeline a fresh search uses (matchesTranslation/state.resolution filter
-    // via applyStateFilters, passesMatchGate via scoreCandidate), just run against an already-fetched
-    // pool instead of a new network call — used both for the instant-click reuse path and for the
-    // episode-row availability badges. `target` is built by the caller (ViewModel), not here — this
-    // function has no access to `object`/closure state to build one itself.
     export function candidatesForEpisode(pool, target, state) {
         var filtered = applyStateFilters(pool, state);
         var scored = filtered.filter(function (item) {
@@ -162,12 +117,6 @@
         return scored;
     }
 
-    // `saved` (the persisted per-season default, if any) is preferred over the top-ranked match
-    // when it's still among the candidates — the badge shows what a click would ACTUALLY start
-    // playing, not just the auto-selection ranking, which used to silently diverge from it the
-    // moment the user picked something else from the side picker (reported directly by the user:
-    // "надо в основном списке серий данные торрента от выбранного к воспроизведению показывать
-    // (сейчас только первый похоже, под автовыбора по сути)").
     export function badgeText(matches, saved) {
         if (!matches.length) return 'раздачи не найдены';
         var best = findSavedDefault(matches, saved) || matches[0];
@@ -179,11 +128,6 @@
         return bits.join(' · ');
     }
 
-    // Availability floor on auto-play, checked against the *score* (seeders+peers combined,
-    // log-scaled — see scoreCandidate), not raw seeders: a "confident" title/season/episode
-    // match with an empty swarm would still auto-play without this — which stalls forever
-    // instead of feeling like an online service. Below this we always show the picker so the
-    // user can knowingly pick a thin release instead of getting stuck.
     export var MIN_AVAILABILITY_FOR_AUTOPLAY = 3;
 
     export function isConfidentMatch(best, next) {
@@ -200,11 +144,6 @@
         return new Date(item.publishedAt).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' });
     }
 
-    // Quality/source/translator/tracks line — everything parseRelease() can pull out of the raw
-    // title, distinct from the tracker/seeds/size/date line below it. Two lines instead of one
-    // because a torrent row has meaningfully more to say than an episode row. Estimated per-episode
-    // bitrate (from item._score, computed by the last scoring pass for this candidate) goes first
-    // among the technical bits — it's the primary quality signal for anyone who understands it.
     export function candidateBadgeText(item) {
         var bits = [];
         if (item._score && item._score.bitrateMbps) bits.push('~' + (Math.round(item._score.bitrateMbps * 10) / 10) + ' Mbps');
@@ -218,41 +157,16 @@
         if (item.release.audioTracks > 1) bits.push(item.release.audioTracks + ' ауд. дор.');
         else if (item.release.audioChannels) bits.push(item.release.audioChannels);
         if (item.release.subtitles) bits.push('субтитры');
-        // Title-level compatibility warning ("древнее говно"): WebOS won't play XviD/DivX/MPEG-2/
-        // VC-1/WMV/AVI without TorrServer transcoding. Not a hard gate — it's a visible warning and
-        // a ranking penalty, since the title is only a heuristic (see scoring.formatPenalty). The
-        // real codec is confirmed by ffprobe at play time (see smart-preload.js).
         if (item.release.compatibility === 'risky') {
             bits.push('Риск: ' + (item.release.compatibilityReason || item.release.videoCodec || item.release.container || 'формат'));
         }
         return bits.join(' · ');
     }
 
-    // The identity of a torrent candidate used to match a PERSISTED pick (the saved season
-    // default) against a freshly re-fetched pool, potentially days later and definitely a
-    // different Jackett query than the one that found it originally — this needs identity that's
-    // stable ACROSS separate searches over time, a stricter requirement than search-backend's own
-    // dedup (magnet → link → title+size), which only needs consistency WITHIN one response and so
-    // can safely prefer `link`. Preferring `link` here could not: confirmed live (reported
-    // directly by the user — a saved default silently stopped auto-playing after a browser
-    // reload, "Персист-то не настоящий... на автовыборе") that at least one real indexer (NoNaMe
-    // Club, already flagged elsewhere in this file as magnet-less) returns a Jackett download-proxy
-    // `link` whose encoded `path` differs between two separate searches for the exact same
-    // release — every magnet-less save was silently unmatchable the moment the pool was re-fetched
-    // from scratch. `title + '|' + size` is what search-backend's OWN dedup already falls back to
-    // when magnet AND link are both absent, and it survives a repeat search unchanged, so it's
-    // promoted ahead of `link` here — magnet stays first (a real content hash, the only source
-    // fully immune to this). No `|| item.link` fallback below it: `title + '|' + size` is a
-    // string concatenation, always truthy even with missing fields, so `link` could never be
-    // reached anyway — dropped rather than left as dead code.
     export function candidateIdentity(item) {
         return compact(item.magnet || (item.title + '|' + item.size));
     }
 
-    // Looks a saved season default (as stored by selection-interactor: {id, title, size}) up in the
-    // candidate list for the current episode. Returns the pool item if the release is still there
-    // (and has survived the current voice/quality/bitrate filters + gate, since it came from
-    // candidates), otherwise null → caller falls back to candidates[0].
     export function findSavedDefault(candidates, savedDefault) {
         if (!savedDefault || !savedDefault.id || !candidates.length) return null;
         for (var i = 0; i < candidates.length; i++) {

@@ -1,10 +1,3 @@
-// ---------- browser-environment mocks for domain tests ----------
-//
-// The plugin sources are real browser ES modules (window/document/jQuery/Lampa globals). Node
-// can't provide those, so this installs minimal stand-ins BEFORE any plugin module is imported.
-// The point is NOT to emulate Lampa faithfully — it's to make the code actually runnable so that
-// undefined-identifier bugs (like the buildSeasonItems ReferenceError that crashed the real
-// screen) surface as test failures instead of at runtime on the TV.
 export function setupMockLampa() {
     const storage = new Map();
     const playerListeners = new Map();
@@ -127,8 +120,6 @@ export function setupMockLampa() {
         if (typeof selector === 'string' && selector.includes('torrent-mod-player-preparing__overlay')) return preparationOverlay;
         return jqueryNode();
     };
-    // smart-preload probes GST before every Player.play. Return a realistic mixed stream list so
-    // the smoke suite exercises audio filtering and a concrete `audio=` GST URL.
     globalThis.$.ajax = (opts) => {
         const req = {
             done(fn) { this._done = fn; return this; },
@@ -165,23 +156,8 @@ export function setupMockLampa() {
     globalThis.__mockReguest = (match, data, delay) => reguestHandlers.push({ match, data, delay: delay || 0 });
     globalThis.__clearReguest = () => reguestHandlers.splice(0);
 
-    // /api/torrent-search is now a two-step, per-indexer-parallel protocol (start/poll/cancel —
-    // search/parallel-search.js, PluginHub.cs), not one blocking call. Every test in this suite
-    // still registers mocks the OLD way — one `__mockReguest` matching the single logical search
-    // URL, with `data` shaped as `{results: [...rawJackett], indexers: [...]}` — so instead of
-    // rewriting ~30 call sites, this shim reproduces the two-step protocol UNDERNEATH that same
-    // registration shape: `/start?query=...` is matched against `reguestHandlers` exactly like the
-    // old single endpoint was (the query text lives in the URL either way, so existing
-    // season/customQuery-discriminating match functions keep working unchanged), then a synthetic
-    // job hands the SAME matched handler's data back on the first `/poll`, wrapped as one indexer
-    // entry (`results: []`/no `indexers` field on old fixtures means "one anonymous tracker
-    // answered with everything"). `delay` is honored on the /poll leg, not /start — mirrors the
-    // real backend, where /start returns a jobId almost immediately and the actual per-indexer wait
-    // happens between polls.
     var jobCounter = 0;
     var jobs = new Map();
-    // Lampa.Storage mock is shared across tests in one process — persisted prefs (e.g. last season)
-    // would leak between tests via applyPersistedPreferences, so reset it per test.
     globalThis.__clearStorage = () => storage.clear();
 
     globalThis.Lampa = {
@@ -201,9 +177,6 @@ export function setupMockLampa() {
         Torserver: {
             ip: () => 'http://127.0.0.1:8090',
             hash: (object, cb, fail) => cb({ hash: 'mock-torrent-hash' }),
-            // Return a playable file so smart-preload's pollFiles settles on its first 2s tick
-            // (an empty file_stats made the interval spin for the full 45×2s and kept the Node
-            // process alive long after the tests finished).
             files: (hash, cb, fail) => cb({ file_stats: [{ id: 1, path: 'video.mp4', length: 1000000, path_human: 'video.mp4' }] }),
             stream: (path, hash, id) => 'http://127.0.0.1:8090/stream/x?link=' + hash + '&index=' + id,
             parse: (data) => ({ hash: 'mock-timeline-hash' }),
@@ -230,16 +203,6 @@ export function setupMockLampa() {
             this.timeout = () => this;
             this.native = (url, cb, err) => {
                 globalThis.__requestLog.push(url);
-                // The two-step start/poll protocol chains two round trips per search where the old
-                // single-endpoint mock only ever needed one — a `delay: 0` fixture (the vast
-                // majority of this suite's mocks) doesn't ask for any REAL wait, so resolving it via
-                // a macrotask (setTimeout, even at 0ms) adds an extra timer-queue hop per leg that a
-                // tight `flushMicrotasks()` (10ms) budget can miss under real event-loop jitter —
-                // found live: the whole suite flaked exactly this way once the shim below was first
-                // written with unconditional `setTimeout(fn, delay)`. Resolving through a microtask
-                // instead whenever delay is falsy keeps a zero-delay mock exactly as fast as the old
-                // one-hop version was, while a genuinely-requested delay (races/staleness tests) still
-                // goes through a real timer, unchanged.
                 const respond = (fn, delay) => { if (delay) setTimeout(fn, delay); else Promise.resolve().then(fn); };
                 if (url.includes('/api/torrent-search/start')) {
                     const handler = reguestHandlers.find((h) => h.match(url));
@@ -247,10 +210,6 @@ export function setupMockLampa() {
                         if (!handler || handler.data === null) { if (err) err(); return; }
                         const jobId = 'job' + (++jobCounter);
                         jobs.set(jobId, handler);
-                        // Same fallback shape /poll uses below when a fixture's own `indexers` is
-                        // empty (the vast majority of this suite's mocks) — one synthetic "mock"
-                        // tracker, so poolAllIndexers/poolIndexers agree on what they're both
-                        // talking about.
                         const configuredIndexers = (handler.data.indexers && handler.data.indexers.length)
                             ? handler.data.indexers.map((ix) => ({ id: ix.id, name: ix.name }))
                             : [{ id: 'mock', name: 'mock' }];
@@ -302,7 +261,4 @@ export async function flushMicrotasks() {
     await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
-// Install the mocks as a module side effect: test files import this file FIRST, so the browser
-// globals exist before any plugin module is imported (plugin modules read `document`/`Lampa`
-// at top level, e.g. shared/state.js computing hubBase from document.currentScript.src).
 setupMockLampa();

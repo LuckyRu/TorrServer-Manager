@@ -1,5 +1,3 @@
-    // ---------- parallel per-indexer search client ----------
-    // Client for PluginHub's parallel per-indexer search job protocol — see docs/system-design/torrent-mod-parallel-search.md.
     import { hubBase } from '../shared/state.js';
     import { request } from '../shared/utils.js';
     import { log } from '../shared/core/log.js';

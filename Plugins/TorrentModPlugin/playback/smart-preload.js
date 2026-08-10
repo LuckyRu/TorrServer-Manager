@@ -1,6 +1,3 @@
-    // GST-first playback with audio-track preflight (register -> files -> probe -> GST play); full
-    // design, lifecycle-scope rules, and native side-effect compensation: docs/adr/0003-no-global-player-patching.md,
-    // docs/reference/lampa-player-api.md, docs/system-design/torrent-mod-audio-track-mvp.md.
     import { parseSignals } from '../shared/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';

@@ -1,7 +1,3 @@
-// ---------- series player adapter ----------
-//
-// Series playback owns the content parsing that derives season/episode and the playlist needed for
-// next-episode navigation inside a season pack.
 function parseSeriesFile(file, files, movie) {
     try {
         return Lampa.Torserver.parse({ movie: movie, files: files, filename: file.path_human, path: file.path }) || {};

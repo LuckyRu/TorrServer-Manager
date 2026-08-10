@@ -87,3 +87,17 @@ Full list with root cause and fix: [`docs/reference/torrent-mod-gotchas.md`](doc
 - Commit messages: Russian, Conventional Commits (`тип(область): суть`), short — no line-by-line diff recap.
 - Bump `<Version>` in `TorrServerManager.csproj` (SemVer2) on every user-visible change; it must show in
   the main window and the tray tooltip, not just assembly metadata.
+
+## Agent workflow and comments
+
+- Keep this file concise: commands, invariants, traps, and links to durable docs only. Update it when a
+  rule should apply to future agent sessions; put feature history and rationale in `docs/` or ADRs.
+- Use `explore → plan → implement → verify → commit`. For multi-file work, write the plan before editing,
+  add regression tests for discovered bugs, and run the narrowest relevant checks before the full suite.
+- Comments explain a non-obvious invariant, external contract, safety constraint, or reason a simpler
+  alternative is invalid. Prefer names and structure over comments that restate the code.
+- Never put investigation transcripts, issue history, timestamps, user quotes, or step-by-step narration
+  in source comments. Move durable rationale to an ADR/design doc and link it with one short comment when
+  the code needs a pointer.
+- Keep source comments to one or two concise lines. A multi-line block needs a strong reason and should
+  normally be a doc/ADR instead. Do not add comments solely to describe an obvious function or branch.

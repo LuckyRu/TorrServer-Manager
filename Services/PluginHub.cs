@@ -389,9 +389,6 @@ internal sealed class PluginHub : IDisposable
         });
     }
 
-    // Parallel per-indexer torrent search (start/poll/cancel), one request per configured Jackett
-    // indexer instead of trusting Jackett's own blocking aggregate call — see
-    // docs/system-design/torrent-mod-parallel-search.md for the full protocol and rationale.
     private sealed class IndexerSearchResult
     {
         public required string Id { get; init; }
@@ -457,14 +454,9 @@ internal sealed class PluginHub : IDisposable
         }
 
         var jobId = Guid.NewGuid().ToString("N");
-        // Linked to the class-level `cancellation` token so a full PluginHub shutdown (Dispose())
-        // cancels every still-running per-indexer request too, not just ones a client explicitly
-        // cancelled or that reached their own 30s timeout naturally.
         var job = new SearchJob { TotalIndexers = indexers.Count, Cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token) };
         searchJobs[jobId] = job;
 
-        // Task.WhenAny, not sequential await — records results in COMPLETION order so /poll can show
-        // a fast tracker before a slow one finishes (see docs/system-design/torrent-mod-parallel-search.md).
         _ = Task.Run(async () =>
         {
             var pending = indexers
@@ -480,8 +472,6 @@ internal sealed class PluginHub : IDisposable
                 }
                 catch (OperationCanceledException)
                 {
-                    // The whole job was cancelled (manual retry / user left the screen) — not a
-                    // per-indexer result, nothing to record.
                 }
             }
         });
@@ -498,8 +488,6 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        // Always the full accumulated set (stateless client, dedupes by indexer id itself). Built as a
-        // raw JSON string, not JsonSerializer round-tripping — `results` is already serialized text.
         var builder = new StringBuilder();
         builder.Append("{\"done\":").Append(job.Done ? "true" : "false").Append(",\"indexers\":[");
         var first = true;
@@ -518,10 +506,6 @@ internal sealed class PluginHub : IDisposable
         }
         builder.Append("]}");
 
-        // Done jobs are removed the moment a client observes `done:true` — no separate cleanup timer
-        // needed for the common (successful) case; CleanupStaleSearchJobs (above, run on every
-        // /start) is the backstop for a client that stops polling before ever seeing `done:true`
-        // (navigated away without calling /cancel, browser crashed, etc.).
         if (job.Done) RemoveSearchJob(jobId, cancel: false);
 
         await WriteTextAsync(response, builder.ToString(), "application/json; charset=utf-8");
@@ -551,9 +535,6 @@ internal sealed class PluginHub : IDisposable
                 return cachedIndexerList;
         }
 
-        // Confirmed live: t=indexers&configured=true returns Torznab-capabilities XML (NOT the same
-        // JSON shape /results uses) — one <indexer id="..."><title>...</title></indexer> per
-        // configured tracker.
         var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/all/results/torznab/api" +
             $"?apikey={Uri.EscapeDataString(apiKey)}&t=indexers&configured=true";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -589,9 +570,6 @@ internal sealed class PluginHub : IDisposable
             if (result.Ok || attempt >= IndexerMaxAttempts) break;
         }
         totalStopwatch.Stop();
-        // ElapsedMs reported to the client is the CUMULATIVE time across every attempt (not just the
-        // last one) — the honest answer to "how long did this indexer take," matching what the
-        // widget/console log actually mean by the number.
         return new IndexerSearchResult
         {
             Id = result.Id, Name = result.Name, Ok = result.Ok, Error = result.Error,
@@ -606,9 +584,6 @@ internal sealed class PluginHub : IDisposable
             $"?apikey={Uri.EscapeDataString(apiKey)}&Query={Uri.EscapeDataString(query)}";
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        // Each indexer gets its OWN timeout now instead of sharing one 45s ceiling for the whole
-        // aggregate — it doesn't need to be shorter just because there are more of them; they no
-        // longer block each other, so the slowest one only delays itself, not the rest.
         timeoutSource.CancelAfter(TimeSpan.FromSeconds(30));
 
         try
@@ -635,9 +610,6 @@ internal sealed class PluginHub : IDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // The whole job was cancelled (manual retry / user left the screen), not this one
-            // indexer's own timeout — rethrow so the caller's loop treats it as "job cancelled," not
-            // as a per-indexer result to record.
             throw;
         }
         catch (OperationCanceledException)
@@ -652,8 +624,6 @@ internal sealed class PluginHub : IDisposable
         }
     }
 
-    // Jackett's Link points at its own loopback download endpoint; TorrServer (not the TV) fetches it
-    // and can't dial its own LAN IP, so rewrite to loopback + our /jackett proxy, not the request's LAN authority.
     private static string RewriteJackettLinks(string resultsJson)
     {
         var proxyBase = $"http://127.0.0.1:{AppPaths.PluginHubPort}/jackett";
@@ -725,10 +695,6 @@ internal sealed class PluginHub : IDisposable
         }
 
         var etag = $"\"{record.Sha256}\"";
-        // Without Cache-Control, a device's own HTTP cache is free to reuse a stale copy of this
-        // script indefinitely and never even ask the server again — the ETag is useless if nothing
-        // forces revalidation. no-cache (not no-store) means "always ask first", which is what makes
-        // the If-None-Match check below actually get hit instead of skipped by the browser's cache.
         response.Headers["Cache-Control"] = "no-cache";
         response.Headers["ETag"] = etag;
         response.Headers["X-Plugin-Source"] = Uri.EscapeDataString(plugin.Url);
@@ -757,8 +723,6 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        // Lampa 404s on these two assets on every start otherwise (modification.js's 404 came back as
-        // JSON, which the browser refuses to execute) — serve harmless stubs, neither is part of this build.
         if (relativePath.Replace('\\', '/').Equals("plugins_black_list.json", StringComparison.OrdinalIgnoreCase))
         {
             await WriteTextAsync(response, "[]", "application/json; charset=utf-8");
@@ -786,11 +750,6 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        // TorrServer HLS segments can legitimately take longer than hls.js's stock 20-second
-        // fragment timeout while a torrent is acquiring a peer. Lampa displays every non-fatal
-        // FRAG_LOAD_TIMEOUT as a scary player error even though hls.js is still retrying. Patch the
-        // hosted app response (not the downloaded/generated app) so slow-but-live torrent segments
-        // get time to arrive and non-fatal retries stay invisible to the viewer.
         if (relativePath.Replace('\\', '/').Equals("app.min.js", StringComparison.OrdinalIgnoreCase))
         {
             var text = await File.ReadAllTextAsync(fullPath, cancellation.Token);
@@ -933,8 +892,6 @@ internal sealed class PluginHub : IDisposable
 
             if (plugin.Id.Length > 100 || plugin.Name.Length > 100 || plugin.Category.Length > 50 || plugin.Url.Length > 2048)
                 throw new InvalidDataException("Идентификатор, название, категория или URL плагина слишком длинные.");
-            // Any `builtin://` URL passes here even if unregistered — see docs/reference/architecture-map.md#gotchas
-            // for why rejecting it would wipe every other plugin's config, not just this one.
             if (!BuiltInPlugins.IsBuiltIn(plugin.Url) &&
                 !plugin.Url.StartsWith("builtin://", StringComparison.OrdinalIgnoreCase) &&
                 (!Uri.TryCreate(plugin.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")))
@@ -1025,10 +982,6 @@ internal sealed class PluginHub : IDisposable
             var results = new List<PluginRefreshResult>();
             foreach (var plugin in Snapshot().Plugins.Where(plugin => plugin.Enabled))
             {
-                // One plugin's refresh throwing (e.g. an orphaned builtin:// reference to a
-                // since-removed built-in) must not abort the whole batch — every other enabled
-                // plugin still needs its turn. RefreshBuiltInPluginAsync in particular has no
-                // internal try/catch of its own around BuiltInPlugins.Read.
                 try
                 {
                     results.Add(await RefreshPluginAsync(plugin, cancellationToken));
@@ -1659,9 +1612,6 @@ internal sealed class PluginHub : IDisposable
         listener.Close();
         try { listenerTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
         try { refreshTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
-        // Each job's Cts is linked to `cancellation` above, so cancellation.Cancel() already signals
-        // every still-running per-indexer request to stop — this just disposes the now-unneeded
-        // CancellationTokenSource objects themselves and clears the dictionary.
         foreach (var jobId in searchJobs.Keys.ToList()) RemoveSearchJob(jobId, cancel: false);
         httpClient.Dispose();
         refreshLock.Dispose();

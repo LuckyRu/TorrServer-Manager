@@ -1,5 +1,3 @@
-    // ---------- candidate scoring ----------
-    // matchScore gates candidates; qualityScore+availabilityScore rank them — see docs/reference/torrent-mod-scoring-model.md.
     import { baseTitles } from './query-building.js';
     import { field, compact } from '../shared/utils.js';
 
@@ -8,8 +6,6 @@
     ['the', 'a', 'an', 'of', 'and', 'in', 'on', 'to', 'for', 'is', 'it'].forEach(function (w) { STOPWORDS[w] = true; });
     ['и', 'в', 'на', 'о', 'из', 'для', 'по', 'с', 'а', 'к', 'у'].forEach(function (w) { STOPWORDS[w] = true; });
 
-    // Splits on the tracker convention "Localized / Original [year, quality...]" and truncates each
-    // segment at its first bracket/paren, where metadata always starts.
     function extractTitleSegments(rawTitle) {
         return String(rawTitle || '').split('/').map(function (piece) {
             var bracketIndex = piece.search(/[([]/);
@@ -18,8 +14,6 @@
         }).filter(Boolean);
     }
 
-    // Word-count-matched segments only, no bag-of-words fallback — accepts false negatives over
-    // false positives; see docs/reference/torrent-mod-scoring-model.md.
     function titleSimilarity(title, movie, englishTitle) {
         var segments = extractTitleSegments(title);
         var best = 0;
@@ -53,8 +47,6 @@
         return runtimeSeconds > 0 ? (perEpisodeBytes * 8) / (runtimeSeconds * 1000000) : 0;
     }
 
-    // Estimated per-episode bitrate buckets for the UI filter; keys are stable state values, labels
-    // live in results-core (BITRATE_LABELS).
     var BITRATE_BUCKETS = [
         { key: 'b2', max: 2 },
         { key: 'b2-5', max: 5 },
@@ -98,8 +90,6 @@
         return true;
     }
 
-    // Post-gate ranking is qualityScore + availabilityScore only (matchScore already filtered) — see docs/reference/torrent-mod-scoring-model.md.
-    // Mutates item.bitrateMbps — gets overwritten by whichever episode last scored this shared pool entry; dormant today since nothing reads it back off the pool.
     export function scoreCandidate(item, target) {
         var release = item.release;
         var passes = passesMatchGate(item, target);
