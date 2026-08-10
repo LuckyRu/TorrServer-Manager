@@ -44,6 +44,7 @@
                     episode: episode,
                     seasonEpisodeCount: state.seasonEpisodeCount,
                     avgRuntimeMinutes: state.avgRuntimeMinutes,
+                    episodes: state.episodesCache || [],
                     englishTitle: englishTitle
                 };
                 var evaluation = evaluateCandidatePool(state.pool, target, state);
@@ -157,8 +158,9 @@
                 var current = store.get();
                 log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" ' +
                     (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, +' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
+                var merged = mergePools(current.pool, entry.items);
                 store.patch({
-                    pool: mergePools(current.pool, entry.items),
+                    pool: merged,
                     poolIndexers: current.poolIndexers.concat([{ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, reportedAt: Date.now() }])
                 });
             }, function (startFailed) {
@@ -206,7 +208,11 @@
             rememberSeason(movie, season);
             store.patch({
                 season: season,
-                seasonGeneration: state.seasonGeneration + 1
+                seasonGeneration: state.seasonGeneration + 1,
+                episodesCache: null,
+                seasonEpisodeCount: 0,
+                avgRuntimeMinutes: 0,
+                episodesStatus: 'idle'
             });
             loadEpisodes();
             return true;

@@ -6,9 +6,9 @@ import { buildMovieQueries } from '../search/movie-query-building.js';
 import { buildSeriesQueries } from '../search/series-query-building.js';
 import { parseMovieRelease } from '../search/movie-release-parsing.js';
 import { parseSeriesRelease } from '../search/series-release-parsing.js';
-import { scoreCandidate, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate } from '../search/scoring.js';
+import { scoreCandidate, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate, estimatePayload } from '../search/scoring.js';
 import {
-    createInitialState, isSeriesWithSeasons, poolValues, currentSeasonLabel,
+    createInitialState, isSeriesWithSeasons, poolValues, poolTranslators, currentSeasonLabel,
     buildFilterItems, activeFilterLabels, candidatesForEpisode, badgeText, isConfidentMatch,
     publishedText, candidateBadgeText, candidateSubtitleText, candidateIdentity
 } from '../domain/results-core.js';
@@ -63,7 +63,8 @@ seasonPack.release = parseRelease(seasonPack.title);
 const target = { movie: tvMovie, season: 2, episode: 7, seasonEpisodeCount: 19, avgRuntimeMinutes: 22 };
 
 const state = {
-    season: 2, voiceType: 'any', resolution: 'any',
+    season: 2,
+    filters: { voiceType: 'any', translator: 'any', resolution: 'any', bitrate: 'any' },
     pool: [single, seasonPack],
     episodesCache: [{ episode_number: 1 }, { episode_number: 7 }, { episode_number: 8 }],
     seasonEpisodeCount: 19, avgRuntimeMinutes: 22,
@@ -127,21 +128,33 @@ runner.test('isSeriesWithSeasons различает фильм/сериал', ()
 });
 runner.test('createInitialState', () => {
     const s = createInitialState({ season: 3 });
-    if (s.season !== 3 || s.voiceType !== 'any' || s.resolution !== 'any') throw new Error(JSON.stringify(s));
+    if (s.season !== 3 || !s.filters || s.filters.voiceType !== 'any' || s.filters.translator !== 'any' || s.filters.resolution !== 'any') throw new Error(JSON.stringify(s));
 });
 runner.test('poolValues — только реально присутствующие значения', () => {
     const v = poolValues(state, (i) => i.release.resolution);
     if (v.length !== 1 || v[0] !== '1080p') throw new Error(JSON.stringify(v));
 });
+runner.test('poolTranslators — собирает уникальные студии в порядке появления', () => {
+    const pool = [
+        { release: { translators: ['LostFilm', 'Кубик в Кубе'] } },
+        { release: { translators: ['Кубик в Кубе', 'Jetvis Studio'] } },
+        { release: { translators: [] } }
+    ];
+    const values = poolTranslators(pool);
+    if (JSON.stringify(values) !== JSON.stringify(['LostFilm', 'Кубик в Кубе', 'Jetvis Studio'])) throw new Error(JSON.stringify(values));
+});
 runner.test('buildFilterItems — структура и не бросает', () => {
-    const items = buildFilterItems(tvMovie, true, state);
+    const withStudio = Object.assign({}, single, { release: Object.assign({}, single.release, { translators: ['Jetvis Studio'] }) });
+    const items = buildFilterItems(tvMovie, true, Object.assign({}, state, { pool: [withStudio, seasonPack] }));
     if (items.length < 4) throw new Error('мало пунктов: ' + items.length);
     const voice = items.find((i) => i.kind === 'voice');
     if (!voice || !voice.items || voice.items.length === 0) throw new Error('нет пункта Перевод');
+    const translator = items.find((i) => i.kind === 'translator');
+    if (!translator || translator.items.map((i) => i.value).indexOf('Jetvis Studio') < 0) throw new Error('нет пункта Студия: ' + JSON.stringify(translator));
 });
 runner.test('activeFilterLabels', () => {
-    const l = activeFilterLabels({ voiceType: 'Дубляж', resolution: '1080p' });
-    if (l.join(',') !== 'Дубляж,1080p') throw new Error(JSON.stringify(l));
+    const l = activeFilterLabels({ filters: { voiceType: 'Дубляж', translator: 'Jetvis Studio', resolution: '1080p' } });
+    if (l.join(',') !== 'Дубляж,Jetvis Studio,1080p') throw new Error(JSON.stringify(l));
 });
 runner.test('currentSeasonLabel', () => {
     if (currentSeasonLabel(tvMovie, true, { season: 2 }) !== 'Сезон 2') throw new Error(currentSeasonLabel(tvMovie, true, { season: 2 }));
@@ -176,7 +189,7 @@ runner.test('candidateIdentity: magnet-less раздача стабильна м
 });
 runner.test('badgeText предпочитает сохранённый дефолт top-ranked кандидату', () => {
     const c = candidatesForEpisode(state.pool, target, state);
-    if (badgeText(c).indexOf(String(seasonPack.seeders)) < 0) throw new Error('без saved ожидал top-ranked (seasonPack): ' + badgeText(c));
+    if (badgeText(c).indexOf(String(c[0].seeders)) < 0) throw new Error('без saved ожидал top-ranked: ' + badgeText(c));
     const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
     const withSaved = badgeText(c, saved);
     if (withSaved.indexOf(String(single.seeders)) < 0) throw new Error('с saved ожидал данные single: ' + withSaved);
@@ -298,8 +311,14 @@ runner.test('selectPoolIndexers: pending по имени, ok/error, reportedAt �
     if (c.status !== 'pending' || c.reportedAt !== null) throw new Error('c ещё не ответил, должен быть pending с reportedAt=null: ' + JSON.stringify(c));
 });
 runner.test('isConfidentMatch — высокий availability даёт уверенный матч', () => {
-    const best = { _score: { availabilityScore: 18, value: 30 }, seeders: 12 };
+    const best = { _score: { availabilityScore: 18, matchScore: 100, value: 30 }, seeders: 12 };
     if (!isConfidentMatch(best, null)) throw new Error('должен быть уверенный матч');
+});
+runner.test('isConfidentMatch — личеры без сидов не считаются доступной раздачей', () => {
+    const score = scoreCandidate(Object.assign({}, single, { seeders: 0, peers: 100, leechers: 100 }), target);
+    const best = { _score: score, seeders: 0 };
+    if (score.availabilityScore !== 0) throw new Error('личеры дали availability без сидов: ' + JSON.stringify(score));
+    if (isConfidentMatch(best, null)) throw new Error('раздача без сидов не должна быть уверенной');
 });
 
 // ---------- results-selectors ----------
@@ -328,6 +347,65 @@ runner.test('scoreCandidate: гейт пропускает правильный 
     if (!ok.passes) throw new Error('правильная раздача не прошла гейт');
     const wrong = scoreCandidate(single, { movie: tvMovie, season: 3, episode: 7, seasonEpisodeCount: 22, avgRuntimeMinutes: 22 });
     if (wrong.passes) throw new Error('раздача S02E07 прошла гейт для S03E07');
+});
+runner.test('scoreCandidate: высокий payload HEVC/HDR не получает симметричный штраф', () => {
+    const boysMovie = {
+        title: 'Ферма Кларксона', original_title: "Clarkson's Farm",
+        name: 'Ферма Кларксона', original_name: "Clarkson's Farm"
+    };
+    const boysTarget = { movie: boysMovie, englishTitle: "Clarkson's Farm", season: 2, episode: 1, seasonEpisodeCount: 8, avgRuntimeMinutes: 50 };
+    const first = {
+        title: "Ферма Кларксона / Clarkson's Farm / S2E1-8 2160p WEB-DL",
+        size: 40450000000, seeders: 13, peers: 8,
+        release: parseSeriesRelease("Ферма Кларксона / Clarkson's Farm / S2E1-8 2160p WEB-DL")
+    };
+    const hevcHdr = {
+        title: "Ферма Кларксона / Clarkson's Farm / Сезоны: 1-2 / Эпизоды: 1-16 2160p WEB-DL HDR H.265",
+        size: 82860000000, seeders: 70, peers: 46,
+        release: parseSeriesRelease("Ферма Кларксона / Clarkson's Farm / Сезоны: 1-2 / Эпизоды: 1-16 2160p WEB-DL HDR H.265")
+    };
+    const popular1080 = {
+        title: "Ферма Кларксона / Clarkson's Farm / S2E1-8 1080p WEBRip",
+        size: 26760707777, seeders: 106, peers: 9,
+        release: parseSeriesRelease("Ферма Кларксона / Clarkson's Farm / S2E1-8 1080p WEBRip")
+    };
+    const firstScore = scoreCandidate(first, boysTarget);
+    const hevcScore = scoreCandidate(hevcHdr, boysTarget);
+    const popular1080Score = scoreCandidate(popular1080, boysTarget);
+    if (!firstScore.passes || !hevcScore.passes) throw new Error('тестовые релизы не прошли title/season gate');
+    if (hevcScore.qualityScore < firstScore.qualityScore) {
+        throw new Error('HEVC/HDR всё ещё штрафуется сильнее близкого H.264: ' + JSON.stringify({ first: firstScore, hevc: hevcScore }));
+    }
+    if (hevcScore.value <= firstScore.value) {
+        throw new Error('HEVC/HDR с 70 сидами не обошёл релиз с 13 сидами: ' + JSON.stringify({ first: firstScore, hevc: hevcScore }));
+    }
+    if (popular1080Score.value <= firstScore.value) {
+        throw new Error('1080p со 106 сидами должен быть надёжнее 4K с 13 сидами: ' + JSON.stringify({ first: firstScore, popular1080: popular1080Score }));
+    }
+    if (Math.abs(firstScore.payloadMbps - 13.48) > 0.05 || Math.abs(hevcScore.payloadMbps - 13.81) > 0.05) {
+        throw new Error('payload рассчитан неверно: ' + JSON.stringify({ first: firstScore, hevc: hevcScore }));
+    }
+});
+runner.test('estimatePayload: многосезонный пак без E-диапазона использует сумму episode_count', () => {
+    const release = parseSeriesRelease('Футурама / Futurama S1-3 1080p WEB-DL');
+    const item = { title: 'Футурама / Futurama S1-3 1080p WEB-DL', size: 120_000_000_000, release };
+    const payload = estimatePayload(item, { movie: tvMovie, mode: MODE_SERIES, season: 2, seasonEpisodeCount: 19, avgRuntimeMinutes: 22 });
+    if (payload.coverageEpisodes !== 54 || payload.confidence !== 'medium') throw new Error(JSON.stringify(payload));
+    const expected = 120_000_000_000 * 8 / (54 * 22 * 60 * 1_000_000);
+    if (Math.abs(payload.mbps - expected) > 0.01) throw new Error(JSON.stringify(payload));
+});
+runner.test('estimatePayload: фильм без runtime возвращает неизвестную оценку вместо fallback 42 минуты', () => {
+    const item = { title: 'Дюна / Dune 2024 2160p WEB-DL', size: 20_000_000_000, release: parseMovieRelease('Дюна / Dune 2024 2160p WEB-DL') };
+    const payload = estimatePayload(item, { movie, mode: MODE_MOVIE, season: 0, episode: 0, avgRuntimeMinutes: 0 });
+    if (payload.mbps !== null || payload.confidence !== 'none') throw new Error(JSON.stringify(payload));
+});
+runner.test('scoreCandidate: высокий H.264 payload не уменьшает visual quality', () => {
+    const target = { movie: Object.assign({}, movie, { runtime: 120 }), mode: MODE_MOVIE, season: 0, episode: 0, avgRuntimeMinutes: 120 };
+    const title = 'Дюна / Dune 2024 1080p WEB-DL H.264';
+    const base = { title, seeders: 10, peers: 2, release: parseMovieRelease(title) };
+    const normal = scoreCandidate(Object.assign({}, base, { size: 7_000_000_000 }), target);
+    const large = scoreCandidate(Object.assign({}, base, { size: 30_000_000_000 }), target);
+    if (large.qualityScore < normal.qualityScore) throw new Error(JSON.stringify({ normal, large }));
 });
 runner.test('titleSimilarity (через гейт): отсеивает шум для однословной цели "The Boys", реальные совпадения проходят', () => {
     const boysMovie = {
@@ -367,8 +445,16 @@ runner.test('passesSearchTitleGate отсекает явный шум до до�
     if (passesSearchTitleGate(item, boys)) throw new Error('явный шум прошёл ранний title-gate');
 });
 runner.test('applyStateFilters: пустой фильтр оставляет пул, несуществующий не ломает', () => {
-    const f = applyStateFilters(state.pool, { ...state, voiceType: 'Дубляж' });
+    const f = applyStateFilters(state.pool, Object.assign({}, state, { filters: Object.assign({}, state.filters, { voiceType: 'Дубляж' }) }));
     if (f.length !== 2) throw new Error('не должен сужать до пустоты: ' + f.length);
+});
+runner.test('applyStateFilters фильтрует по студии, включая раздачи с несколькими студиями', () => {
+    const lostFilm = Object.assign({}, single, { release: Object.assign({}, single.release, { translators: ['LostFilm'] }) });
+    const multi = Object.assign({}, seasonPack, { release: Object.assign({}, seasonPack.release, { translators: ['Jetvis Studio', 'LostFilm'] }) });
+    const filtered = applyStateFilters([lostFilm, multi], Object.assign({}, state, { filters: Object.assign({}, state.filters, { translator: 'Jetvis Studio' }) }));
+    if (filtered.length !== 1 || filtered[0] !== multi) throw new Error('фильтр студии оставил неверный пул: ' + JSON.stringify(filtered));
+    const fallback = applyStateFilters([lostFilm], Object.assign({}, state, { filters: Object.assign({}, state.filters, { translator: 'Jetvis Studio' }) }));
+    if (fallback.length !== 1 || fallback[0] !== lostFilm) throw new Error('пустой результат должен возвращать исходный пул');
 });
 runner.test('evaluateCandidatePool возвращает счётчики и заголовки отсеянных по этапам', () => {
     const wrongSeason = {
@@ -386,7 +472,7 @@ runner.test('evaluateCandidatePool возвращает счётчики и за
     const voiceFiltered = evaluateCandidatePool([
         Object.assign({}, single, { release: Object.assign({}, single.release, { voiceType: 'Дубляж' }) }),
         Object.assign({}, seasonPack, { release: Object.assign({}, seasonPack.release, { voiceType: 'Оригинал' }) })
-    ], target, Object.assign({}, state, { voiceType: 'Дубляж' }));
+    ], target, Object.assign({}, state, { filters: Object.assign({}, state.filters, { voiceType: 'Дубляж' }) }));
     if (voiceFiltered.stateFilteredCount !== 1 || voiceFiltered.afterStateFilters !== 1) throw new Error(JSON.stringify(voiceFiltered));
     if (voiceFiltered.stateFilteredTitles[0] !== seasonPack.title) throw new Error(JSON.stringify(voiceFiltered));
 });
@@ -424,31 +510,31 @@ runner.test('fetchEnglishTitle: TMDB en-US lookup, ok(\'\') (не error) при 
 runner.test('buildFilterItems — содержит измерение Битрейт только с реальными бакетами пула', () => {
     const items = buildFilterItems(tvMovie, true, state);
     const bitrate = items.find((i) => i.kind === 'bitrate');
-    if (!bitrate) throw new Error('нет пункта Битрейт');
+    if (!bitrate) throw new Error('нет пункта Поток (оценка)');
     const keys = bitrate.items.map((i) => i.value);
     // single (S02E07, 2.5 ГБ) → ~15 Mbps → b12; pack (S1-5E1-62, 120 ГБ) → ~11.7 → b5-12
     if (keys.indexOf('b5-12') < 0 || keys.indexOf('b12') < 0) throw new Error('ожидал бакеты b5-12 и b12: ' + JSON.stringify(keys));
 });
 
-runner.test('activeFilterLabels включает выбранный битрейт', () => {
-    const l = activeFilterLabels({ voiceType: 'any', resolution: 'any', bitrate: 'b5-12' });
+runner.test('activeFilterLabels включает выбранный payload-бакет', () => {
+    const l = activeFilterLabels({ filters: { voiceType: 'any', resolution: 'any', bitrate: 'b5-12' } });
     if (l.join(',') !== '5–12 Мбит/с') throw new Error(JSON.stringify(l));
 });
 
-runner.test('applyStateFilters фильтрует по битрейт-бакету', () => {
-    const low = applyStateFilters(state.pool, { ...state, bitrate: 'b12' });
+runner.test('applyStateFilters фильтрует по payload-бакету', () => {
+    const low = applyStateFilters(state.pool, Object.assign({}, state, { filters: Object.assign({}, state.filters, { bitrate: 'b12' }) }));
     if (low.length !== 1 || low[0] !== single) throw new Error('b12 должен оставить только single');
-    const mid = applyStateFilters(state.pool, { ...state, bitrate: 'b5-12' });
+    const mid = applyStateFilters(state.pool, Object.assign({}, state, { filters: Object.assign({}, state.filters, { bitrate: 'b5-12' }) }));
     if (mid.length !== 1 || mid[0] !== seasonPack) throw new Error('b5-12 должен оставить только пак');
 });
 
-runner.test('candidateBadgeText показывает расчётный битрейт', () => {
-    const withScore = Object.assign({}, single, { _score: { bitrateMbps: 15.2 } });
+runner.test('candidateBadgeText показывает оценку payload-потока', () => {
+    const withScore = Object.assign({}, single, { _score: { payloadMbps: 15.2, payloadConfidence: 'high' } });
     const text = candidateBadgeText(withScore);
-    if (text.indexOf('~15.2 Mbps') < 0) throw new Error('нет битрейта в бейдже: ' + text);
+    if (text.indexOf('~15.2 Mbps') < 0) throw new Error('нет оценки потока в бейдже: ' + text);
 });
 
-runner.test('формат: рискованная раздача (XviD AVI) получает штраф и маркер «Риск:»', () => {
+runner.test('формат: рискованная раздача (XviD AVI) получает GST-штраф и маркер', () => {
     const riskyItem = {
         title: 'Фильм (2003) 720p XviD AVI', tracker: 'RuTracker', size: 1400000000,
         seeders: 10, peers: 5, magnet: 'magnet:?xt=urn:btih:ee', link: '',
@@ -463,7 +549,7 @@ runner.test('формат: рискованная раздача (XviD AVI) по
     const riskyScore = scoreCandidate(riskyItem, target);
     const likelyScore = scoreCandidate(likelyItem, target);
     if (!(riskyScore.value < likelyScore.value)) throw new Error('рискованный не штрафуется: ' + riskyScore.value + ' vs ' + likelyScore.value);
-    if (candidateBadgeText(riskyItem).indexOf('Риск: XviD') < 0) throw new Error('нет маркера «Риск:»: ' + candidateBadgeText(riskyItem));
+    if (candidateBadgeText(riskyItem).indexOf('GST-риск: XviD') < 0) throw new Error('нет маркера GST-риска: ' + candidateBadgeText(riskyItem));
 });
 
 runner.test('выбор файла: фильм не использует episode/season scoring и выбирает основной файл', () => {

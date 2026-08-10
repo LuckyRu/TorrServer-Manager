@@ -37,6 +37,12 @@
             return unsubscribe;
         }
 
+        function scopedSubscribeSelector(store, select, listener, equal) {
+            var unsubscribe = store.subscribeSelector(select, listener, equal);
+            track(unsubscribe);
+            return unsubscribe;
+        }
+
         function child() {
             var nested = createLifecycle();
             var nestedDispose = nested.dispose;
@@ -65,6 +71,7 @@
             setTimeout: scopedSetTimeout,
             setInterval: scopedSetInterval,
             subscribe: scopedSubscribe,
+            subscribeSelector: scopedSubscribeSelector,
             child: child,
             dispose: dispose
         };

@@ -5,24 +5,54 @@
     import { log } from '../shared/core/log.js';
 
     function mapTorrent(raw, parseReleaseForMode) {
-        if (!raw) return null;
+        if (!raw) {
+            log('search', 'metadata-parse: пустая запись раздачи', { accepted: false });
+            return null;
+        }
         var magnet = raw.MagnetUri || raw.Magnet || '';
         var link = raw.Link || raw.downloadUrl || '';
         if (!magnet && /^magnet:/i.test(link)) magnet = link;
-        if (!magnet && !link) return null;
         var title = raw.Title || raw.title || 'Без названия';
         var published = Date.parse(raw.PublishDate || raw.publishDate || raw.pubDate || '');
-        return {
+        var release = null;
+        var parseError = '';
+        if (parseReleaseForMode) {
+            try {
+                release = parseReleaseForMode(title);
+            } catch (error) {
+                parseError = String(error && error.message || error);
+            }
+        }
+        var rawLeechers = raw.Peers !== undefined ? raw.Peers : (raw.Peer !== undefined ? raw.Peer : raw.leechers);
+        var leechers = parseInt(rawLeechers, 10) || 0;
+        var item = {
             title: title,
             tracker: raw.Tracker || raw.indexer || '',
             size: raw.Size || raw.size || 0,
             seeders: parseInt(raw.Seeders || raw.Seed || raw.seeders, 10) || 0,
-            peers: parseInt(raw.Peers || raw.Peer || raw.leechers, 10) || 0,
+            leechers: leechers,
+            peers: leechers,
             publishedAt: isNaN(published) ? 0 : published,
             magnet: magnet,
             link: link,
-            release: parseReleaseForMode ? parseReleaseForMode(title) : null
+            release: release
         };
+        log('search', 'metadata-parse: раздача', {
+            accepted: Boolean(magnet || link) && !parseError,
+            title: title,
+            tracker: item.tracker,
+            hasMagnet: Boolean(magnet),
+            hasLink: Boolean(link),
+            size: item.size,
+            seeders: item.seeders,
+            leechers: item.leechers,
+            publishedAt: item.publishedAt,
+            metadata: release,
+            parseError: parseError
+        });
+        if (!magnet && !link) return null;
+        if (parseError) return null;
+        return item;
     }
 
     function filterSearchNoise(items, target, source, query) {

@@ -67,6 +67,19 @@ runner.test('isCurrentGeneration: isStillValid true and generation matches → t
     }
 });
 
+runner.test('store.subscribeSelector реагирует только на изменившуюся проекцию', () => {
+    const store = createStore({ pool: [], filters: { translator: 'any' }, status: 'idle' });
+    const calls = [];
+    store.subscribeSelector(
+        (state) => [state.pool, state.filters],
+        (next, previous) => calls.push({ next, previous }),
+        (left, right) => left[0] === right[0] && left[1] === right[1]
+    );
+    store.patch({ status: 'loading' });
+    store.patch({ filters: { translator: 'LostFilm' } });
+    if (calls.length !== 1 || calls[0].next[1].translator !== 'LostFilm') throw new Error(JSON.stringify(calls));
+});
+
 runner.test('createLifecycle: isAlive() starts true', () => {
     const lifecycle = createLifecycle();
     if (!lifecycle.isAlive()) throw new Error('только что созданный lifecycle должен быть alive');

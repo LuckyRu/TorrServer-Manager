@@ -68,7 +68,7 @@ const releaseCases = [
     ['Дюна: Часть вторая / Dune: Part Two (2024) Blu-Ray Remux 2160p | 4K | HDR | Dolby Vision P7',
         { resolution: '2160p', sourceType: 'Remux', hdr: 'DV' }],
     ['Дюна / Dune: Part One (Дени Вильнёв) [2021, Фантастика, боевик, драма, приключения, BDRip] Dub (Пифагор) + Sub (Rus/Eng) + hardsub (Rus)',
-        { sourceType: 'BDRip', voiceType: 'Дубляж', translator: 'Пифагор', subtitles: true }],
+        { sourceType: 'BDRip', voiceType: 'Дубляж', translators: ['Пифагор'], subtitles: true }],
     ['Интерстеллар / Interstellar (2014) BDRip [H.265/1080p] [10-bit] [IMAX Edition]',
         { resolution: '1080p', sourceType: 'BDRip', videoCodec: 'H.265' }],
     ['Гладиатор 2 / Gladiator II (2024) WEBRip [H.264/1080p]',
@@ -78,13 +78,19 @@ const releaseCases = [
     ['Во всё тяжкое / Ричард прощается / The Professor (Уэйн Робертс) [2018, Драма, комедия, BDRip] [DUB] [iTunes]',
         { sourceType: 'BDRip', voiceType: 'Дубляж' }],
     ['Сериал S01 1080p WEB-DL Кубик.в.Кубе',
-        { resolution: '1080p', sourceType: 'WEB-DL', translator: 'Кубик в Кубе' }]
+        { resolution: '1080p', sourceType: 'WEB-DL', translators: ['Кубик в Кубе'] }],
+    ["Clarkson's Farm S04 1080p WEBRip MVO (Jetvis Studio)",
+        { resolution: '1080p', sourceType: 'WEBRip', voiceType: 'Многоголосый', translators: ['Jetvis Studio'] }],
+    ['Clarkson\'s Farm S02E1-8 2160p HDR 3x MVO (Alexfilm, Coldfilm, RuDub) + DVO (Vodnerilo)',
+        { seasons: [2], episodeFrom: 1, episodeTo: 8, hdr: 'HDR', audioTracks: 3,
+            translators: ['AlexFilm', 'ColdFilm', 'RuDub', 'Vodnerilo'] }]
 ];
 for (const [title, expected] of releaseCases) {
     test('release: ' + title.slice(0, 60) + '…', () => {
         const r = parseRelease(title);
         for (const [key, value] of Object.entries(expected)) {
-            assert.equal(r[key], value, `поле "${key}"`);
+            if (Array.isArray(value)) assert.deepEqual(r[key], value, `поле "${key}"`);
+            else assert.equal(r[key], value, `поле "${key}"`);
         }
     });
 }
@@ -141,6 +147,8 @@ const formatCases = [
     ['Фильм (2024) 1080p HDR10 Dolby Vision', { hdr: 'DV' }],
     // HDR10
     ['Фильм (2024) 1080p HDR10', { hdr: 'HDR' }],
+    ['Фильм (2024) 2160p HDR', { hdr: 'HDR' }],
+    ['Сериал Сезоны: 1-2 Эпизоды: 1-16', { seasons: [1, 2], epFrom: 1, epTo: 16 }],
     // 5.1 каналы
     ['Фильм (2024) 1080p 5.1 AC3', { audioChannels: '5.1' }]
 ];

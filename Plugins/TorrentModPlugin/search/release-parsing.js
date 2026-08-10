@@ -8,28 +8,40 @@
         return '';
     }
 
-    function containsWord(source, word) {
+    function wordPattern(word) {
         var pattern = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s._-]+');
-        return new RegExp('(?:^|[^a-zа-яё0-9])' + pattern + '(?:[^a-zа-яё0-9]|$)', 'i').test(source);
+        return new RegExp('(?:^|[^a-zа-яё0-9])' + pattern + '(?:[^a-zа-яё0-9]|$)', 'i');
+    }
+
+    function containsWord(source, word) {
+        return wordPattern(word).test(source);
     }
 
     var TRANSLATOR_STUDIOS = [
-        'LostFilm', 'NewStudio', 'Jaskier', 'AlexFilm', 'HDrezka', 'HDRezka', 'ColdFilm',
+        'LostFilm', 'NewStudio', 'Jaskier', 'AlexFilm', 'Jetvis Studio', 'HDrezka', 'ColdFilm',
         'FocusStudio', 'Red Head Sound', 'RHS', 'Кубик в Кубе', 'Кураж-Бамбей', 'NewComers',
         'FreedomDub', 'SkySound', 'Wednesday Films', 'Гоблин', 'GoblinRUS', 'Пифагор',
-        'ViruseProject', 'START', 'ПКино', 'ProFilms'
+        'ViruseProject', 'START', 'ПКино', 'ProFilms', 'RuDub', 'Vodnerilo'
     ];
 
-    function extractTranslator(source) {
+    function extractTranslators(source) {
+        var found = [];
         for (var i = 0; i < TRANSLATOR_STUDIOS.length; i++) {
-            if (containsWord(source, TRANSLATOR_STUDIOS[i])) return TRANSLATOR_STUDIOS[i];
+            var studio = TRANSLATOR_STUDIOS[i];
+            var match = wordPattern(studio).exec(source);
+            if (!match) continue;
+            var index = match.index + match[0].indexOf(studio.charAt(0));
+            var duplicate = found.some(function (item) { return item.name.toLowerCase() === studio.toLowerCase(); });
+            if (!duplicate) found.push({ name: studio, index: index });
         }
-        return '';
+        found.sort(function (a, b) { return a.index - b.index; });
+        return found.map(function (item) { return item.name; });
     }
 
     function extractAudioTracks(source) {
         if (/\bdual[\s._-]*audio\b/i.test(source)) return 2;
-        var match = source.match(/\b(\d)\s*x\s*audio\b/i) || source.match(/\b(\d)\s*audio\s*track/i);
+        var match = source.match(/\b(\d{1,2})\s*x\s*(?:audio|mvo|dvo|dub(?:bing)?|voice[\s_-]*over)\b/i) ||
+            source.match(/\b(\d{1,2})\s*audio\s*track/i);
         return match ? parseInt(match[1], 10) || 0 : 0;
     }
 
@@ -59,7 +71,7 @@
                 [/\bhdrip\b/i, 'HDRip'],
                 [/\bcamrip\b|\bts\b/i, 'CAM']
             ]),
-            hdr: /\bdolby ?vision\b|\bdv\b/i.test(source) ? 'DV' : (/\bhdr10?\+?\b/i.test(source) ? 'HDR' : ''),
+            hdr: /\bdolby ?vision\b|\bdv\b/i.test(source) ? 'DV' : (/\bhdr(?:10)?\+?\b/i.test(source) ? 'HDR' : ''),
             audioChannels: matchOne(source, [[/\b7\.1\b/, '7.1'], [/\b5\.1\b/, '5.1'], [/\b2\.0\b/, '2.0']]),
             audioTracks: extractAudioTracks(source),
             voiceType: matchOne(source, [
@@ -68,7 +80,7 @@
                 [/\bavo\b|одноголос/i, 'Одноголосый'],
                 [/\borig(inal)?\b|ориг(инал)?/i, 'Оригинал']
             ]),
-            translator: extractTranslator(source),
+            translators: extractTranslators(source),
             subtitles: /\bsub\b|\bsubs\b|субтитр/i.test(source),
             videoCodec: matchOne(source, [
                 [/\bav1\b/i, 'AV1'],
@@ -107,7 +119,7 @@
     export function computeCompatibility(release, source) {
         if (release.videoCodec === 'H.264' || release.videoCodec === 'H.265') return 'likely';
         if (RISKY_CODECS.indexOf(release.videoCodec) >= 0) return 'risky';
-        if (release.videoCodec === 'AV1') return 'risky'; // old WebOS sets lack AV1 decode
+        if (release.videoCodec === 'AV1') return 'risky'; // GST can decode it, but transcoding cost is higher than remuxing H.264/H.265.
         if (RISKY_CONTAINERS.indexOf(release.container) >= 0) return 'risky';
         if (release.sourceType === 'DVDRip') return 'risky'; // raw DVD rip without stated codec
         if (/\b(?:raw|video_ts|iso|dvd5|dvd9)\b/i.test(source)) return 'risky';

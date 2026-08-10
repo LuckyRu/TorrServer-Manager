@@ -6,6 +6,8 @@
     var QUALITY_CACHE_KEY = 'torrent_mod_last_quality';
     var BITRATE_DEFAULT_KEY = 'torrent_mod_bitrate';
     var BITRATE_CACHE_KEY = 'torrent_mod_last_bitrate';
+    var TRANSLATOR_DEFAULT_KEY = 'torrent_mod_translator';
+    var TRANSLATOR_CACHE_KEY = 'torrent_mod_last_translator';
     var PER_MOVIE_CACHE_MAX = 200;
 
     function rememberVoice(movie, value) {
@@ -35,35 +37,55 @@
         } catch (e) {}
     }
 
+    function rememberTranslator(movie, value) {
+        try {
+            Lampa.Storage.set(TRANSLATOR_DEFAULT_KEY, value);
+            var last = Lampa.Storage.cache(TRANSLATOR_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            last[movie.id] = value;
+            Lampa.Storage.set(TRANSLATOR_CACHE_KEY, last);
+        } catch (e) {}
+    }
+
     export function createFiltersInteractor(options) {
         var store = options.store;
         var movie = options.movie;
 
+        function patchFilters(partial) {
+            store.patch({ filters: Object.assign({}, store.get().filters, partial) });
+        }
+
         function resetFilters() {
             rememberVoice(movie, 'any');
+            rememberTranslator(movie, 'any');
             rememberQuality(movie, 'any');
             rememberBitrate(movie, 'any');
-            store.patch({ voiceType: 'any', resolution: 'any', bitrate: 'any' });
+            patchFilters({ voiceType: 'any', translator: 'any', resolution: 'any', bitrate: 'any' });
         }
 
         function setVoiceFilter(value) {
             rememberVoice(movie, value);
-            store.patch({ voiceType: value });
+            patchFilters({ voiceType: value });
         }
 
         function setResolutionFilter(value) {
             rememberQuality(movie, value);
-            store.patch({ resolution: value });
+            patchFilters({ resolution: value });
+        }
+
+        function setTranslatorFilter(value) {
+            rememberTranslator(movie, value);
+            patchFilters({ translator: value });
         }
 
         function setBitrateFilter(value) {
             rememberBitrate(movie, value);
-            store.patch({ bitrate: value });
+            patchFilters({ bitrate: value });
         }
 
         return {
             resetFilters: resetFilters,
             setVoiceFilter: setVoiceFilter,
+            setTranslatorFilter: setTranslatorFilter,
             setResolutionFilter: setResolutionFilter,
             setBitrateFilter: setBitrateFilter
         };
@@ -79,6 +101,10 @@
             var lastVoice = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
             if (lastVoice[movie.id]) voiceType = lastVoice[movie.id];
 
+            var translator = Lampa.Storage.get(TRANSLATOR_DEFAULT_KEY, 'any');
+            var lastTranslator = Lampa.Storage.cache(TRANSLATOR_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            if (lastTranslator[movie.id]) translator = lastTranslator[movie.id];
+
             var resolution = Lampa.Storage.get(QUALITY_DEFAULT_KEY, 'any');
             var lastQuality = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
             if (lastQuality[movie.id]) resolution = lastQuality[movie.id];
@@ -87,6 +113,6 @@
             var lastBitrate = Lampa.Storage.cache(BITRATE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
             if (lastBitrate[movie.id]) bitrate = lastBitrate[movie.id];
 
-            store.patch({ season: season, voiceType: voiceType, resolution: resolution, bitrate: bitrate });
+            store.patch({ season: season, filters: { voiceType: voiceType, translator: translator, resolution: resolution, bitrate: bitrate } });
         } catch (e) {}
     }

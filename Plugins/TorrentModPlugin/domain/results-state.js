@@ -1,7 +1,7 @@
     import { createInitialState } from './results-core.js';
 
     export function createInitialResultsState(object) {
-        var base = createInitialState(object); // season, voiceType, resolution, bitrate — unchanged shape
+        var base = createInitialState(object);
         return Object.assign(base, {
             episodesStatus: 'idle',   // 'idle' | 'loading' | 'ready' | 'error' (TMDB season list)
             poolStatus: 'idle',       // the whole-work torrent pool (all seasons for a series)

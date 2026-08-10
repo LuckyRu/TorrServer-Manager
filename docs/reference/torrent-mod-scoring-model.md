@@ -2,7 +2,8 @@
 
 Формулы и пороги. За обоснованием и историей — в
 [`system-design/torrent-mod-search-pipeline.md`](../system-design/torrent-mod-search-pipeline.md).
-Источник истины — `scoreCandidate()`/`passesMatchGate()`/`estimateBitrateMbps()` в `TorrentModPlugin.js`.
+Источник истины — `scoreCandidate()`/`passesMatchGate()`/`estimatePayload()` в
+`Plugins/TorrentModPlugin/search/scoring.js`.
 
 ## Гейт (`passesMatchGate`) — кандидат либо проходит целиком, либо не участвует
 
@@ -46,31 +47,78 @@ extractTitleSegments(rawTitle):
 `defaultSearchName()` предпочитают его вместо `original_title` — и для текста запроса в Jackett,
 и для списка эталонных названий при сопоставлении.
 
-## `qualityScore` — треугольный пик
+## `estimatePayload()` — оценка потока всего payload, не видеобитрейт
 
 ```
-REFERENCE_BITRATE_MBPS = { '2160p': 18, '1080p': 6, '720p': 3, '480p': 1.5 }
-reference   = REFERENCE_BITRATE_MBPS[resolution] × (codec === 'H.265' ? 0.6 : 1)
-deviation   = |bitrateMbps − reference| / reference
-qualityScore = max(0, 20 × (1 − deviation))
-+ 10, если resolution === torrent_mod_preferred_quality (настройка) и она не 'any'
+payloadMbps = torrentSizeBytes × 8 / (estimatedDurationMinutes × 60 × 1_000_000)
 ```
 
-`bitrateMbps` = `estimateBitrateMbps(item, target)`:
+В числителе размер всего торрента: видео, все аудиодорожки, субтитры и дополнительные файлы.
+Поэтому поле называется `payloadMbps`, а не `bitrateMbps`.
+
+Результат содержит `confidence: high | medium | low | none`, число покрытых серий, длительность и
+текстовое объяснение. Оценка не строится вовсе, если неизвестна длительность фильма/серий или охват:
+fallback `42 минуты` удалён.
+
+Охват определяется так:
+
+- фильм — один файл, длительность из TMDB;
+- явный диапазон одной серии/сезона — количество эпизодов из заголовка;
+- один сезон без диапазона — `episode_count` TMDB;
+- несколько сезонов без диапазона — сумма `episode_count` всех названных сезонов;
+- многосезонный `E1-N`: если `N` похож на диапазон внутри каждого сезона, используется сумма TMDB;
+  иначе диапазон считается сквозным;
+- релиз без season/episode-сигналов получает только низкую уверенность.
+
+Для текущего сезона используются точные runtime эпизодов TMDB, когда доступен полный диапазон;
+иначе — средняя длительность с понижением confidence.
+
+## `qualityScore` — визуальные метаданные и только low-payload penalty
+
 ```
-covered            = release.explicitEpisode ? (episodeTo − episodeFrom + 1) : max(1, target.seasonEpisodeCount || 1)
-perEpisodeBytes     = item.size / covered
-runtimeSeconds      = (target.avgRuntimeMinutes || 42) × 60
-bitrateMbps         = perEpisodeBytes × 8 / (runtimeSeconds × 1_000_000)
+resolution = { 2160p: 16, 1080p: 12, 720p: 7, 480p: 3, unknown: 6 }
+source     = { Remux: 4, BDRip: 3, WEB-DL: 3, WEBRip: 2, HDTV/HDRip: 1 }
+hdr        = +2
 ```
+
+Высокий payload не уменьшает качество. Оценка потока используется только как слабое свидетельство
+недостаточного кодирования. Минимумы H.264: `2160p→10, 1080p→3.5, 720p→1.8, 480p→0.8`; для H.265
+они умножаются на `0.6`, для HDR — на `1.15`. Максимальный штраф — 8 баллов и масштабируется по
+confidence (`high=1`, `medium=0.65`, `low=0.25`, `none=0`).
+
+Ограничение высокого потока остаётся явным пользовательским фильтром, а не скрытым штрафом качества.
 
 ## `availabilityScore`
 
 ```
-availabilityScore = min(24, log(seeders + peers × 1.5 + 1) × 6)
+if seeders == 0: availabilityScore = 0
+else:
+  seedScore   = min(20, ln(seeders + 1) × 5)
+  demandScore = min(2, ln(leechers + 1) × 0.4)
+  availabilityScore = seedScore + demandScore
 ```
 
-## `matchScore` — только для отображения/отладки, в ранжирование не входит
+`raw.Peers` Jackett — число leechers. Оно хранится как `item.leechers`; `item.peers` оставлен как
+совместимый alias. Личеры дают только небольшой сигнал спроса и никогда не создают доступность без
+хотя бы одного сидера.
+
+## `streamingRiskPenalty`
+
+Число сидеров не гарантирует скорость, но до подключения к swarm это единственный доступный proxy
+устойчивости. Для оценок payload с `high`/`medium` confidence:
+
+```
+requiredSeeders = max(3, payloadMbps × 1.25)
+если seeders < requiredSeeders:
+  streamingRiskPenalty = 8 × (1 − seeders / requiredSeeders) × confidenceWeight
+confidenceWeight: high=1, medium=0.65
+```
+
+Штраф не объявляет раздачу непригодной: он ставит более лёгкий поток с существенно более здоровым
+swarm выше тяжёлой раздачи с малым запасом по сидерам. Точную скорость можно измерить только после
+регистрации выбранного торрента, поэтому все кандидаты заранее не прогреваются.
+
+## `matchScore` и `matchConfidenceScore`
 
 ```
 matchScore = round(titleSimilarity × 40)
@@ -78,13 +126,27 @@ matchScore = round(titleSimilarity × 40)
            + (target.episode && release.explicitEpisode && episode в диапазоне ? 40 : 0)
 ```
 
+После hard gate в итог входит небольшой `matchConfidenceScore = clamp(matchScore / 25, 0, 4)`.
+Поэтому точные season/episode-сигналы разбивают близкие результаты, но не перекрывают качество и swarm.
+
+## `pipelinePenalty`
+
+- `RAW DVD`: `8`;
+- AV1: `3` из-за стоимости декодирования/транскодирования;
+- остальные рискованные legacy-кодеки/контейнеры: `5`.
+
+Это риск серверного GST-пайплайна, а не способность браузера декодировать исходный файл.
+
 ## Итог и автоплей
 
 ```
-value = qualityScore + availabilityScore   // matchScore не входит — он уже отработал как гейт
+value = qualityScore + availabilityScore + matchConfidenceScore
+        - streamingRiskPenalty - pipelinePenalty
 
 confident =
-  best.availabilityScore >= MIN_AVAILABILITY_FOR_AUTOPLAY (3)
+  best.seeders >= 3
+  && best.matchScore >= 40
+  && best.availabilityScore >= MIN_AVAILABILITY_FOR_AUTOPLAY (4)
   && (!next || best.value − next.value >= 6 || best.seeders > next.seeders × 2)
 ```
 
@@ -96,16 +158,18 @@ confident =
   «N дн. назад» / `MMM YYYY` (>30 дней).
 - `audioChannels`, `subtitles` — из `parseRelease()`, показываются в подписи кандидата в пикере, в скоринг
   не входят.
-- `translator` — студия перевода из `parseRelease()`, по курируемому неполному списку
+- `translators` — список студий перевода из `parseRelease()`, по курируемому неполному списку
   `TRANSLATOR_STUDIOS` (LostFilm, NewStudio, Jaskier, Кубик в Кубе, Кураж-Бамбей и др.), матчится
   через `containsWord()` — ручная проверка границ слова, устойчивая к кириллице (обычный regex
   `\b` не формирует границу вокруг кириллических слов), и допускает точки/подчёркивания/дефисы
-  вместо пробелов (`Кубик.в.Кубе` == `Кубик в Кубе`). Предпочитается перед общим `voiceType`
-  везде, где строится инфо-строка кандидата (бейджи, пикер, debug-таблица), но **не** участвует в
-  фильтре «Перевод» — смешение конкретных студий и общих категорий МПВ/АПВ/Дубляж в одном списке
-  посчитано нежелательным.
-- `sourceType` — тип источника (WEB-DL/BDRip/Remux/HDTV/...) из `parseRelease()`, отображается, в
-  скоринг не входит.
+  вместо пробелов (`Кубик.в.Кубе` == `Кубик в Кубе`). Все найденные студии сохраняются в порядке
+  появления в title и отображаются вместе; список предпочитается перед общим `voiceType`
+  везде, где строится инфо-строка кандидата (бейджи, пикер, debug-таблица). Список студий не хранится в
+  state: `poolTranslators(state.pool)` вычисляет уникальные значения в порядке появления. Пользовательский
+  выбор хранится отдельно в `state.filters.translator` (или `'any'`). Фильтр «Студия» матчится по любому
+  элементу массива, поэтому раздача с несколькими студиями остаётся доступной для каждой из них.
+- `sourceType` — тип источника (WEB-DL/BDRip/Remux/HDTV/...) из `parseRelease()`. Отображается и
+  даёт небольшой вклад в `qualityScore`, который не может перекрыть большую разницу в доступности.
 - `audioTrackCount` — число аудиодорожек из `parseRelease()`, отображается, в скоринг не входит.
 
 ## Связь со стартом playback

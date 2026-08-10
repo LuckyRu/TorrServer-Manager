@@ -2,7 +2,7 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
     import { candidateBadgeText, candidateSubtitleText, candidateIdentity } from '../domain/results-core.js';
-    import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress, selectPoolIndexers } from '../domain/results-selectors.js';
+    import { selectFilterChipData, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress, selectPoolIndexers } from '../domain/results-selectors.js';
 
     export function createResultsView(options) {
         var object = options.object;
@@ -140,6 +140,7 @@
                 return;
             }
             if (a.kind === 'voice') domain.filters.setVoiceFilter(b.value);
+            else if (a.kind === 'translator') domain.filters.setTranslatorFilter(b.value);
             else if (a.kind === 'quality') domain.filters.setResolutionFilter(b.value);
             else if (a.kind === 'bitrate') domain.filters.setBitrateFilter(b.value);
             restoreContentFocus();
@@ -315,11 +316,6 @@
             hideSearchChip();
         }
 
-        function refreshFilterOptions(filterItems) {
-            filter.set('filter', filterItems);
-            hideSearchChip();
-        }
-
         function hideSearchChip() {
             toolbar.find('.filter--search').remove();
         }
@@ -433,43 +429,66 @@
             }
         }
 
-        function render(state, previous) {
-            if (state.stage !== previous.stage || state.episodesCache !== previous.episodesCache ||
-                state.candidates !== previous.candidates || state.message !== previous.message) {
-                if (state.stage === 'episodes') renderEpisodes(state.episodesCache, state.season);
-                else if (state.stage === 'candidates') renderCandidateList(state.candidates.items, state.candidates.target, state.candidates.canReturnToEpisodeList);
-                else if (state.stage === 'message') showMessage(state.message.text, state.message.retry);
-            }
-            if (state.pool !== previous.pool || state.episodesCache !== previous.episodesCache ||
-                state.stage !== previous.stage || (previous.picker.open && !state.picker.open)) {
-                updateEpisodeBadges(selectEpisodeBadges(object, state, domain.selection.getSeasonDefault(state.season)));
-            }
-            if (state.voiceType !== previous.voiceType || state.resolution !== previous.resolution ||
-                state.bitrate !== previous.bitrate || state.season !== previous.season) {
-                syncFilterChips(selectFilterChipData(state, movie, hasSeasons));
-            } else if (state.pool !== previous.pool) {
-                refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));
-            }
-            var progressNow = selectSearchProgress(state);
-            var progressPrev = selectSearchProgress(previous);
-            var statusTextNow = selectStatusText(state);
-            if (statusTextNow !== selectStatusText(previous) || progressNow.stage !== progressPrev.stage) {
-                setStatus(statusTextNow, progressNow.stage === 'loading');
-            }
-            if (state.poolIndexers !== previous.poolIndexers || state.poolAllIndexers !== previous.poolAllIndexers) {
-                renderTrackers(selectPoolIndexers(state));
-            }
-            ensureStatusTicking(progressNow.stage);
-            if (state.picker.open !== previous.picker.open) {
-                if (state.picker.open) openPickerPanel();
-                else hidePickerDom();
-            } else if (state.picker.open && (state.pool !== previous.pool ||
-                state.seasonLoads !== previous.seasonLoads || state.picker.episode !== previous.picker.episode)) {
-                openPickerPanel();
-            }
+        function sameTuple(left, right) {
+            if (left === right) return true;
+            if (!left || !right || left.length !== right.length) return false;
+            for (var i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
+            return true;
         }
 
-        domain.scope.subscribe(domain.store, render);
+        function renderContent(content) {
+            var state = domain.store.get();
+            if (content[0] === 'episodes') renderEpisodes(content[1], state.season);
+            else if (content[0] === 'candidates') renderCandidateList(content[2].items, content[2].target, content[2].canReturnToEpisodeList);
+            else if (content[0] === 'message') showMessage(content[3].text, content[3].retry);
+        }
+
+        domain.scope.subscribeSelector(domain.store,
+            function (state) { return [state.stage, state.episodesCache, state.candidates, state.message]; },
+            renderContent,
+            sameTuple
+        );
+        domain.scope.subscribeSelector(domain.store,
+            function (state) {
+                return [state.pool, state.episodesCache, state.poolStatus, state.seasonLoads, state.season, state.filters, state.stage, state.picker, state.seasonEpisodeCount, state.avgRuntimeMinutes];
+            },
+            function () {
+                var state = domain.store.get();
+                updateEpisodeBadges(selectEpisodeBadges(object, state, domain.selection.getSeasonDefault(state.season)));
+            },
+            sameTuple
+        );
+        domain.scope.subscribeSelector(domain.store,
+            function (state) { return [state.season, state.pool, state.filters, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
+            function () { syncFilterChips(selectFilterChipData(domain.store.get(), movie, hasSeasons)); },
+            sameTuple
+        );
+        domain.scope.subscribeSelector(domain.store,
+            function (state) {
+                var progress = selectSearchProgress(state);
+                return [selectStatusText(state), progress.stage];
+            },
+            function (presentation) {
+                setStatus(presentation[0], presentation[1] === 'loading');
+                ensureStatusTicking(presentation[1]);
+            },
+            sameTuple
+        );
+        domain.scope.subscribeSelector(domain.store,
+            function (state) { return [state.poolIndexers, state.poolAllIndexers]; },
+            function () { renderTrackers(selectPoolIndexers(domain.store.get())); },
+            sameTuple
+        );
+        domain.scope.subscribeSelector(domain.store,
+            function (state) { return [state.picker, state.pool, state.poolStatus, state.seasonLoads, state.season, state.filters, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
+            function (presentation, previous) {
+                if (presentation[0].open) openPickerPanel();
+                else if (previous[0].open) hidePickerDom();
+            },
+            sameTuple
+        );
+
+        ensureStatusTicking(selectSearchProgress(domain.store.get()).stage);
 
         function renderComponent(js) {
             return explorer.render(js);

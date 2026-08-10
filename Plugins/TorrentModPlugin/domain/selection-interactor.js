@@ -42,9 +42,37 @@
                 matchGateFiltered: evaluation.gateFilteredCount,
                 filtered: evaluation.filteredCount,
                 candidates: evaluation.items.length,
+                ranking: evaluation.items.slice(0, 15).map(function (item, index) {
+                    var score = item._score || {};
+                    return {
+                        rank: index + 1,
+                        title: item.title,
+                        seeders: item.seeders,
+                        leechers: item.leechers !== undefined ? item.leechers : item.peers,
+                        payloadMbps: score.payloadMbps ? Math.round(score.payloadMbps * 100) / 100 : null,
+                        payloadConfidence: score.payloadConfidence || 'none',
+                        payloadCoverageEpisodes: score.payloadCoverageEpisodes || 0,
+                        payloadDurationMinutes: score.payloadDurationMinutes || 0,
+                        payloadReason: score.payloadReason || '',
+                        match: score.matchScore,
+                        matchBonus: score.matchConfidenceScore,
+                        quality: score.qualityScore,
+                        availability: score.availabilityScore,
+                        streamingRiskPenalty: score.streamingRiskPenalty,
+                        pipelinePenalty: score.pipelinePenalty,
+                        value: score.value
+                    };
+                }),
                 stages: evaluation.stages,
                 rejectedTitles: evaluation.rejectedTitles
             });
+        }
+
+        function sameTuple(left, right) {
+            if (left === right) return true;
+            if (!left || !right || left.length !== right.length) return false;
+            for (var i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
+            return true;
         }
 
         scope.subscribe(store, function (state, previous) {
@@ -73,14 +101,13 @@
                     finally { replayingPendingSelection = false; }
                 }
             }
-
-            // Also refreshes on filter changes, not just pool growth, so the list never shows a stale snapshot.
-            if (!hasSeasons && moviePresentation && (
-                state.pool !== previous.pool || state.poolStatus !== previous.poolStatus ||
-                state.voiceType !== previous.voiceType || state.resolution !== previous.resolution ||
-                state.bitrate !== previous.bitrate
-            )) syncMoviePresentation();
         });
+
+        scope.subscribeSelector(store,
+            function (state) { return [state.pool, state.poolStatus, state.filters, state.avgRuntimeMinutes]; },
+            function () { if (!hasSeasons && moviePresentation) syncMoviePresentation(); },
+            sameTuple
+        );
 
         // pickerOnly: show the candidate list without auto-playing the top match.
         function finishSelection(candidates, target, pickerOnly) {
@@ -201,6 +228,7 @@
                 episode: 0,
                 seasonEpisodeCount: 0,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
+                episodes: [],
                 englishTitle: state.englishTitle
             };
         }
@@ -221,6 +249,7 @@
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
+                episodes: state.episodesCache || [],
                 englishTitle: state.englishTitle
             };
             store.patch({ lastEpisode: episode });

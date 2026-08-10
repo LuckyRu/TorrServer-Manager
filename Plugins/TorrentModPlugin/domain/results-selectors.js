@@ -27,6 +27,7 @@
             episode: number,
             seasonEpisodeCount: state.seasonEpisodeCount,
             avgRuntimeMinutes: state.avgRuntimeMinutes,
+            episodes: state.episodesCache || [],
             englishTitle: state.englishTitle
         };
     }

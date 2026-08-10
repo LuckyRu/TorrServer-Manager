@@ -75,6 +75,14 @@ runner.test('сериал: start → пул → смена сезона → фи
     const poolBefore = state.pool;
     const searchCallsBefore = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
     domain.episodes.setSeason(3);
+    const switchingSeason = domain.store.get();
+    if (switchingSeason.seasonEpisodeCount !== 0 || switchingSeason.avgRuntimeMinutes !== 0 || switchingSeason.episodesCache !== null) {
+        throw new Error('при смене сезона остались метаданные предыдущего сезона: ' + JSON.stringify({
+            count: switchingSeason.seasonEpisodeCount,
+            runtime: switchingSeason.avgRuntimeMinutes,
+            episodes: switchingSeason.episodesCache
+        }));
+    }
     await flushMicrotasks();
     const afterSeason = domain.store.get();
     if (afterSeason.season !== 3) throw new Error('сезон не сменился');
@@ -84,7 +92,11 @@ runner.test('сериал: start → пул → смена сезона → фи
 
     // фильтр
     domain.filters.setVoiceFilter('Дубляж');
-    if (domain.store.get().voiceType !== 'Дубляж') throw new Error('фильтр не применился');
+    if (domain.store.get().filters.voiceType !== 'Дубляж') throw new Error('фильтр не применился');
+    domain.filters.setTranslatorFilter('LostFilm');
+    if (domain.store.get().filters.translator !== 'LostFilm') throw new Error('фильтр студии не применился');
+    const savedTranslator = Lampa.Storage.get('torrent_mod_last_translator');
+    if (!savedTranslator || savedTranslator[tvMovie.id] !== 'LostFilm') throw new Error('фильтр студии не сохранился: ' + JSON.stringify(savedTranslator));
 
     // клик по серии — СРАЗУ воспроизведение (без полноэкранного списка кандидатов)
     domain.episodes.setSeason(2);

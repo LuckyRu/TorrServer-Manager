@@ -14,6 +14,18 @@
             };
         }
 
+        function subscribeSelector(select, listener, equal) {
+            var compare = equal || function (left, right) { return left === right; };
+            var selected = select(state);
+            return subscribe(function (nextState) {
+                var nextSelected = select(nextState);
+                if (compare(nextSelected, selected)) return;
+                var previousSelected = selected;
+                selected = nextSelected;
+                listener(nextSelected, previousSelected);
+            });
+        }
+
         function patch(partial) {
             var previous = state;
             state = Object.assign({}, state, partial);
@@ -21,5 +33,5 @@
             return state;
         }
 
-        return { get: get, subscribe: subscribe, patch: patch };
+        return { get: get, subscribe: subscribe, subscribeSelector: subscribeSelector, patch: patch };
     }
