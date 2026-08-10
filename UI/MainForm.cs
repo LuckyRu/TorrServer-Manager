@@ -29,11 +29,14 @@ internal sealed class MainForm : Form
     private readonly FfprobeService ffprobeService = new();
     private readonly GStreamerService gStreamerService = new();
     private readonly JackettController jackettController = new();
+    private readonly FlareSolverrController flareSolverrController = new();
     private readonly UpdateService updateService;
     private readonly PluginHub pluginHub = new();
     private readonly NotifyIcon trayIcon = new();
     private readonly System.Windows.Forms.Timer statusTimer = new() { Interval = 2500 };
+    private readonly System.Threading.Timer flareSolverrUpdateTimer;
     private readonly SemaphoreSlim refreshLock = new(1, 1);
+    private readonly SemaphoreSlim flareSolverrUpdateLock = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
 
     private readonly Label statusDot = new();
@@ -51,6 +54,10 @@ internal sealed class MainForm : Form
     private readonly Label jackettVersionValue = new();
     private readonly Label jackettLanAddress = new();
     private readonly Label jackettApiKeyValue = new();
+    private readonly Label flareSolverrDot = new();
+    private readonly Label flareSolverrStatusText = new();
+    private readonly Label flareSolverrDetails = new();
+    private readonly Label flareSolverrVersionValue = new();
     private readonly Button startButton;
     private readonly Button stopButton;
     private readonly Button restartButton;
@@ -62,6 +69,9 @@ internal sealed class MainForm : Form
     private readonly Button jackettRestartButton;
     private readonly Button jackettOpenButton;
     private readonly Button jackettUpdateButton;
+    private readonly Button flareSolverrStartButton;
+    private readonly Button flareSolverrStopButton;
+    private readonly Button flareSolverrRestartButton;
     private readonly Button lampaAppUpdateButton;
 
     private readonly ToolStripMenuItem trayStartItem = new("Запустить");
@@ -74,6 +84,7 @@ internal sealed class MainForm : Form
     private bool allowExit;
     private bool busy;
     private bool jackettBusy;
+    private bool flareSolverrBusy;
     private bool lampaAppBusy;
     private Icon? currentIcon;
     private int? currentIconColor;
@@ -81,13 +92,18 @@ internal sealed class MainForm : Form
     public MainForm(bool startInBackground)
     {
         updateService = new UpdateService(controller);
+        flareSolverrUpdateTimer = new System.Threading.Timer(
+            _ => _ = CheckFlareSolverrUpdateInBackgroundAsync(),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
         AppPaths.EnsureDirectories();
 
         Text = $"TorrServer Manager v{AppVersion}";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(620, 870);
-        MinimumSize = new Size(620, 870);
-        MaximumSize = new Size(780, 990);
+        ClientSize = new Size(620, 990);
+        MinimumSize = new Size(620, 930);
+        MaximumSize = new Size(780, 1080);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Segoe UI", 10F);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -123,11 +139,15 @@ internal sealed class MainForm : Form
         statusText.Location = new Point(56, 19);
         statusDetails.Text = "Определение состояния сервера";
         statusDetails.ForeColor = Muted;
-        statusDetails.AutoSize = true;
+        statusDetails.AutoSize = false;
+        statusDetails.AutoEllipsis = true;
+        statusDetails.Size = new Size(265, 24);
         statusDetails.Location = new Point(59, 50);
         var versionCaption = CreateCaption("Версия", new Point(340, 18));
+        versionCaption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         versionValue.Text = "—";
         versionValue.AutoSize = true;
+        versionValue.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         versionValue.Location = new Point(430, 18);
         var addressCaption = CreateCaption("Для Lampa", new Point(18, 88));
         addressValue.Text = controller.LanUrl;
@@ -137,6 +157,7 @@ internal sealed class MainForm : Form
         addressValue.LinkColor = Accent;
         addressValue.LinkClicked += (_, _) => OpenWebInterface(useLanAddress: true);
         var addressCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 102), 108);
+        addressCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         addressCopyButton.Height = 30;
         addressCopyButton.Click += (_, _) => CopyToClipboard(addressCopyButton, addressValue.Text);
         statusPanel.Controls.AddRange([statusDot, statusText, statusDetails, versionCaption, versionValue, addressCaption, addressValue, addressCopyButton]);
@@ -146,7 +167,7 @@ internal sealed class MainForm : Form
         stopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(140, 252), 112);
         restartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(262, 252), 132);
         openButton = CreateButton("Открыть веб", Green, new Point(404, 252), 132);
-        Controls.AddRange([startButton, stopButton, restartButton, openButton]);
+        Controls.Add(CreateButtonRow(new Point(24, 252), new Size(572, 40), 40, startButton, stopButton, restartButton, openButton));
 
         var lampaPanel = CreateCard(new Rectangle(24, 312, 572, 220));
         var lampaTitle = new Label
@@ -158,7 +179,9 @@ internal sealed class MainForm : Form
         };
         lampaAppCaption.Text = "Приложение для ТВ и браузера · загрузка версии…";
         lampaAppCaption.ForeColor = Muted;
-        lampaAppCaption.AutoSize = true;
+        lampaAppCaption.AutoSize = false;
+        lampaAppCaption.AutoEllipsis = true;
+        lampaAppCaption.Size = new Size(400, 24);
         lampaAppCaption.Location = new Point(18, 44);
         lampaAppAddress.Text = pluginHub.LampaAppUrl;
         lampaAppAddress.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
@@ -167,20 +190,25 @@ internal sealed class MainForm : Form
         lampaAppAddress.LinkColor = Accent;
         lampaAppAddress.LinkClicked += (_, _) => OpenLampaApp();
         lampaAppUpdateButton = CreateButton("Обновить", Accent, new Point(440, 10), 108);
+        lampaAppUpdateButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         lampaAppUpdateButton.Height = 30;
         lampaAppUpdateButton.Click += async (_, _) => await RefreshLampaAppAsync();
         var lampaAppCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 62), 108);
+        lampaAppCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         lampaAppCopyButton.Height = 30;
         lampaAppCopyButton.Click += (_, _) => CopyToClipboard(lampaAppCopyButton, lampaAppAddress.Text);
 
         var hubButton = CreateButton("Управлять", Color.FromArgb(124, 58, 237), new Point(440, 120), 108);
+        hubButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         hubButton.Height = 30;
         hubButton.Click += (_, _) => OpenPluginHub();
         var hubCaption = new Label
         {
             Text = "Плагины — добавьте вручную в отдельной Lampa: Настройки → Расширения → Добавить плагин",
             ForeColor = Muted,
-            AutoSize = true,
+            AutoSize = false,
+            AutoEllipsis = true,
+            Size = new Size(400, 24),
             Location = new Point(18, 154)
         };
         hubAddress.Text = pluginHub.LanLoaderUrl;
@@ -190,6 +218,7 @@ internal sealed class MainForm : Form
         hubAddress.LinkColor = Accent;
         hubAddress.LinkClicked += (_, _) => OpenPluginHub();
         var hubCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 172), 108);
+        hubCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         hubCopyButton.Height = 30;
         hubCopyButton.Click += (_, _) => CopyToClipboard(hubCopyButton, hubAddress.Text);
         lampaPanel.Controls.AddRange([
@@ -217,22 +246,23 @@ internal sealed class MainForm : Form
         jackettStatusText.Location = new Point(43, 39);
         jackettDetails.Text = "Определение состояния индексаторов";
         jackettDetails.ForeColor = Muted;
-        jackettDetails.AutoSize = true;
+        jackettDetails.AutoSize = false;
+        jackettDetails.AutoEllipsis = true;
+        jackettDetails.Size = new Size(215, 24);
         jackettDetails.Location = new Point(185, 39);
         var jackettVersionCaption = CreateCaption("Версия", new Point(410, 39));
+        jackettVersionCaption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         jackettVersionValue.Text = "—";
         jackettVersionValue.AutoSize = true;
+        jackettVersionValue.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         jackettVersionValue.Location = new Point(468, 39);
         jackettStartButton = CreateButton("Запустить", Accent, new Point(18, 62), 96);
         jackettStopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(122, 62), 100);
         jackettRestartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(230, 62), 112);
         jackettOpenButton = CreateButton("Открыть", Green, new Point(350, 62), 94);
         jackettUpdateButton = CreateButton("Обновить", Color.FromArgb(124, 58, 237), new Point(452, 62), 102);
-        foreach (var button in new[] { jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton })
-        {
-            button.Height = 32;
-            button.Top = 62;
-        }
+        var jackettButtonRow = CreateButtonRow(new Point(18, 62), new Size(536, 32), 32,
+            jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton);
         var jackettLanCaption = new Label
         {
             Text = "Для Lampa: Настройки → Тип парсера «Jackett»",
@@ -245,23 +275,66 @@ internal sealed class MainForm : Form
         jackettLanAddress.AutoSize = true;
         jackettLanAddress.Location = new Point(18, 126);
         var jackettLanCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 118), 108);
+        jackettLanCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         jackettLanCopyButton.Height = 28;
         jackettLanCopyButton.Click += (_, _) => CopyToClipboard(jackettLanCopyButton, jackettLanAddress.Text);
         jackettApiKeyValue.Text = "API-ключ: —";
         jackettApiKeyValue.AutoSize = true;
         jackettApiKeyValue.Location = new Point(18, 152);
         var jackettApiKeyCopyButton = CreateButton("Копировать", Color.FromArgb(71, 85, 105), new Point(440, 150), 108);
+        jackettApiKeyCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         jackettApiKeyCopyButton.Height = 28;
         jackettApiKeyCopyButton.Click += (_, _) => CopyToClipboard(jackettApiKeyCopyButton, jackettController.GetApiKey() ?? "");
         jackettPanel.Controls.AddRange([
             jackettTitle, jackettDot, jackettStatusText, jackettDetails,
             jackettVersionCaption, jackettVersionValue,
-            jackettStartButton, jackettStopButton, jackettRestartButton, jackettOpenButton, jackettUpdateButton,
+            jackettButtonRow,
             jackettLanCaption, jackettLanAddress, jackettLanCopyButton, jackettApiKeyValue, jackettApiKeyCopyButton
         ]);
         Controls.Add(jackettPanel);
 
-        var updatePanel = CreateCard(new Rectangle(24, 748, 572, 94));
+        var flareSolverrPanel = CreateCard(new Rectangle(24, 748, 572, 132));
+        var flareSolverrTitle = new Label
+        {
+            Text = "FlareSolverr",
+            Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold),
+            AutoSize = true,
+            Location = new Point(18, 11)
+        };
+        var flareSolverrVersionCaption = CreateCaption("Версия", new Point(410, 39));
+        flareSolverrVersionCaption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        flareSolverrVersionValue.Text = "—";
+        flareSolverrVersionValue.AutoSize = true;
+        flareSolverrVersionValue.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        flareSolverrVersionValue.Location = new Point(468, 39);
+        flareSolverrDot.Text = "●";
+        flareSolverrDot.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        flareSolverrDot.ForeColor = Amber;
+        flareSolverrDot.AutoSize = true;
+        flareSolverrDot.Location = new Point(18, 35);
+        flareSolverrStatusText.Text = "Проверка…";
+        flareSolverrStatusText.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+        flareSolverrStatusText.AutoSize = true;
+        flareSolverrStatusText.Location = new Point(43, 39);
+        flareSolverrDetails.Text = "Проверка локального API FlareSolverr";
+        flareSolverrDetails.ForeColor = Muted;
+        flareSolverrDetails.AutoSize = false;
+        flareSolverrDetails.AutoEllipsis = true;
+        flareSolverrDetails.Size = new Size(215, 24);
+        flareSolverrDetails.Location = new Point(185, 39);
+        flareSolverrStartButton = CreateButton("Запустить", Accent, new Point(18, 70), 96);
+        flareSolverrStopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(122, 70), 100);
+        flareSolverrRestartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(230, 70), 112);
+        var flareSolverrButtonRow = CreateButtonRow(new Point(18, 70), new Size(536, 32), 32,
+            flareSolverrStartButton, flareSolverrStopButton, flareSolverrRestartButton);
+        flareSolverrPanel.Controls.AddRange([
+            flareSolverrTitle, flareSolverrDot, flareSolverrStatusText, flareSolverrDetails,
+            flareSolverrVersionCaption, flareSolverrVersionValue,
+            flareSolverrButtonRow
+        ]);
+        Controls.Add(flareSolverrPanel);
+
+        var updatePanel = CreateCard(new Rectangle(24, 896, 572, 94));
         var updateTitle = new Label
         {
             Text = "Обновления TorrServer",
@@ -277,7 +350,9 @@ internal sealed class MainForm : Form
         checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 24), 100);
         updateButton = CreateButton("Обновить", Accent, new Point(440, 24), 108);
         updateButton.Enabled = false;
-        updatePanel.Controls.AddRange([updateTitle, updateText, checkButton, updateButton]);
+        var updateButtonRow = CreateButtonRow(new Point(330, 24), new Size(218, 40), 40, checkButton, updateButton);
+        updateButtonRow.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        updatePanel.Controls.AddRange([updateTitle, updateText, updateButtonRow]);
         Controls.Add(updatePanel);
 
         startButton.Click += async (_, _) => await RunOperationAsync("Запуск…", controller.StartAsync);
@@ -286,11 +361,14 @@ internal sealed class MainForm : Form
         openButton.Click += (_, _) => OpenWebInterface(useLanAddress: false);
         checkButton.Click += async (_, _) => await CheckForUpdatesAsync(showUpToDateMessage: true);
         updateButton.Click += async (_, _) => await InstallAvailableUpdateAsync();
-        jackettStartButton.Click += async (_, _) => await RunJackettOperationAsync("Запуск…", jackettController.StartAsync);
-        jackettStopButton.Click += async (_, _) => await RunJackettOperationAsync("Остановка…", jackettController.StopAsync);
-        jackettRestartButton.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", jackettController.RestartAsync);
+        jackettStartButton.Click += async (_, _) => await RunJackettOperationAsync("Запуск…", StartJackettStackAsync);
+        jackettStopButton.Click += async (_, _) => await RunJackettOperationAsync("Остановка…", StopJackettStackAsync);
+        jackettRestartButton.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", RestartJackettStackAsync);
         jackettOpenButton.Click += (_, _) => OpenJackett();
         jackettUpdateButton.Click += async (_, _) => await CheckAndUpdateJackettAsync();
+        flareSolverrStartButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Запуск…", flareSolverrController.StartAsync);
+        flareSolverrStopButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Остановка…", flareSolverrController.StopAsync);
+        flareSolverrRestartButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Перезапуск…", flareSolverrController.RestartAsync);
 
         ConfigureTrayIcon();
         statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -329,12 +407,14 @@ internal sealed class MainForm : Form
                 trayIcon.ShowBalloonTip(7000, "TorrServer/GStreamer не запущен", exception.Message, ToolTipIcon.Error);
             }
 
-            try { await jackettController.StartAsync(lifetime.Token); }
+            try { await StartJackettStackAsync(lifetime.Token); }
             catch (Exception exception)
             {
                 AppLog.Write(exception);
-                trayIcon.ShowBalloonTip(5000, "Jackett не запущен", exception.Message, ToolTipIcon.Error);
+                trayIcon.ShowBalloonTip(7000, "Jackett/FlareSolverr не запущены", exception.Message, ToolTipIcon.Error);
             }
+
+            flareSolverrUpdateTimer.Change(TimeSpan.FromSeconds(10), TimeSpan.FromHours(6));
 
             await RefreshStatusAsync();
             statusTimer.Start();
@@ -364,9 +444,9 @@ internal sealed class MainForm : Form
         var pluginHubItem = new ToolStripMenuItem("Плагины Lampa", null, (_, _) => OpenPluginHub());
         var jackettMenu = new ToolStripMenuItem("Jackett");
         var jackettOpenItem = new ToolStripMenuItem("Открыть панель", null, (_, _) => OpenJackett());
-        trayJackettStartItem.Click += async (_, _) => await RunJackettOperationAsync("Запуск…", jackettController.StartAsync);
-        trayJackettStopItem.Click += async (_, _) => await RunJackettOperationAsync("Остановка…", jackettController.StopAsync);
-        trayJackettRestartItem.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", jackettController.RestartAsync);
+        trayJackettStartItem.Click += async (_, _) => await RunJackettOperationAsync("Запуск…", StartJackettStackAsync);
+        trayJackettStopItem.Click += async (_, _) => await RunJackettOperationAsync("Остановка…", StopJackettStackAsync);
+        trayJackettRestartItem.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", RestartJackettStackAsync);
         var jackettUpdateItem = new ToolStripMenuItem("Проверить обновление", null, async (_, _) => await CheckAndUpdateJackettAsync());
         jackettMenu.DropDownItems.AddRange([
             jackettOpenItem,
@@ -450,6 +530,85 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task StartJackettStackAsync(CancellationToken cancellationToken)
+    {
+        await flareSolverrController.StartAsync(cancellationToken);
+        jackettController.ConfigureFlareSolverr(flareSolverrController.LocalUrl);
+        await jackettController.StartAsync(cancellationToken);
+    }
+
+    private async Task StopJackettStackAsync(CancellationToken cancellationToken)
+    {
+        await jackettController.StopAsync(cancellationToken);
+        await flareSolverrController.StopAsync(cancellationToken);
+    }
+
+    private async Task RestartJackettStackAsync(CancellationToken cancellationToken)
+    {
+        await StopJackettStackAsync(cancellationToken);
+        await Task.Delay(400, cancellationToken);
+        await StartJackettStackAsync(cancellationToken);
+    }
+
+    private async Task RunFlareSolverrOperationAsync(string activity, Func<CancellationToken, Task> operation)
+    {
+        if (flareSolverrBusy)
+            return;
+        if (!await flareSolverrUpdateLock.WaitAsync(0))
+            return;
+        SetFlareSolverrBusy(true, activity);
+        try
+        {
+            await operation(lifetime.Token);
+        }
+        catch (OperationCanceledException exception) when (!lifetime.IsCancellationRequested)
+        {
+            MessageBox.Show(this, exception.Message, "FlareSolverr", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception exception)
+        {
+            AppLog.Write(exception);
+            MessageBox.Show(this, exception.Message, "FlareSolverr", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetFlareSolverrBusy(false, null);
+            flareSolverrUpdateLock.Release();
+            await RefreshStatusAsync();
+        }
+    }
+
+    private async Task CheckFlareSolverrUpdateInBackgroundAsync()
+    {
+        if (lifetime.IsCancellationRequested || !await flareSolverrUpdateLock.WaitAsync(0))
+            return;
+
+        try
+        {
+            var status = await flareSolverrController.GetStatusAsync(lifetime.Token);
+            if (!status.IsInstalled)
+                return;
+
+            var release = await flareSolverrController.GetLatestReleaseAsync(lifetime.Token);
+            var updateAvailable = FlareSolverrController.IsNewer(release.Version, status.Version);
+            AppLog.Write($"FlareSolverr update check: installed={status.Version}, latest={release.Version}, result={(updateAvailable ? "update available" : "up to date") }.");
+            if (!updateAvailable)
+                return;
+
+            AppLog.Write($"FlareSolverr update available: {status.Version} -> {release.Version}. Installing in background.");
+            await flareSolverrController.InstallUpdateAsync(release, cancellationToken: lifetime.Token);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            AppLog.Write($"FlareSolverr background update failed: {exception}");
+        }
+        finally
+        {
+            flareSolverrUpdateLock.Release();
+        }
+    }
+
     private async Task CheckAndUpdateJackettAsync()
     {
         if (jackettBusy)
@@ -500,6 +659,7 @@ internal sealed class MainForm : Form
         {
             var status = await controller.GetStatusAsync(lifetime.Token);
             var jackettStatus = await jackettController.GetStatusAsync(lifetime.Token);
+            var flareSolverrStatus = await flareSolverrController.GetStatusAsync(lifetime.Token);
             versionValue.Text = status.Version;
             addressValue.Text = status.LanAddress;
             hubAddress.Text = pluginHub.LanLoaderUrl;
@@ -544,7 +704,7 @@ internal sealed class MainForm : Form
             {
                 jackettDot.ForeColor = Green;
                 jackettStatusText.Text = "Работает";
-                jackettDetails.Text = $"Настроено источников: {jackettStatus.ConfiguredIndexers}";
+                jackettDetails.Text = $"Источников: {jackettStatus.ConfiguredIndexers}";
             }
             else if (jackettStatus.ProcessRunning)
             {
@@ -566,13 +726,25 @@ internal sealed class MainForm : Form
             }
 
             jackettStartButton.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning;
-            jackettStopButton.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
-            jackettRestartButton.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
+            jackettStopButton.Enabled = !jackettBusy && (jackettStatus.ProcessRunning || flareSolverrStatus.ProcessRunning);
+            jackettRestartButton.Enabled = !jackettBusy && jackettStatus.IsInstalled && flareSolverrStatus.IsInstalled;
             jackettOpenButton.Enabled = jackettStatus.IsRunning;
             jackettUpdateButton.Enabled = !jackettBusy && jackettStatus.IsInstalled;
             trayJackettStartItem.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning;
             trayJackettStopItem.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
             trayJackettRestartItem.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
+
+            flareSolverrDot.ForeColor = flareSolverrStatus.IsRunning ? Green : flareSolverrStatus.ProcessRunning ? Amber : Red;
+            flareSolverrStatusText.Text = flareSolverrStatus.IsRunning
+                ? "Работает"
+                : flareSolverrStatus.ProcessRunning ? "Запускается" : flareSolverrStatus.IsInstalled ? "Остановлен" : "Не установлен";
+            flareSolverrDetails.Text = flareSolverrStatus.IsRunning
+                ? $"API: {flareSolverrController.LocalUrl} · PID {flareSolverrStatus.ProcessId}"
+                : flareSolverrStatus.IsInstalled ? "Локальный API недоступен" : "Положите flaresolverr.exe в ProgramData\\FlareSolverr";
+            flareSolverrVersionValue.Text = flareSolverrStatus.Version;
+            flareSolverrStartButton.Enabled = !flareSolverrBusy && flareSolverrStatus.IsInstalled && !flareSolverrStatus.ProcessRunning;
+            flareSolverrStopButton.Enabled = !flareSolverrBusy && flareSolverrStatus.ProcessRunning;
+            flareSolverrRestartButton.Enabled = !flareSolverrBusy && flareSolverrStatus.IsInstalled && flareSolverrStatus.ProcessRunning;
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception exception)
@@ -685,6 +857,19 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void SetFlareSolverrBusy(bool value, string? activity)
+    {
+        flareSolverrBusy = value;
+        flareSolverrStartButton.Enabled = !value;
+        flareSolverrStopButton.Enabled = !value;
+        flareSolverrRestartButton.Enabled = !value;
+        if (value && activity is not null)
+        {
+            flareSolverrDot.ForeColor = Amber;
+            flareSolverrStatusText.Text = activity;
+        }
+    }
+
     private void OpenWebInterface(bool useLanAddress)
     {
         try
@@ -692,7 +877,7 @@ internal sealed class MainForm : Form
             Process.Start(new ProcessStartInfo(useLanAddress ? controller.LanUrl : controller.LocalUrl)
             {
                 UseShellExecute = true
-            });
+        });
         }
         catch (Exception exception)
         {
@@ -808,17 +993,20 @@ internal sealed class MainForm : Form
         }
 
         statusTimer.Stop();
+        flareSolverrUpdateTimer.Dispose();
         lifetime.Cancel();
         trayIcon.Visible = false;
         trayIcon.Dispose();
         currentIcon?.Dispose();
         updateService.Dispose();
         jackettController.Dispose();
+        flareSolverrController.Dispose();
         pluginHub.Dispose();
         controller.Dispose();
         ffprobeService.Dispose();
         gStreamerService.Dispose();
         refreshLock.Dispose();
+        flareSolverrUpdateLock.Dispose();
         lifetime.Dispose();
     }
 
@@ -868,6 +1056,34 @@ internal sealed class MainForm : Form
             timer.Dispose();
         };
         timer.Start();
+    }
+
+    private static FlowLayoutPanel CreateButtonRow(Point location, Size size, int buttonHeight, params Button[] buttons)
+    {
+        var row = new FlowLayoutPanel
+        {
+            Location = location,
+            Size = size,
+            Padding = Padding.Empty,
+            Margin = Padding.Empty,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoScroll = false,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+        };
+
+        for (var index = 0; index < buttons.Length; index++)
+        {
+            var button = buttons[index];
+            button.AutoSize = true;
+            button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            button.MinimumSize = new Size(button.Width, buttonHeight);
+            button.Height = buttonHeight;
+            button.Margin = new Padding(0, 0, index == buttons.Length - 1 ? 0 : 4, 0);
+            row.Controls.Add(button);
+        }
+
+        return row;
     }
 
     private static Button CreateButton(string text, Color backColor, Point location, int width) => new()

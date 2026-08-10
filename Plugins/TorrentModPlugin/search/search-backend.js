@@ -1,6 +1,8 @@
     import { buildQueries as buildQueriesForTarget } from './query-building.js';
     import { compact, unique } from '../shared/utils.js';
     import { startParallelSearch } from './parallel-search.js';
+    import { passesSearchTitleGate } from './scoring.js';
+    import { log } from '../shared/core/log.js';
 
     function mapTorrent(raw, parseReleaseForMode) {
         if (!raw) return null;
@@ -21,6 +23,24 @@
             link: link,
             release: parseReleaseForMode ? parseReleaseForMode(title) : null
         };
+    }
+
+    function filterSearchNoise(items, target, source, query) {
+        var rejected = [];
+        var accepted = items.filter(function (item) {
+            if (passesSearchTitleGate(item, target)) return true;
+            rejected.push(item);
+            return false;
+        });
+        log('search', 'title-gate: фильтрация явного шума', {
+            query: query || target.customQuery || target.englishTitle || target.movie.title || target.movie.name || '',
+            source: source,
+            input: items.length,
+            accepted: accepted.length,
+            filtered: rejected.length,
+            rejectedTitles: rejected.map(function (item) { return item.title; })
+        });
+        return accepted;
     }
 
     function searchOneQuery(text) {
@@ -54,6 +74,7 @@
             });
 
             var mapped = allRaw.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean);
+            mapped = filterSearchNoise(mapped, target, 'searchTorrentMod', queries.join(' | '));
             var results = unique(mapped, function (item) {
                 return compact(item.magnet || item.link || (item.title + '|' + item.size));
             });
@@ -71,6 +92,7 @@
             var mapped = entry.ok
                 ? (entry.results || []).map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean)
                 : [];
+            mapped = filterSearchNoise(mapped, target, entry.name, query);
             var deduped = mapped.filter(function (item) {
                 var id = compact(item.magnet || item.link || (item.title + '|' + item.size));
                 if (!id || seen[id]) return false;

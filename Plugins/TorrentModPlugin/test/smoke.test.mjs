@@ -767,7 +767,7 @@ runner.test('loadAllTorrents: сетевой сбой авто-повторяе�
     globalThis.__mockReguest((url) => {
         if (!url.includes('/api/torrent-search')) return false;
         return torrentSearchCalls === 2;
-    }, { results: [jackettRaw('Менталист / The Mentalist S01E01 1080p WEB-DL', 20, 8, 'ffff')], indexers: [] });
+    }, { results: [jackettRaw('Футурама / Futurama S02E01 1080p WEB-DL', 20, 8, 'ffff')], indexers: [] });
 
     const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
     domain.start();

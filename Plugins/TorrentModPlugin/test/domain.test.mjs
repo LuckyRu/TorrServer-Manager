@@ -6,7 +6,7 @@ import { buildMovieQueries } from '../search/movie-query-building.js';
 import { buildSeriesQueries } from '../search/series-query-building.js';
 import { parseMovieRelease } from '../search/movie-release-parsing.js';
 import { parseSeriesRelease } from '../search/series-release-parsing.js';
-import { scoreCandidate, applyStateFilters } from '../search/scoring.js';
+import { scoreCandidate, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate } from '../search/scoring.js';
 import {
     createInitialState, isSeriesWithSeasons, searchQueryText, poolValues, currentSeasonLabel,
     buildFilterItems, activeFilterLabels, candidatesForEpisode, badgeText, isConfidentMatch,
@@ -74,6 +74,7 @@ const state = {
 // ---------- query building ----------
 runner.test('defaultSearchName использует parse_lang (df → оригинальное название)', () => {
     if (defaultSearchName(tvMovie) !== 'Futurama') throw new Error('expected "Futurama", got "' + defaultSearchName(tvMovie) + '"');
+    if (defaultSearchName(tvMovie, 'Futurama', false) !== 'Futurama') throw new Error('поиск сериалов не должен добавлять год');
 });
 runner.test('searchQueryText без сезонного суффикса', () => {
     if (searchQueryText({ movie: tvMovie, season: 2 }) !== 'Futurama') throw new Error(searchQueryText({ movie: tvMovie, season: 2 }));
@@ -92,6 +93,12 @@ runner.test('режимы поиска: фильм не получает season/
     if (movieQueries.length !== 1 || /S\d+E\d+/i.test(movieQueries[0])) throw new Error(JSON.stringify(movieQueries));
     const seriesQueries = buildSeriesQueries({ movie: tvMovie, season: 2, episode: 7 });
     if (seriesQueries.indexOf('Futurama S02E07') < 0) throw new Error(JSON.stringify(seriesQueries));
+});
+runner.test('series query не использует год, movie query сохраняет настройку имени', () => {
+    const seriesQueries = buildSeriesQueries({ movie: tvMovie, season: 0, episode: 0, englishTitle: 'Futurama' });
+    if (seriesQueries.length !== 1 || seriesQueries[0].includes('1999')) throw new Error(JSON.stringify(seriesQueries));
+    const movieQueries = buildMovieQueries({ movie: { ...movie, release_date: '2024-02-01' }, englishTitle: 'Dune' });
+    if (movieQueries.length !== 1 || movieQueries[0] !== 'Dune') throw new Error(JSON.stringify(movieQueries));
 });
 runner.test('режимы парсинга: фильм не экспортирует season/episode signals, сериал экспортирует', () => {
     const title = 'Название / Title S02E07 1080p WEB-DL';
@@ -355,9 +362,40 @@ runner.test('titleSimilarity (через гейт): отсеивает шум д
     noise.forEach((title) => { if (passesFor(title)) throw new Error('шум прошёл гейт: ' + title); });
     real.forEach((title) => { if (!passesFor(title)) throw new Error('реальное совпадение не прошло гейт: ' + title); });
 });
+runner.test('passesSearchTitleGate отсекает явный шум до доменного пула', () => {
+    const item = {
+        title: 'The Beach Boys - The Pet Sounds Sessions [Deluxe Edition]',
+        release: parseSeriesRelease('The Beach Boys - The Pet Sounds Sessions [Deluxe Edition]')
+    };
+    const boys = { movie: { title: 'Пацаны', original_title: 'The Boys' }, englishTitle: '', customQuery: null };
+    if (passesSearchTitleGate(item, boys)) throw new Error('явный шум прошёл ранний title-gate');
+    if (!passesSearchTitleGate(item, Object.assign({}, boys, { customQuery: 'The Beach Boys' }))) {
+        throw new Error('ручной запрос не должен блокироваться title-gate');
+    }
+});
 runner.test('applyStateFilters: пустой фильтр оставляет пул, несуществующий не ломает', () => {
     const f = applyStateFilters(state.pool, { ...state, voiceType: 'Дубляж' });
     if (f.length !== 2) throw new Error('не должен сужать до пустоты: ' + f.length);
+});
+runner.test('evaluateCandidatePool возвращает счётчики и заголовки отсеянных по этапам', () => {
+    const wrongSeason = {
+        ...single,
+        title: 'Футурама / Futurama S03E07 1080p WEB-DL',
+        release: parseSeriesRelease('Футурама / Futurama S03E07 1080p WEB-DL')
+    };
+    const evaluation = evaluateCandidatePool([single, wrongSeason], target, state);
+    if (evaluation.inputCount !== 2 || evaluation.afterStateFilters !== 2) throw new Error(JSON.stringify(evaluation));
+    if (evaluation.gateFilteredCount !== 1 || evaluation.filteredCount !== 1) throw new Error(JSON.stringify(evaluation));
+    if (evaluation.gateFilteredTitles[0] !== wrongSeason.title || evaluation.rejectedTitles[0] !== wrongSeason.title) {
+        throw new Error('неверные заголовки отсеянных: ' + JSON.stringify(evaluation));
+    }
+
+    const voiceFiltered = evaluateCandidatePool([
+        Object.assign({}, single, { release: Object.assign({}, single.release, { voiceType: 'Дубляж' }) }),
+        Object.assign({}, seasonPack, { release: Object.assign({}, seasonPack.release, { voiceType: 'Оригинал' }) })
+    ], target, Object.assign({}, state, { voiceType: 'Дубляж' }));
+    if (voiceFiltered.stateFilteredCount !== 1 || voiceFiltered.afterStateFilters !== 1) throw new Error(JSON.stringify(voiceFiltered));
+    if (voiceFiltered.stateFilteredTitles[0] !== seasonPack.title) throw new Error(JSON.stringify(voiceFiltered));
 });
 
 // ---------- metadata / season-picker ----------

@@ -80,10 +80,14 @@
     // Hard gate, not a scored component — see docs/reference/torrent-mod-scoring-model.md.
     var MIN_TITLE_SIMILARITY = 0.34;
 
+    export function passesSearchTitleGate(item, target) {
+        return !!target.customQuery || titleSimilarity(item.title, target.movie, target.englishTitle) >= MIN_TITLE_SIMILARITY;
+    }
+
     function passesMatchGate(item, target) {
         var release = item.release;
         // customQuery replaces the title match (the query itself is the filter now) but season/episode checks still apply.
-        if (!target.customQuery && titleSimilarity(item.title, target.movie, target.englishTitle) < MIN_TITLE_SIMILARITY) return false;
+        if (!passesSearchTitleGate(item, target)) return false;
         if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
         if (target.episode && release.explicitEpisode &&
             !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) return false;
@@ -139,17 +143,76 @@
         return bitrateBucket(estimateBitrateForState(item, state)) === state.bitrate;
     }
 
+    function titles(items) {
+        return items.map(function (item) { return item && item.title ? item.title : 'Без названия'; });
+    }
+
+    function applyStateFiltersDetailed(pool, state) {
+        var current = pool || [];
+        var stages = [];
+        state = state || {};
+
+        function narrow(name, predicate, enabled) {
+            if (!enabled) return;
+            var matching = current.filter(predicate);
+            var fallback = matching.length === 0;
+            var next = fallback ? current : matching;
+            stages.push({
+                stage: name,
+                input: current.length,
+                output: next.length,
+                filtered: fallback ? 0 : current.length - next.length,
+                rejectedTitles: fallback ? [] : titles(current.filter(function (item) { return !predicate(item); }))
+            });
+            current = next;
+        }
+
+        narrow('voice', function (item) { return matchesTranslation(item, state.voiceType); }, state.voiceType && state.voiceType !== 'any');
+        narrow('resolution', function (item) { return item.release.resolution === state.resolution; }, state.resolution && state.resolution !== 'any');
+        narrow('bitrate', function (item) { return matchesBitrate(item, state); }, state.bitrate && state.bitrate !== 'any');
+
+        return {
+            items: current,
+            stages: stages,
+            filteredCount: stages.reduce(function (sum, stage) { return sum + stage.filtered; }, 0),
+            rejectedTitles: stages.reduce(function (all, stage) { return all.concat(stage.rejectedTitles); }, [])
+        };
+    }
+
     // Voice/quality/bitrate are narrowing filters, not gates — fall back to the unfiltered pool if a filter would leave nothing.
     export function applyStateFilters(pool, state) {
-        var byVoice = pool.filter(function (item) { return matchesTranslation(item, state.voiceType); });
-        if (byVoice.length) pool = byVoice;
-        if (state.resolution !== 'any') {
-            var byQuality = pool.filter(function (item) { return item.release.resolution === state.resolution; });
-            if (byQuality.length) pool = byQuality;
-        }
-        if (state.bitrate && state.bitrate !== 'any') {
-            var byBitrate = pool.filter(function (item) { return matchesBitrate(item, state); });
-            if (byBitrate.length) pool = byBitrate;
-        }
-        return pool;
+        return applyStateFiltersDetailed(pool, state).items;
+    }
+
+    export function evaluateCandidatePool(pool, target, state) {
+        var filtered = applyStateFiltersDetailed(pool, state);
+        var rejectedByGate = [];
+        var scoredItems = filtered.items.map(function (item) {
+            item._score = scoreCandidate(item, target);
+            if (!item._score.passes) rejectedByGate.push(item);
+            return item;
+        });
+        var candidates = scoredItems.filter(function (item) { return item._score.passes; });
+        candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
+        var gateStage = {
+            stage: 'matchGate',
+            input: scoredItems.length,
+            output: candidates.length,
+            filtered: rejectedByGate.length,
+            rejectedTitles: titles(rejectedByGate)
+        };
+
+        return {
+            items: candidates,
+            scoredItems: scoredItems,
+            stages: filtered.stages.concat([gateStage]),
+            inputCount: (pool || []).length,
+            afterStateFilters: filtered.items.length,
+            stateFilteredCount: filtered.filteredCount,
+            stateFilteredTitles: filtered.rejectedTitles,
+            gateFilteredCount: rejectedByGate.length,
+            gateFilteredTitles: gateStage.rejectedTitles,
+            filteredCount: filtered.filteredCount + rejectedByGate.length,
+            rejectedTitles: filtered.rejectedTitles.concat(gateStage.rejectedTitles)
+        };
     }

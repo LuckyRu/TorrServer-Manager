@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using TorrServerManager.Infrastructure;
 
 namespace TorrServerManager.Controllers;
@@ -34,6 +35,25 @@ internal sealed class JackettController : IDisposable
     }
 
     public string LocalUrl => $"http://127.0.0.1:{AppPaths.JackettPort}";
+
+    public bool ConfigureFlareSolverr(string url, int maxTimeout = 55000)
+    {
+        if (!File.Exists(AppPaths.JackettServerConfig))
+            return false;
+
+        var root = JsonNode.Parse(File.ReadAllText(AppPaths.JackettServerConfig)) as JsonObject
+            ?? throw new InvalidDataException("Конфигурация Jackett имеет неожиданный формат.");
+        var changed = !string.Equals(root["FlareSolverrUrl"]?.GetValue<string>(), url, StringComparison.OrdinalIgnoreCase)
+            || root["FlareSolverrMaxTimeout"]?.GetValue<int>() != maxTimeout;
+        if (!changed)
+            return false;
+
+        root["FlareSolverrUrl"] = url;
+        root["FlareSolverrMaxTimeout"] = maxTimeout;
+        File.WriteAllText(AppPaths.JackettServerConfig, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        AppLog.Write($"Configured Jackett FlareSolverr URL: {url}.");
+        return true;
+    }
 
     public string? GetApiKey()
     {

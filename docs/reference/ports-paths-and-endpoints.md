@@ -10,6 +10,7 @@
 | `8090` | TorrServer | LAN (правило файервола) |
 | `8095` | Plugin Hub | LAN (правило файервола) |
 | `9117` | Jackett | только `127.0.0.1` — см. [ADR-0002](../adr/0002-jackett-loopback-reverse-proxy.md) |
+| `8191` | FlareSolverr | только `127.0.0.1`, запускается менеджером для Jackett |
 
 ## Пути на диске
 
@@ -25,6 +26,7 @@
 | `%LocalAppData%\TorrServer\lampa-app-state.json` | Состояние авто-обновления Lampa web-app |
 | `%LocalAppData%\TorrServer\dev-plugins\` | Override-директория для быстрой JS-итерации, см. [`how-to/iterate-on-a-plugin-without-rebuilding.md`](../how-to/iterate-on-a-plugin-without-rebuilding.md) |
 | `%ProgramData%\Jackett\` | Установка Jackett (`App\JackettConsole.exe`, `Indexers\`, `ServerConfig.json`) |
+| `%ProgramData%\FlareSolverr\flaresolverr\` | Официальный FlareSolverr для Windows x64 (`flaresolverr.exe` и встроенный Chromium); менеджер обновляет каталог атомарно с резервным откатом |
 
 ## Эндпоинты Plugin Hub (`:8095`)
 

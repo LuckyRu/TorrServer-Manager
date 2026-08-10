@@ -1,7 +1,8 @@
     import { defaultSearchName } from '../search/query-building.js';
     import { formatSize, compact } from '../shared/utils.js';
+    import { MODE_SERIES } from '../shared/state.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
-    import { applyStateFilters, scoreCandidate, bitrateBucket, estimateBitrateForState } from '../search/scoring.js';
+    import { evaluateCandidatePool, bitrateBucket, estimateBitrateForState } from '../search/scoring.js';
 
     export function createInitialState(object) {
         return {
@@ -17,7 +18,7 @@
     }
 
     export function searchQueryText(target) {
-        return defaultSearchName(target.movie, target.englishTitle);
+        return defaultSearchName(target.movie, target.englishTitle, target.mode !== MODE_SERIES);
     }
 
     export function poolValues(state, pluck, order) {
@@ -108,13 +109,7 @@
     }
 
     export function candidatesForEpisode(pool, target, state) {
-        var filtered = applyStateFilters(pool, state);
-        var scored = filtered.filter(function (item) {
-            item._score = scoreCandidate(item, target);
-            return item._score.passes;
-        });
-        scored.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
-        return scored;
+        return evaluateCandidatePool(pool, target, state).items;
     }
 
     export function badgeText(matches, saved) {

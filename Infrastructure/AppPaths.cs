@@ -31,9 +31,15 @@ internal static class AppPaths
     public static readonly string JackettExecutable = Path.Combine(JackettAppDirectory, "JackettConsole.exe");
     public static readonly string JackettIndexersDirectory = Path.Combine(JackettDirectory, "Indexers");
     public static readonly string JackettServerConfig = Path.Combine(JackettDirectory, "ServerConfig.json");
+    public static readonly string FlareSolverrBaseDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "FlareSolverr");
+    public static readonly string FlareSolverrDirectory = Path.Combine(FlareSolverrBaseDirectory, "flaresolverr");
+    public static readonly string FlareSolverrExecutable = Path.Combine(FlareSolverrDirectory, "flaresolverr.exe");
     public const int Port = 8090;
     public const int PluginHubPort = 8095;
     public const int JackettPort = 9117;
+    public const int FlareSolverrPort = 8191;
 
     public static void EnsureDirectories()
     {

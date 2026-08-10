@@ -1,7 +1,7 @@
     // ---------- domain: selection interactor ----------
     import { searchMovieTorrents } from '../search/movie-search.js';
     import { searchSeriesTorrents } from '../search/series-search.js';
-    import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
+    import { evaluateCandidatePool } from '../search/scoring.js';
     import { startDownload } from '../playback/smart-preload.js';
     import { enabled, notify, debugLogCandidates } from '../shared/utils.js';
     import { searchQueryText, isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
@@ -33,6 +33,22 @@
 
         // Kept alive while the pool grows so a fast tracker's results can render before the whole job settles.
         var moviePresentation = null;
+
+        function logCandidateEvaluation(label, target, evaluation) {
+            log('search', label + ': фильтрация результатов', {
+                query: target.customQuery || target.englishTitle || target.movie.title || target.movie.name || '',
+                season: target.season,
+                episode: target.episode,
+                input: evaluation.inputCount,
+                afterStateFilters: evaluation.afterStateFilters,
+                stateFiltered: evaluation.stateFilteredCount,
+                matchGateFiltered: evaluation.gateFilteredCount,
+                filtered: evaluation.filteredCount,
+                candidates: evaluation.items.length,
+                stages: evaluation.stages,
+                rejectedTitles: evaluation.rejectedTitles
+            });
+        }
 
         scope.subscribe(store, function (state, previous) {
             if (isDestroyed()) return;
@@ -143,7 +159,9 @@
             if (!moviePresentation || isDestroyed()) return;
             var state = store.get();
             var target = buildMovieTarget();
-            var candidates = selectCandidatesForEpisode(object, state, 0, MODE_MOVIE);
+            var evaluation = evaluateCandidatePool(state.pool, target, state);
+            logCandidateEvaluation('movie pool', target, evaluation);
+            var candidates = evaluation.items;
             var saved = readSeasonDefault(object.movie, 0);
             var chosen = moviePresentation.autoPlaySaved ? findSavedDefault(candidates, saved) : null;
             if (chosen) {
@@ -226,7 +244,9 @@
             if (!hasSeasons) { showMoviePool(pickerOnly); return; }
 
             // Pool settlement status is checked only after candidates — a still-loading pool can already have a valid match.
-            var candidates = selectCandidatesForEpisode(object, state, episode);
+            var evaluation = evaluateCandidatePool(state.pool, target, state);
+            logCandidateEvaluation('selectEpisode(' + episode + ')', target, evaluation);
+            var candidates = evaluation.items;
             if (candidates.length) {
                 var saved = readSeasonDefault(object.movie, state.season);
                 var savedMatch = findSavedDefault(candidates, saved);
@@ -311,19 +331,17 @@
                     });
                     return;
                 }
-                var pool = applyStateFilters(response.results, store.get());
-                if (!pool.length) {
+                var evaluation = evaluateCandidatePool(response.results, target, store.get());
+                logCandidateEvaluation('freshSearch', target, evaluation);
+                if (!evaluation.afterStateFilters) {
                     log('selection', 'freshSearch: пул пуст после фильтров');
                     notify('Ничего не найдено');
                     store.patch({ searchStatus: 'idle', statusText: '' });
                     return;
                 }
 
-                // matchScore is a hard gate, not a ranking input — see docs/reference/torrent-mod-scoring-model.md.
-                pool.forEach(function (item) { item._score = scoreCandidate(item, target); });
-                if (enabled('torrent_mod_debug', false)) debugLogCandidates(pool, target);
-                var candidates = pool.filter(function (item) { return item._score.passes; });
-                candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
+                if (enabled('torrent_mod_debug', false)) debugLogCandidates(evaluation.scoredItems, target, evaluation);
+                var candidates = evaluation.items;
                 store.patch({ searchStatus: 'ready', statusText: '' });
                 if (!candidates.length) { log('selection', 'freshSearch: похожих раздач не нашлось (гейт отсеял все)'); notify('Похожих раздач не нашлось'); return; }
 

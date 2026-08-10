@@ -1,6 +1,7 @@
     import { fetchSeason, fetchEnglishTitle, episodeCounts } from '../metadata/tmdb.js';
     import { searchMovieTorrents, searchMovieTorrentsProgressive } from '../search/movie-search.js';
     import { searchSeriesTorrents, searchSeriesTorrentsProgressive } from '../search/series-search.js';
+    import { evaluateCandidatePool } from '../search/scoring.js';
     import { compact, notify } from '../shared/utils.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
@@ -28,6 +29,45 @@
         var poolRetryTimerId = null;
         var poolSearchHandle = null; // {cancel} from the currently in-flight progressive search, if any
         var seasonAutoRetryTimers = {}; // season -> timer id
+
+        function logPoolFiltering(state, englishTitle) {
+            var episodeNumbers = hasSeasons
+                ? (state.episodesCache || []).map(function (episode) { return parseInt(episode.episode_number, 10) || 0; }).filter(Boolean)
+                : [0];
+            if (!episodeNumbers.length) episodeNumbers = [0];
+
+            var episodes = episodeNumbers.map(function (episode) {
+                var target = {
+                    movie: object.movie,
+                    mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
+                    season: hasSeasons ? state.season : 0,
+                    episode: episode,
+                    seasonEpisodeCount: state.seasonEpisodeCount,
+                    avgRuntimeMinutes: state.avgRuntimeMinutes,
+                    customQuery: state.customQuery,
+                    englishTitle: englishTitle
+                };
+                var evaluation = evaluateCandidatePool(state.pool, target, state);
+                return {
+                    episode: episode,
+                    input: evaluation.inputCount,
+                    afterStateFilters: evaluation.afterStateFilters,
+                    stateFiltered: evaluation.stateFilteredCount,
+                    matchGateFiltered: evaluation.gateFilteredCount,
+                    filtered: evaluation.filteredCount,
+                    candidates: evaluation.items.length,
+                    rejectedTitles: evaluation.rejectedTitles
+                };
+            });
+
+            log('search', 'loadAllTorrents: диагностика фильтрации пула', {
+                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
+                season: hasSeasons ? state.season : 0,
+                input: state.pool.length,
+                poolTitles: state.pool.map(function (item) { return item.title; }),
+                episodes: episodes
+            });
+        }
 
         scope.track(function () { if (poolSearchHandle) poolSearchHandle.cancel(); });
 
@@ -147,6 +187,7 @@
                     store.patch({ poolStatus: 'error', poolAutoRetryAt: null });
                 } else {
                     log('episodes', 'loadAllTorrents успех, раздач в пуле=' + current.pool.length);
+                    logPoolFiltering(current, current.englishTitle || englishTitle);
                     store.patch({ poolStatus: 'ready', poolAutoRetryAt: null });
                 }
                 if (typeof onLoaded === 'function') onLoaded();

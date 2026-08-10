@@ -9,9 +9,10 @@
         ].filter(Boolean), function (title) { return compact(title); });
     }
 
-    export function defaultSearchName(movie, englishTitle) {
+    export function defaultSearchName(movie, englishTitle, includeYear) {
         try {
             var format = Lampa.Storage.field('parse_lang') || 'df';
+            if (includeYear === false) format = format.replace(/_year$/, '');
             var title = movie.title || movie.name || '';
             var original = englishTitle || movie.original_title || movie.original_name || '';
             var year = String(movie.first_air_date || movie.release_date || '0000').slice(0, 4);
@@ -33,7 +34,7 @@
     }
 
     export function buildQueries(target) {
-        var name = target.customQuery || defaultSearchName(target.movie, target.englishTitle);
+        var name = target.customQuery || defaultSearchName(target.movie, target.englishTitle, target.includeYear);
         if (!name) return [];
         var queries = [];
 
