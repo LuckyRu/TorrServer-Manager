@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^[0-9a-f]{40}$')]
-    [string]$TorrServerCommit = 'd442a8b4500568ddd2d7647c7b1f72f073b79ea9',
+    [string]$TorrServerTag = '',
     [string]$OutputDirectory = '',
     [switch]$SkipTests,
     [switch]$NoGoBootstrap
@@ -11,12 +10,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $buildRoot = Join-Path $repoRoot '.build'
-$sourceRoot = Join-Path $buildRoot "TorrServer-$TorrServerCommit"
-$serverModule = Join-Path $sourceRoot 'server'
 $patchPath = Join-Path $repoRoot 'patches\torrserver-gstreamer-container-support.patch'
-$goVersion = '1.25.7'
-$goRoot = Join-Path $repoRoot ".tools\go-$goVersion\go"
-$goExe = Join-Path $goRoot 'bin\go.exe'
+$torrServerLockPath = Join-Path $repoRoot 'config\torrserver-release.lock'
+$torrServerRepository = 'YouROK/TorrServer'
+$githubApiHeaders = @{ 'User-Agent' = 'TorrServerManager-build' }
 $outputRoot = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     Join-Path $repoRoot 'publish'
 } else {
@@ -50,7 +47,15 @@ function Get-GoExecutable {
     if (-not $NoGoBootstrap) {
         $goCommand = Get-Command go.exe -ErrorAction SilentlyContinue
         if ($null -ne $goCommand) {
-            return $goCommand.Source
+            $pathGoVersion = (& $goCommand.Source version 2>$null | Select-String -Pattern 'go version go([0-9]+\.[0-9]+(?:\.[0-9]+)?)')
+            if ($null -ne $pathGoVersion) {
+                $pathVersion = [version]$pathGoVersion.Matches[0].Groups[1].Value
+                if ($pathVersion -ge [version]$goVersion) {
+                    Write-Host "Используется Go $($pathVersion.ToString()) из PATH."
+                    return $goCommand.Source
+                }
+                Write-Host "Go $($pathVersion.ToString()) из PATH ниже требуемого Go $goVersion; загружается подходящий toolchain."
+            }
         }
     }
 
@@ -81,24 +86,81 @@ function Get-GoExecutable {
     return $goExe
 }
 
+function Resolve-GoVersion {
+    param([Parameter(Mandatory = $true)][string]$ModuleFile)
+
+    $goDirective = Select-String -Path $ModuleFile -Pattern '^\s*go\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$' |
+        Select-Object -First 1
+    if ($null -eq $goDirective) {
+        throw "В $ModuleFile не найдено требование версии Go (директива go)."
+    }
+
+    $version = $goDirective.Matches[0].Groups[1].Value
+    if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        throw "В $ModuleFile указана неполная версия Go '$version'. Для автоматической загрузки нужна версия x.y.z."
+    }
+    return $version
+}
+
+function Resolve-TorrServerTag {
+    param([string]$RequestedTag)
+
+    if ([string]::IsNullOrWhiteSpace($RequestedTag)) {
+        if (-not (Test-Path -LiteralPath $torrServerLockPath)) {
+            throw "Не найден lock-файл релиза TorrServer: $torrServerLockPath"
+        }
+        $RequestedTag = (Get-Content -LiteralPath $torrServerLockPath -Raw).Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedTag) -and $RequestedTag -notmatch '^MatriX\.\d+(\.\d+)*$') {
+        throw "Недопустимый тег TorrServer '$RequestedTag'. Разрешены только официальные теги MatriX.*."
+    }
+
+    $escapedTag = [Uri]::EscapeDataString($RequestedTag)
+    $releaseUrl = "https://api.github.com/repos/$torrServerRepository/releases/tags/$escapedTag"
+
+    Write-Host "Проверка официального релиза TorrServer: $releaseUrl..."
+    try {
+        $release = Invoke-RestMethod -Headers $githubApiHeaders -Uri $releaseUrl
+    } catch {
+        throw "Не удалось получить официальный релиз TorrServer из GitHub: $($_.Exception.Message)"
+    }
+
+    $resolvedTag = [string]$release.tag_name
+    if ($resolvedTag -notmatch '^MatriX\.\d+(\.\d+)*$') {
+        throw "Релиз TorrServer имеет недопустимый тег '$resolvedTag'. Разрешены только официальные теги MatriX.*."
+    }
+    if ($release.draft -or $release.prerelease) {
+        throw "Релиз TorrServer '$resolvedTag' является draft/prerelease и не может использоваться для сборки."
+    }
+    return $resolvedTag
+}
+
 if (-not (Test-Path -LiteralPath $patchPath)) {
     throw "Не найден patch TorrServer: $patchPath"
 }
 
-$go = Get-GoExecutable
+$TorrServerTag = Resolve-TorrServerTag -RequestedTag $TorrServerTag
+$sourceRoot = Join-Path $buildRoot "TorrServer-$TorrServerTag"
+$serverModule = Join-Path $sourceRoot 'server'
 if (Test-Path -LiteralPath $sourceRoot) {
     Remove-Item -LiteralPath $sourceRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
 
-$archive = Join-Path $buildRoot "TorrServer-$TorrServerCommit.zip"
-$sourceUrl = "https://github.com/YouROK/TorrServer/archive/$TorrServerCommit.zip"
-Write-Host "Загрузка TorrServer commit $TorrServerCommit..."
+$archive = Join-Path $buildRoot "TorrServer-$TorrServerTag.zip"
+$sourceUrl = "https://github.com/$torrServerRepository/archive/refs/tags/$TorrServerTag.zip"
+Write-Host "Загрузка TorrServer release $TorrServerTag..."
 Invoke-WebRequest -UseBasicParsing -Uri $sourceUrl -OutFile $archive
 Expand-Archive -LiteralPath $archive -DestinationPath $buildRoot -Force
 if (-not (Test-Path -LiteralPath $serverModule)) {
     throw "В архиве TorrServer не найден server/: $serverModule"
 }
+
+$goVersion = Resolve-GoVersion -ModuleFile (Join-Path $serverModule 'go.mod')
+$goRoot = Join-Path $repoRoot ".tools\go-$goVersion\go"
+$goExe = Join-Path $goRoot 'bin\go.exe'
+$go = Get-GoExecutable
 
 Invoke-Native -FilePath 'git.exe' -Arguments @('apply', '--check', $patchPath) -WorkingDirectory $sourceRoot
 Invoke-Native -FilePath 'git.exe' -Arguments @('apply', $patchPath) -WorkingDirectory $sourceRoot
@@ -109,7 +171,8 @@ if (-not $SkipTests) {
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $serverOutput = Join-Path $outputRoot 'TorrServer.exe'
-Invoke-Native -FilePath $go -Arguments @('build', '-tags=nosqlite,gst', '-trimpath', '-ldflags=-s -w -checklinkname=0', '-o', $serverOutput, './cmd') -WorkingDirectory $serverModule
+$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$TorrServerTag"
+Invoke-Native -FilePath $go -Arguments @('build', '-tags=nosqlite,gst', '-trimpath', "-ldflags=$ldflags", '-o', $serverOutput, './cmd') -WorkingDirectory $serverModule
 
 $managerArguments = @('publish', 'TorrServerManager.csproj', '-c', 'Release', '-o', $outputRoot)
 Invoke-Native -FilePath 'dotnet.exe' -Arguments $managerArguments -WorkingDirectory $repoRoot
@@ -118,4 +181,6 @@ Write-Host ""
 Write-Host "Готово:" -ForegroundColor Green
 Write-Host "  Manager:   $(Join-Path $outputRoot 'TorrServerManager.exe')"
 Write-Host "  TorrServer: $serverOutput"
-Write-Host "  Source:    $TorrServerCommit"
+Write-Host "  Version:    $TorrServerTag"
+Write-Host "  Release:    $TorrServerTag"
+Write-Host "  Go:         $goVersion"

@@ -104,9 +104,10 @@ Lampa на WebOS сама по себе — только плеер-оболоч
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-Она получает зафиксированный commit TorrServer, применяет GST patch, собирает `TorrServer.exe`,
+Она получает официальный стабильный release TorrServer по тегу `MatriX.*` из `config\torrserver-release.lock`, применяет GST patch, собирает `TorrServer.exe`,
 а затем публикует `TorrServerManager.exe` вместе со встроенным Torrent Mod Plugin в `publish\`.
-Требуются Windows, Git, .NET 10 SDK и Node.js; Go 1.25.7 скрипт найдёт на PATH или скачает в
+Требуются Windows, Git, .NET 10 SDK и Node.js; требуемую версию Go скрипт читает из скачанного
+`server\go.mod`, найдёт на PATH или скачает в
 игнорируемый `.tools\`.
 
 Для отдельных изменений Manager см. [CLAUDE.md](CLAUDE.md) — команды `dotnet build` / `dotnet publish`,

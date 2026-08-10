@@ -2,9 +2,11 @@
 
 Патч [`../../patches/torrserver-gstreamer-container-support.patch`](../../patches/torrserver-gstreamer-container-support.patch)
 расширяет GST-first транспорт Torrent Mod. Для обычной сборки всего продукта используйте
-[`../../scripts/build-all.ps1`](../../scripts/build-all.ps1): он сам скачивает зафиксированный
-commit TorrServer, применяет этот patch и собирает оба бинарника. Ручные шаги ниже нужны только
-для отладки TorrServer отдельно.
+[`../../scripts/build-all.ps1`](../../scripts/build-all.ps1): он сам скачивает официальный
+стабильный release TorrServer по тегу `MatriX.*`, применяет этот patch и собирает оба бинарника.
+Без параметров скрипт использует тег из `config\torrserver-release.lock`. Для проверки нового
+релиза можно передать тег явно: `-TorrServerTag MatriX.142.2`, а после проверки обновить lock-файл.
+Ветки, произвольные commit и draft/prerelease не принимаются.
 
 ## Что поддержано
 
@@ -32,6 +34,9 @@ go test -tags=gst ./gstreamer
 go build '-tags=nosqlite,gst' -trimpath '-ldflags=-s -w -checklinkname=0' -o TorrServer.exe ./cmd
 ```
 
+Для release-сборки версия должна совпадать с официальным тегом: добавьте
+`-X server/version.Version=MatriX.<version>` в `-ldflags`.
+
 Перед заменой установленного бинарника остановить `TorrServerManager.exe`, иначе его supervisor
 может перезапустить старый TorrServer. Скопировать новый файл поверх `TorrServer.exe` и снова
 запустить менеджер с `--background`. После запуска проверить `http://127.0.0.1:8090/gst/echo`:
@@ -40,10 +45,11 @@ go build '-tags=nosqlite,gst' -trimpath '-ldflags=-s -w -checklinkname=0' -o Tor
 ## Clean clone
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -TorrServerTag MatriX.142.2
 ```
 
-Скрипт требует Git, .NET 10 SDK и Node.js. Go 1.25.7 берётся с PATH либо скачивается в
+Скрипт требует Git, .NET 10 SDK и Node.js. Версия Go читается из `server\go.mod` выбранного
+release, затем берётся с PATH либо скачивается в
 `.tools\go-1.25.7\`; исходники TorrServer и промежуточные файлы лежат в `.build\`. Обе папки
 игнорируются Git и не являются частью поставки. GStreamer runtime не компилируется из исходников:
 его устанавливает/контролирует Manager на целевой машине.
