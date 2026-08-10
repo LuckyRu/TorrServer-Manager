@@ -44,7 +44,6 @@
                     episode: episode,
                     seasonEpisodeCount: state.seasonEpisodeCount,
                     avgRuntimeMinutes: state.avgRuntimeMinutes,
-                    customQuery: state.customQuery,
                     englishTitle: englishTitle
                 };
                 var evaluation = evaluateCandidatePool(state.pool, target, state);
@@ -140,7 +139,7 @@
                 return;
             }
             var generation = state.poolGeneration;
-            log('episodes', 'loadAllTorrents старт, generation=' + generation + (state.customQuery ? ', customQuery=' + state.customQuery : ''));
+            log('episodes', 'loadAllTorrents старт, generation=' + generation);
             store.patch({ poolStatus: 'loading', poolStartedAt: Date.now(), pool: [], poolIndexers: [], poolAllIndexers: [] });
             ensureEnglishTitle().then(function (englishTitle) {
                 // Re-check staleness after the async englishTitle wait before firing the real search.
@@ -150,7 +149,6 @@
                     mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
                     season: 0,
                     episode: 0,
-                    customQuery: store.get().customQuery,
                     englishTitle: englishTitle
                 };
                 var search = hasSeasons ? searchSeriesTorrentsProgressive : searchMovieTorrentsProgressive;
@@ -208,9 +206,7 @@
             rememberSeason(movie, season);
             store.patch({
                 season: season,
-                seasonGeneration: state.seasonGeneration + 1,
-                searchGeneration: state.searchGeneration + 1,
-                searchStatus: 'idle'
+                seasonGeneration: state.seasonGeneration + 1
             });
             loadEpisodes();
             return true;
@@ -221,7 +217,7 @@
 
         function ensureSeasonLoaded(season) {
             var state = store.get();
-            if (!hasSeasons || state.customQuery) return;
+            if (!hasSeasons) return;
             if (state.poolStatus !== 'ready' && state.poolStatus !== 'error') return;
             if (state.seasonLoads && state.seasonLoads[season]) return; // already loading/ready/error
 
@@ -303,7 +299,7 @@
 
         function requery(onLoaded, isRetry) {
             var state = store.get();
-            log('episodes', 'requery: сброс пула под новым запросом, customQuery=' + state.customQuery + (isRetry ? ', попытка ' + ((state.poolAttempt || 1) + 1) : ''));
+            log('episodes', 'requery: сброс пула под новым запросом' + (isRetry ? ', попытка ' + ((state.poolAttempt || 1) + 1) : ''));
             if (poolRetryTimerId !== null) { clearTimeout(poolRetryTimerId); poolRetryTimerId = null; }
             if (poolSearchHandle) { poolSearchHandle.cancel(); poolSearchHandle = null; }
             // New query context: old pool and per-season coverage are both invalid.

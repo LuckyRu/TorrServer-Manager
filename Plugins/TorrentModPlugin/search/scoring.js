@@ -81,12 +81,11 @@
     var MIN_TITLE_SIMILARITY = 0.34;
 
     export function passesSearchTitleGate(item, target) {
-        return !!target.customQuery || titleSimilarity(item.title, target.movie, target.englishTitle) >= MIN_TITLE_SIMILARITY;
+        return titleSimilarity(item.title, target.movie, target.englishTitle) >= MIN_TITLE_SIMILARITY;
     }
 
     function passesMatchGate(item, target) {
         var release = item.release;
-        // customQuery replaces the title match (the query itself is the filter now) but season/episode checks still apply.
         if (!passesSearchTitleGate(item, target)) return false;
         if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
         if (target.episode && release.explicitEpisode &&

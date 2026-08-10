@@ -33,7 +33,7 @@
             return false;
         });
         log('search', 'title-gate: фильтрация явного шума', {
-            query: query || target.customQuery || target.englishTitle || target.movie.title || target.movie.name || '',
+            query: query || target.englishTitle || target.movie.title || target.movie.name || '',
             source: source,
             input: items.length,
             accepted: accepted.length,

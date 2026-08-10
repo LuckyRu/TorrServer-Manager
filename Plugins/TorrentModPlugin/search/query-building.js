@@ -34,7 +34,7 @@
     }
 
     export function buildQueries(target) {
-        var name = target.customQuery || defaultSearchName(target.movie, target.englishTitle, target.includeYear);
+        var name = defaultSearchName(target.movie, target.englishTitle, target.includeYear);
         if (!name) return [];
         var queries = [];
 
@@ -43,7 +43,7 @@
         }
         if (target.season) {
             queries.push(name + ' S' + pad(target.season));
-            if (!target.customQuery && enabled('torrent_mod_query_russian', true)) {
+            if (enabled('torrent_mod_query_russian', true)) {
                 queries.push(name + ' ' + target.season + ' сезон');
             }
         }

@@ -1,6 +1,4 @@
-    import { defaultSearchName } from '../search/query-building.js';
     import { formatSize, compact } from '../shared/utils.js';
-    import { MODE_SERIES } from '../shared/state.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { evaluateCandidatePool, bitrateBucket, estimateBitrateForState } from '../search/scoring.js';
 
@@ -15,10 +13,6 @@
 
     export function isSeriesWithSeasons(movie) {
         return !!(movie.number_of_seasons);
-    }
-
-    export function searchQueryText(target) {
-        return defaultSearchName(target.movie, target.englishTitle, target.mode !== MODE_SERIES);
     }
 
     export function poolValues(state, pluck, order) {

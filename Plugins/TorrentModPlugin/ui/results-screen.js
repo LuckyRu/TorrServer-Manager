@@ -1,8 +1,7 @@
     import { escapeHtml } from '../shared/utils.js';
-    import { baseTitles } from '../search/query-building.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
-    import { candidateBadgeText, candidateSubtitleText, searchQueryText, candidateIdentity } from '../domain/results-core.js';
+    import { candidateBadgeText, candidateSubtitleText, candidateIdentity } from '../domain/results-core.js';
     import { selectFilterChipData, selectFilterItems, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress, selectPoolIndexers } from '../domain/results-selectors.js';
 
     export function createResultsView(options) {
@@ -115,13 +114,7 @@
         }
 
         var initialSeason = object.season || 0;
-        var initialTitles = baseTitles(movie, domain.store.get().englishTitle);
-        var filterParams = {
-            movie: movie,
-            search: searchQueryText({ movie: movie, season: initialSeason }),
-            search_one: initialTitles[0],
-            search_two: initialTitles[1]
-        };
+        var filterParams = { movie: movie };
         var filter = new Lampa.Filter(filterParams);
         var toolbar = filter.render();
 
@@ -129,12 +122,6 @@
             try { Lampa.Controller.toggle('content'); } catch (e) {}
         }
 
-        filter.onSearch = function (value) {
-            if (!value) return;
-            toolbar.find('.filter--search > div').text(value).removeClass('hide');
-            restoreContentFocus();
-            domain.selection.searchWithQuery(value);
-        };
         filter.onSelect = function (type, a, b) {
             if (a && a.reset) {
                 domain.filters.resetFilters();
@@ -325,15 +312,16 @@
             }
             filter.chosen('filter', data.activeLabels);
             filter.set('filter', data.filterItems);
+            hideSearchChip();
         }
 
         function refreshFilterOptions(filterItems) {
             filter.set('filter', filterItems);
+            hideSearchChip();
         }
 
-        function setSearchText(text) {
-            toolbar.find('.filter--search > div').text(text);
-            if (filterParams) filterParams.search = text;
+        function hideSearchChip() {
+            toolbar.find('.filter--search').remove();
         }
 
         function setStatus(text, loading) {
@@ -461,12 +449,6 @@
                 syncFilterChips(selectFilterChipData(state, movie, hasSeasons));
             } else if (state.pool !== previous.pool) {
                 refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));
-            }
-            if (state.searchText !== previous.searchText) setSearchText(state.searchText);
-            if (state.englishTitle !== previous.englishTitle) {
-                var refreshedTitles = baseTitles(movie, state.englishTitle);
-                filterParams.search_one = refreshedTitles[0];
-                filterParams.search_two = refreshedTitles[1];
             }
             var progressNow = selectSearchProgress(state);
             var progressPrev = selectSearchProgress(previous);

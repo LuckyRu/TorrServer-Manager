@@ -99,13 +99,6 @@ runner.test('сериал: start → пул → смена сезона → фи
     if (!savedEp || !savedEp[tvMovie.id] || savedEp[tvMovie.id].episode !== 7) throw new Error('последняя серия не сохранена: ' + JSON.stringify(savedEp));
     if (domain.selection.getSavedEpisode(tvMovie).episode !== 7) throw new Error('getSavedEpisode вернул не то');
 
-    // ручной запрос — единственный сетевой поиск; сериал остаётся на сериях
-    domain.selection.searchWithQuery('Futurama');
-    await flushMicrotasks();
-    const requeried = domain.store.get();
-    if (requeried.customQuery !== 'Futurama') throw new Error('customQuery не сохранился');
-    if (requeried.poolStatus !== 'ready') throw new Error('requery не выполнился: ' + requeried.poolStatus);
-    if (requeried.stage !== 'episodes') throw new Error('сериал должен остаться на сериях, stage=' + requeried.stage);
 });
 
 runner.test('сериал: кандидат из частичного пула запускается, пока остальные трекеры ещё loading', async () => {
@@ -188,11 +181,6 @@ runner.test('фильм: вход → список торрентов (без а
     if (!saved || !saved[movie.id] || !saved[movie.id][0]) throw new Error('дефолт фильма не сохранён: ' + JSON.stringify(saved));
     if (saved[movie.id][0].title !== chosen.title) throw new Error('сохранён не тот торрент');
 
-    // смена названия фильма — ручной поиск без автоплея
-    domain.selection.searchWithQuery('Dune');
-    await flushMicrotasks();
-    const requeried = domain.store.get();
-    if (requeried.stage !== 'candidates') throw new Error('после смены названия фильм должен показать кандидатов');
 });
 
 runner.test('фильм: список появляется и растёт до завершения всех трекеров', async () => {
@@ -247,34 +235,6 @@ runner.test('фильм: вход с сохранённым дефолтом —
 
     const state = domain.store.get();
     if (state.stage === 'candidates') throw new Error('с сохранённым дефолтом фильм должен автозапуститься, а не показывать список');
-});
-
-runner.test('гонка: freshSearch при active customQuery отбрасывается сменой сезона до ответа', async () => {
-    globalThis.__clearReguest();
-    globalThis.__clearStorage();
-    globalThis.__requestLog = [];
-    globalThis.__mockReguest((url) => url.includes('/season/'), { episodes: [{ episode_number: 7, runtime: 22 }] });
-    // медленный торрент-поиск: успеет стартовать, но не ответить до смены сезона
-    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
-        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'cccc')],
-        indexers: []
-    }, 80);
-
-    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
-    domain.start();
-    await new Promise((r) => setTimeout(r, 160)); // серии + пул полностью пришли
-
-    domain.selection.searchWithQuery('Futurama'); // customQuery → requery (медленный)
-    await new Promise((r) => setTimeout(r, 10));
-    domain.selection.selectEpisode(7);             // клик серии при активном customQuery → freshSearch (медленный, season 2)
-    await new Promise((r) => setTimeout(r, 10));
-    domain.episodes.setSeason(3);                  // смена сезона должна инвалидировать in-flight freshSearch
-    await new Promise((r) => setTimeout(r, 200));  // все ответы пришли
-
-    const state = domain.store.get();
-    if (state.season !== 3) throw new Error('сезон не сменился');
-    if (state.stage === 'candidates') throw new Error('устаревший freshSearch показал кандидатов на новом сезоне');
-    if (state.searchStatus !== 'idle') throw new Error('searchStatus не сброшен: ' + state.searchStatus);
 });
 
 runner.test('ленивая дозагрузка сезона: пустой сезон → мерж → кандидаты, без повторных запросов', async () => {
@@ -474,50 +434,6 @@ runner.test('TMDB сезон недоступен: ошибка retryable, по�
     state = domain.store.get();
     if (state.episodesStatus !== 'ready') throw new Error('повтор не восстановил список серий: ' + state.episodesStatus);
     if (state.stage !== 'episodes') throw new Error('после повтора ожидал stage=episodes, получил ' + state.stage);
-});
-
-runner.test('freshSearch: Jackett недоступен при активном customQuery — retryable, повтор восстанавливает', async () => {
-    globalThis.__clearReguest();
-    globalThis.__clearStorage();
-    globalThis.__requestLog = [];
-    globalThis.__mockReguest((url) => url.includes('/season/'), {
-        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
-    });
-    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
-        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
-        indexers: []
-    });
-
-    const domain = createResultsDomain({ object: { movie: tvMovie, season: 2 }, movie: tvMovie, hasSeasons: true });
-    domain.start();
-    await flushMicrotasks();
-
-    // ручной поиск по имени — успешный requery, сериал остаётся на списке серий
-    domain.selection.searchWithQuery('Futurama');
-    await flushMicrotasks();
-    if (domain.store.get().customQuery !== 'Futurama') throw new Error('customQuery не сохранился');
-
-    globalThis.__clearReguest();
-    globalThis.__mockReguest((url) => url.includes('/season/'), {
-        episodes: [{ episode_number: 7, name: 'Эпизод 7', runtime: 22 }]
-    });
-    domain.selection.selectEpisode(7);
-    await flushMicrotasks();
-
-    let state = domain.store.get();
-    if (state.searchStatus !== 'error') throw new Error('ожидал searchStatus=error, получил ' + state.searchStatus);
-    if (state.stage !== 'message') throw new Error('ожидал stage=message, получил ' + state.stage);
-    if (typeof state.message.retry !== 'function') throw new Error('retry должен быть функцией: ' + JSON.stringify(state.message));
-
-    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
-        results: [jackettRaw('Футурама / Futurama S02E07 1080p WEB-DL', 12, 6, 'aaaa')],
-        indexers: []
-    });
-    state.message.retry();
-    await flushMicrotasks();
-
-    state = domain.store.get();
-    if (state.searchStatus !== 'ready') throw new Error('повтор не восстановил поиск: ' + state.searchStatus);
 });
 
 runner.test('destroy() мид-флайт: поздний ответ после domain.destroy() не трогает стор', async () => {

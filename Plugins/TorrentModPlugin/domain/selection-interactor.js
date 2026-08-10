@@ -1,14 +1,11 @@
     // ---------- domain: selection interactor ----------
-    import { searchMovieTorrents } from '../search/movie-search.js';
-    import { searchSeriesTorrents } from '../search/series-search.js';
     import { evaluateCandidatePool } from '../search/scoring.js';
     import { startDownload } from '../playback/smart-preload.js';
-    import { enabled, notify, debugLogCandidates } from '../shared/utils.js';
-    import { searchQueryText, isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
+    import { notify } from '../shared/utils.js';
+    import { isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
     import { selectCandidatesForEpisode } from './results-selectors.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
-    import { isCurrentGeneration } from '../shared/core/generation-guard.js';
-    import { log, warn } from '../shared/core/log.js';
+    import { log } from '../shared/core/log.js';
 
     var DEFAULT_KEY = 'torrent_mod_default_torrent';
     var LAST_EPISODE_KEY = 'torrent_mod_last_episode';
@@ -36,7 +33,7 @@
 
         function logCandidateEvaluation(label, target, evaluation) {
             log('search', label + ': фильтрация результатов', {
-                query: target.customQuery || target.englishTitle || target.movie.title || target.movie.name || '',
+                query: target.englishTitle || target.movie.title || target.movie.name || '',
                 season: target.season,
                 episode: target.episode,
                 input: evaluation.inputCount,
@@ -53,7 +50,7 @@
         scope.subscribe(store, function (state, previous) {
             if (isDestroyed()) return;
             // ensureSeasonLoaded no-ops once already loading/settled, safe to call unconditionally.
-            if (state.picker.open && hasSeasons && !state.customQuery && ensureSeasonLoaded &&
+            if (state.picker.open && hasSeasons && ensureSeasonLoaded &&
                 (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
                 var pickerCandidates = selectCandidatesForEpisode(object, state, state.picker.episode);
                 if (!pickerCandidates.length) ensureSeasonLoaded(state.season);
@@ -85,7 +82,7 @@
             )) syncMoviePresentation();
         });
 
-        // pickerOnly: show the candidate list without auto-playing the top match (movie/customQuery flows only).
+        // pickerOnly: show the candidate list without auto-playing the top match.
         function finishSelection(candidates, target, pickerOnly) {
             var best = candidates[0];
             var next = candidates[1];
@@ -181,7 +178,7 @@
                 return;
             }
             if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                // Mirrors results-domain's initial message so requery/manual-search paths never render a blank list.
+                // Mirrors results-domain's initial message so retry paths never render a blank list.
                 store.patch({ stage: 'message', message: { text: 'Ищем раздачи по всем трекерам…', retry: null } });
                 return;
             }
@@ -204,12 +201,11 @@
                 episode: 0,
                 seasonEpisodeCount: 0,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery,
                 englishTitle: state.englishTitle
             };
         }
 
-        // Reads the already-fetched pool directly (no network call) — avoids double-searching when customQuery is already set.
+        // Reads the already-fetched pool directly (no network call).
         function showMoviePool(pickerOnly) {
             moviePresentation = { autoPlaySaved: false, allowConfidenceAutoplay: !pickerOnly };
             syncMoviePresentation();
@@ -225,20 +221,13 @@
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery,
                 englishTitle: state.englishTitle
             };
-            store.patch({
-                lastEpisode: episode,
-                searchText: state.customQuery || searchQueryText(target)
-            });
+            store.patch({ lastEpisode: episode });
             saveLastEpisode(object.movie, state.season, episode);
             // A newer explicit click always supersedes older pending pool/season intents.
             pendingSelection = null;
             pendingClick = null;
-
-            // Explicit manual query — the ONLY network search left.
-            if (state.customQuery) { freshSearch(target, pickerOnly); return; }
 
             // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
             if (!hasSeasons) { showMoviePool(pickerOnly); return; }
@@ -304,74 +293,6 @@
             store.patch({ picker: { open: false, episode: 0 } });
         }
 
-        function freshSearch(target, pickerOnly) {
-            var generation = store.get().searchGeneration + 1;
-            log('selection', 'freshSearch: "' + (target.customQuery || '') + '", сезон=' + target.season + ', эпизод=' + target.episode + ', generation=' + generation);
-            store.patch({
-                searchGeneration: generation,
-                searchStatus: 'loading',
-                statusText: 'Ищем по названию…'
-            });
-
-            var search = target.mode === MODE_MOVIE ? searchMovieTorrents : searchSeriesTorrents;
-            // Generation alone isn't enough: setSeason() doesn't bump searchGeneration, so isStillValid also re-checks season/query.
-            var stillTargeted = function (state) { return state.season === target.season && state.customQuery === target.customQuery; };
-            search(target).then(function (response) {
-                // Avoids painting a stale result, or a misleading toast from a destroy-time cancellation, over what the user is now looking at.
-                if (!isCurrentGeneration(store, 'searchGeneration', generation, isDestroyed, stillTargeted)) {
-                    log('selection', 'freshSearch отброшен как устаревший, generation=' + generation);
-                    return;
-                }
-                if (response.failed) {
-                    // Same retryable-message pattern loadEpisodes' TMDB failure uses (results-state.js's message.retry), for consistent UX.
-                    warn('selection', 'freshSearch: поиск не удался (Jackett недоступен)');
-                    store.patch({
-                        searchStatus: 'error', stage: 'message',
-                        message: { text: 'Jackett недоступен или не ответил', retry: function () { freshSearch(target, pickerOnly); } }
-                    });
-                    return;
-                }
-                var evaluation = evaluateCandidatePool(response.results, target, store.get());
-                logCandidateEvaluation('freshSearch', target, evaluation);
-                if (!evaluation.afterStateFilters) {
-                    log('selection', 'freshSearch: пул пуст после фильтров');
-                    notify('Ничего не найдено');
-                    store.patch({ searchStatus: 'idle', statusText: '' });
-                    return;
-                }
-
-                if (enabled('torrent_mod_debug', false)) debugLogCandidates(evaluation.scoredItems, target, evaluation);
-                var candidates = evaluation.items;
-                store.patch({ searchStatus: 'ready', statusText: '' });
-                if (!candidates.length) { log('selection', 'freshSearch: похожих раздач не нашлось (гейт отсеял все)'); notify('Похожих раздач не нашлось'); return; }
-
-                log('selection', 'freshSearch успех: ' + candidates.length + ' кандидатов прошли гейт');
-                finishSelection(candidates, target, pickerOnly);
-            });
-        }
-
-        // customQuery is persistent query context (re-fetch under a new name), not a request to switch movies or start playback.
-        function searchWithQuery(value) {
-            if (!value) return;
-            log('selection', 'searchWithQuery: "' + value + '"');
-            // Bumping searchGeneration discards any in-flight freshSearch from the previous query context.
-            var current = store.get();
-            pendingSelection = null;
-            pendingClick = null;
-            moviePresentation = null;
-            store.patch({ customQuery: value, searchText: value, searchGeneration: current.searchGeneration + 1, searchStatus: 'idle' });
-            if (hasSeasons) {
-                var state = store.get();
-                if (state.episodesCache) store.patch({ stage: 'episodes', statusText: '', searchStatus: 'idle' });
-                if (requery) requery();
-            } else {
-                if (requery) {
-                    requery();
-                    showMoviePool(true);
-                }
-            }
-        }
-
         function playCandidate(item, target) {
             log('selection', 'playCandidate: ' + item.title + ' (сезон ' + (target.season || 0) + ')');
             moviePresentation = null;
@@ -384,7 +305,6 @@
         return {
             startMovie: startMovie,
             selectEpisode: selectEpisode,
-            searchWithQuery: searchWithQuery,
             playCandidate: playCandidate,
             setActiveEpisode: setActiveEpisode,
             openPicker: openPicker,

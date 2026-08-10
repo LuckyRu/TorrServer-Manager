@@ -8,7 +8,7 @@ import { parseMovieRelease } from '../search/movie-release-parsing.js';
 import { parseSeriesRelease } from '../search/series-release-parsing.js';
 import { scoreCandidate, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate } from '../search/scoring.js';
 import {
-    createInitialState, isSeriesWithSeasons, searchQueryText, poolValues, currentSeasonLabel,
+    createInitialState, isSeriesWithSeasons, poolValues, currentSeasonLabel,
     buildFilterItems, activeFilterLabels, candidatesForEpisode, badgeText, isConfidentMatch,
     publishedText, candidateBadgeText, candidateSubtitleText, candidateIdentity
 } from '../domain/results-core.js';
@@ -60,15 +60,15 @@ const seasonPack = {
 };
 seasonPack.release = parseRelease(seasonPack.title);
 
-const target = { movie: tvMovie, season: 2, episode: 7, seasonEpisodeCount: 19, avgRuntimeMinutes: 22, customQuery: null };
+const target = { movie: tvMovie, season: 2, episode: 7, seasonEpisodeCount: 19, avgRuntimeMinutes: 22 };
 
 const state = {
     season: 2, voiceType: 'any', resolution: 'any',
     pool: [single, seasonPack],
     episodesCache: [{ episode_number: 1 }, { episode_number: 7 }, { episode_number: 8 }],
     seasonEpisodeCount: 19, avgRuntimeMinutes: 22,
-    poolStatus: 'ready', episodesStatus: 'ready', searchStatus: 'idle',
-    stage: 'episodes', statusText: '', searchText: '', lastEpisode: 0, customQuery: null
+    poolStatus: 'ready', episodesStatus: 'ready',
+    stage: 'episodes', statusText: '', lastEpisode: 0
 };
 
 // ---------- query building ----------
@@ -76,17 +76,13 @@ runner.test('defaultSearchName использует parse_lang (df → ориг�
     if (defaultSearchName(tvMovie) !== 'Futurama') throw new Error('expected "Futurama", got "' + defaultSearchName(tvMovie) + '"');
     if (defaultSearchName(tvMovie, 'Futurama', false) !== 'Futurama') throw new Error('поиск сериалов не должен добавлять год');
 });
-runner.test('searchQueryText без сезонного суффикса', () => {
-    if (searchQueryText({ movie: tvMovie, season: 2 }) !== 'Futurama') throw new Error(searchQueryText({ movie: tvMovie, season: 2 }));
-});
 runner.test('buildQueries для пула — один запрос по названию', () => {
     const q = buildQueries({ movie: tvMovie, season: 0, episode: 0 });
     if (q.length !== 1 || q[0] !== 'Futurama') throw new Error(JSON.stringify(q));
 });
-runner.test('buildQueries для customQuery с суффиксом эпизода', () => {
-    const q = buildQueries({ movie: tvMovie, season: 2, episode: 7, customQuery: 'Брат 2' });
-    // точный SxxExx + сезонный Sxx — оба валидны для ручного запроса
-    if (q.indexOf('Брат 2 S02E07') < 0 || q.indexOf('Брат 2 S02') < 0) throw new Error(JSON.stringify(q));
+runner.test('buildQueries использует название TMDB и сигналы сезона/эпизода', () => {
+    const q = buildQueries({ movie: tvMovie, season: 2, episode: 7 });
+    if (q.indexOf('Futurama S02E07') < 0 || q.indexOf('Futurama S02') < 0) throw new Error(JSON.stringify(q));
 });
 runner.test('режимы поиска: фильм не получает season/episode suffix, сериал получает', () => {
     const movieQueries = buildMovieQueries({ movie, season: 4, episode: 2 });
@@ -338,7 +334,7 @@ runner.test('titleSimilarity (через гейт): отсеивает шум д
         id: 76479, name: 'Пацаны', original_name: 'The Boys', title: 'Пацаны', original_title: 'The Boys',
         first_air_date: '2019-07-25', number_of_seasons: 5
     };
-    const boysTarget = { movie: boysMovie, season: 1, episode: 0, seasonEpisodeCount: 8, avgRuntimeMinutes: 60, customQuery: null };
+    const boysTarget = { movie: boysMovie, season: 1, episode: 0, seasonEpisodeCount: 8, avgRuntimeMinutes: 60 };
     function passesFor(title) {
         const release = parseSeriesRelease(title);
         const item = { title, tracker: 'x', size: 2_000_000_000, seeders: 5, peers: 2, publishedAt: 0, magnet: 'magnet:?x', link: '', release };
@@ -367,11 +363,8 @@ runner.test('passesSearchTitleGate отсекает явный шум до до�
         title: 'The Beach Boys - The Pet Sounds Sessions [Deluxe Edition]',
         release: parseSeriesRelease('The Beach Boys - The Pet Sounds Sessions [Deluxe Edition]')
     };
-    const boys = { movie: { title: 'Пацаны', original_title: 'The Boys' }, englishTitle: '', customQuery: null };
+    const boys = { movie: { title: 'Пацаны', original_title: 'The Boys' }, englishTitle: '' };
     if (passesSearchTitleGate(item, boys)) throw new Error('явный шум прошёл ранний title-gate');
-    if (!passesSearchTitleGate(item, Object.assign({}, boys, { customQuery: 'The Beach Boys' }))) {
-        throw new Error('ручной запрос не должен блокироваться title-gate');
-    }
 });
 runner.test('applyStateFilters: пустой фильтр оставляет пул, несуществующий не ломает', () => {
     const f = applyStateFilters(state.pool, { ...state, voiceType: 'Дубляж' });

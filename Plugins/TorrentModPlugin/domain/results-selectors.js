@@ -3,7 +3,7 @@
     import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
 
     export function selectBusy(state) {
-        return state.episodesStatus === 'loading' || state.poolStatus === 'loading' || state.searchStatus === 'loading';
+        return state.episodesStatus === 'loading' || state.poolStatus === 'loading';
     }
 
     export function selectFilterChipData(state, movie, hasSeasons) {
@@ -27,7 +27,6 @@
             episode: number,
             seasonEpisodeCount: state.seasonEpisodeCount,
             avgRuntimeMinutes: state.avgRuntimeMinutes,
-            customQuery: state.customQuery,
             englishTitle: state.englishTitle
         };
     }
@@ -83,7 +82,7 @@
 
     export function selectSearchProgress(state) {
         var seasonStatus = state.seasonLoads && state.seasonLoads[state.season];
-        var loading = state.poolStatus === 'loading' || seasonStatus === 'loading' || state.searchStatus === 'loading';
+        var loading = state.poolStatus === 'loading' || seasonStatus === 'loading';
         if (loading) {
             var elapsedMs = (state.poolStatus === 'loading' && state.poolStartedAt) ? Date.now() - state.poolStartedAt : null;
             return { stage: 'loading', elapsedMs: elapsedMs, slow: elapsedMs !== null && elapsedMs >= SLOW_SEARCH_THRESHOLD_MS };
@@ -95,7 +94,7 @@
                 attempt: state.poolAttempt || 1, maxAttempts: POOL_MAX_ATTEMPTS
             };
         }
-        var failed = state.poolStatus === 'error' || seasonStatus === 'error' || state.searchStatus === 'error';
+        var failed = state.poolStatus === 'error' || seasonStatus === 'error';
         if (failed) return { stage: 'error', elapsedMs: null, slow: false, attempt: state.poolAttempt || 1 };
         return { stage: 'idle', elapsedMs: null, slow: false };
     }

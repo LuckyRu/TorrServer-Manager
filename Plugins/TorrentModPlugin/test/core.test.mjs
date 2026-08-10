@@ -52,17 +52,17 @@ runner.test('isCurrentGeneration: generation match, no isStillValid → true', (
 });
 
 runner.test('isCurrentGeneration: isStillValid false → false even if generation matches', () => {
-    const store = createStore({ searchGeneration: 1, season: 2, customQuery: 'foo' });
-    const stillTargeted = (state) => state.season === 3; // имитирует смену сезона под freshSearch
-    if (isCurrentGeneration(store, 'searchGeneration', 1, alwaysAlive, stillTargeted)) {
+    const store = createStore({ poolGeneration: 1, season: 2 });
+    const stillTargeted = (state) => state.season === 3; // имитирует смену сезона под запрос пула
+    if (isCurrentGeneration(store, 'poolGeneration', 1, alwaysAlive, stillTargeted)) {
         throw new Error('isStillValid=false должен давать false даже при совпадающем поколении');
     }
 });
 
 runner.test('isCurrentGeneration: isStillValid true and generation matches → true', () => {
-    const store = createStore({ searchGeneration: 1, season: 2, customQuery: 'foo' });
-    const stillTargeted = (state) => state.season === 2 && state.customQuery === 'foo';
-    if (!isCurrentGeneration(store, 'searchGeneration', 1, alwaysAlive, stillTargeted)) {
+    const store = createStore({ poolGeneration: 1, season: 2 });
+    const stillTargeted = (state) => state.season === 2;
+    if (!isCurrentGeneration(store, 'poolGeneration', 1, alwaysAlive, stillTargeted)) {
         throw new Error('всё совпадает — должен давать true');
     }
 });
