@@ -211,12 +211,19 @@
         }
 
         var initialSeason = object.season || 0;
-        var initialTitles = baseTitles(movie);
+        // state.englishTitle is almost certainly still null here (the toolbar builds before
+        // episodes-interactor.js's own async TMDB en-US fetch resolves) — baseTitles degrades
+        // gracefully to [localized, original_title] in that case, same as before this feature
+        // existed. render()'s own diff below re-derives search_one/search_two once englishTitle
+        // actually lands, so this is only ever stale for the toolbar's very first paint.
+        var initialTitles = baseTitles(movie, domain.store.get().englishTitle);
         // Keep a reference to the params object: Lampa.Filter reads `params.search` live when
         // building its search-suggestion list (selectSearch marks the item whose query equals
         // params.search as selected), so updating this object keeps the "which query is active"
         // marker in the widget in sync with the real search — otherwise, after a search change,
-        // reopening the search chip still highlighted the old query (confirmed by the user).
+        // reopening the search chip still highlighted the old query (confirmed by the user). The
+        // same live-read applies to search_one/search_two, which is what makes the englishTitle
+        // update below (render()'s own diff) actually reach the widget without reconstructing it.
         var filterParams = {
             movie: movie,
             search: searchQueryText({ movie: movie, season: initialSeason }),
@@ -869,6 +876,18 @@
                 refreshFilterOptions(selectFilterItems(state, movie, hasSeasons));
             }
             if (state.searchText !== previous.searchText) setSearchText(state.searchText);
+            // englishTitle resolves once, asynchronously, well after the toolbar's own construction
+            // (see filterParams' own comment above) — this is the ONE place that catches it landing
+            // and updates the "Уточнить" chip's suggestion pair to match, mutating the same
+            // filterParams object Lampa.Filter already holds a live reference to (no widget
+            // reconstruction needed). Requested directly by the user: an Asian show's native-script
+            // original_title is useless as a search suggestion on Russian trackers, englishTitle is
+            // what should show there instead.
+            if (state.englishTitle !== previous.englishTitle) {
+                var refreshedTitles = baseTitles(movie, state.englishTitle);
+                filterParams.search_one = refreshedTitles[0];
+                filterParams.search_two = refreshedTitles[1];
+            }
             // selectStatusText derives the head line rather than reading state.statusText raw —
             // the interactor-managed field is empty for the WHOLE-WORK POOL search specifically
             // (it runs silently in the background by design), which used to leave the head line

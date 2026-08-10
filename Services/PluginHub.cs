@@ -254,16 +254,7 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
-            // Parallel-per-indexer search, replacing the old single blocking call to Jackett's own
-            // /indexers/all/results aggregate (see WriteTorrentSearchStartAsync's own comment for
-            // why: one slow/broken indexer used to hold up every OTHER indexer's already-ready
-            // results for up to the full 45s ceiling — a real, reported "мучительно больно ждать"
-            // complaint). start/poll/cancel instead of one request-response: /poll is plain
-            // Lampa.Reguest-compatible GET polling (matching this codebase's own established
-            // pattern, smart-preload.js's pollFiles), not HTTP streaming/SSE — the target device is
-            // an LG WebOS TV browser, and this project has repeatedly avoided browser APIs without a
-            // long compatibility track record there (see TorrentModPlugin.js's own IIFE-not-ESM
-            // bundling decision for the same underlying caution).
+            // Parallel per-indexer search (start/poll/cancel) — see docs/system-design/torrent-mod-parallel-search.md
             if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search/start", StringComparison.OrdinalIgnoreCase))
             {
                 var query = context.Request.QueryString["query"]?.Trim() ?? "";
@@ -280,11 +271,7 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
-            // GET, not POST: this is an ephemeral, best-effort "stop bothering" signal (nothing
-            // persisted, no side effect worth REST purity over) — matches Lampa.Reguest's own plain
-            // GET-request shape everywhere else in this plugin, no Content-Length/POST-body handling
-            // needed on either side for what the server-side stale-job sweep already backstops if
-            // this call never lands at all.
+            // GET not POST: best-effort signal, no body needed; the stale-job sweep backstops a lost call.
             if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search/cancel", StringComparison.OrdinalIgnoreCase))
             {
                 var jobId = context.Request.QueryString["jobId"] ?? "";
@@ -334,10 +321,6 @@ internal sealed class PluginHub : IDisposable
 
             if (context.Request.HttpMethod == "GET" && path.Equals("/lampa.js", StringComparison.OrdinalIgnoreCase))
             {
-                // Same reasoning as /plugins/*.js below: a TV's own HTTP cache reusing this
-                // indefinitely means it keeps running old *fetching logic* even after a manager
-                // update ships new LoaderScript content, independent of the plugin cache-busting
-                // this file itself is responsible for.
                 context.Response.Headers["Cache-Control"] = "no-cache";
                 await WriteTextAsync(context.Response, LoaderScript, "application/javascript; charset=utf-8");
                 return;
@@ -406,24 +389,9 @@ internal sealed class PluginHub : IDisposable
         });
     }
 
-    // ---------- parallel per-indexer torrent search ----------
-    //
-    // Replaces a single blocking call to Jackett's own /indexers/all/results aggregate (Jackett's
-    // own internal fan-out, opaque and monolithic — one slow/broken indexer held up every OTHER
-    // indexer's already-ready results for up to the full 45s ceiling, confirmed live as a real,
-    // repeated pain point: "смотреть на таймер пустого ожидания мучительно больно"). Confirmed live
-    // against this project's own Jackett instance (not guessed from the README) that Jackett exposes
-    // the SAME JSON result shape per-indexer as it does for the aggregate
-    // (`/indexers/{id}/results?apikey=...&Query=...` → identical `{Results:[...],Indexers:[...]}`
-    // fields, just scoped to one tracker) — so this fires one such request PER configured indexer,
-    // in parallel, from our own code, instead of trusting Jackett's single internal aggregate call.
-    //
-    // A "job" (SearchJob) tracks one search's in-flight/completed per-indexer results in memory;
-    // start/poll/cancel replace the old single request-response, so the client can render whichever
-    // indexers have already answered while the rest are still working — plain GET polling
-    // (Lampa.Reguest-compatible, matching smart-preload.js's own established pollFiles pattern), not
-    // HTTP streaming/SSE, which would need a browser API (fetch()+ReadableStream) with no track
-    // record on the target LG WebOS TV browser this whole plugin is built around.
+    // Parallel per-indexer torrent search (start/poll/cancel), one request per configured Jackett
+    // indexer instead of trusting Jackett's own blocking aggregate call — see
+    // docs/system-design/torrent-mod-parallel-search.md for the full protocol and rationale.
     private sealed class IndexerSearchResult
     {
         public required string Id { get; init; }
@@ -495,12 +463,8 @@ internal sealed class PluginHub : IDisposable
         var job = new SearchJob { TotalIndexers = indexers.Count, Cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token) };
         searchJobs[jobId] = job;
 
-        // Fire-and-forget background worker: starts every indexer's request immediately (all of them
-        // — materializing the list below is what actually starts each async call, not the loop), then
-        // records each one into job.Completed IN COMPLETION ORDER (Task.WhenAny), not original list
-        // order — this is what makes a fast tracker's results visible to /poll before a slow one has
-        // even finished, the whole point of this redesign. /poll itself never waits on anything; it
-        // only ever reads whatever's already landed in job.Completed.
+        // Task.WhenAny, not sequential await — records results in COMPLETION order so /poll can show
+        // a fast tracker before a slow one finishes (see docs/system-design/torrent-mod-parallel-search.md).
         _ = Task.Run(async () =>
         {
             var pending = indexers
@@ -522,10 +486,7 @@ internal sealed class PluginHub : IDisposable
             }
         });
 
-        // `indexers` (id/name only, nothing about outcome yet) lets the client show every configured
-        // tracker as a pending/spinner chip from the very first paint, not just a "ждём ещё N" count
-        // with no names — requested directly by the user ("в панели показывать со спиннером кого
-        // ещё ждём").
+        // Full indexer id/name list up front lets the client show a named pending spinner per tracker.
         await WriteJsonAsync(response, new { jobId, totalIndexers = indexers.Count, indexers = indexers.Select(indexer => new { id = indexer.Id, name = indexer.Name }) });
     }
 
@@ -537,14 +498,8 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        // Always the full accumulated set, not just what's new since the last poll — simpler (no
-        // per-client cursor state to track server-side) and cheap enough at this scale (at most a
-        // handful of indexers, LAN-local, not internet-bandwidth-constrained); the client dedupes by
-        // indexer id itself, which it already needs to do to know when to stop polling anyway.
-        // Built as a raw JSON string rather than round-tripping through JsonSerializer/JsonDocument
-        // for each entry's `results` — that field is ALREADY serialized JSON text (Jackett's own
-        // response, only link-rewritten), and re-parsing it just to re-serialize it unchanged would
-        // be pure waste for what can just be concatenated directly.
+        // Always the full accumulated set (stateless client, dedupes by indexer id itself). Built as a
+        // raw JSON string, not JsonSerializer round-tripping — `results` is already serialized text.
         var builder = new StringBuilder();
         builder.Append("{\"done\":").Append(job.Done ? "true" : "false").Append(",\"indexers\":[");
         var first = true;
@@ -621,16 +576,7 @@ internal sealed class PluginHub : IDisposable
         return list;
     }
 
-    // A single indexer failure (timeout or transient HTTP error) no longer gives up after one
-    // attempt — retried immediately, WITHOUT the whole-pool retry ladder's backoff delay
-    // (POOL_RETRY_DELAYS_MS, episodes-interactor.js), up to IndexerMaxAttempts total. Requested
-    // directly by the user: "по каждому трекеру ретраить до исчерпания попыток если идут ошибки...
-    // задержку повтора не использовать" — explicitly ruling out reusing the pool-level backoff
-    // shape here. The two retry mechanisms solve different problems: the pool ladder exists for the
-    // rare case where NOT ONE indexer answered at all (a real outage); this one exists because a
-    // single indexer timing out or erroring once is common and cheap to just try again immediately
-    // — parallelism already means a struggling tracker doesn't block the others, so there's nothing
-    // to gain by waiting before retrying it.
+    // Immediate retry per indexer, deliberately no backoff delay — see docs/system-design/torrent-mod-parallel-search.md
     private const int IndexerMaxAttempts = 3;
 
     private async Task<IndexerSearchResult> SearchOneIndexerAsync(string id, string name, string apiKey, string query, CancellationToken cancellationToken)
@@ -706,15 +652,8 @@ internal sealed class PluginHub : IDisposable
         }
     }
 
-    // Jackett fills each result's Link (and anything else HTTP) with its own loopback download
-    // endpoint (http://127.0.0.1:9117/dl/...). Those links are consumed ONLY by TorrServer on THIS
-    // machine (the plugin passes link into Lampa.Torserver.hash, which hands it straight to
-    // TorrServer — the TV never downloads the .torrent itself), so the address must be reachable
-    // FROM TorrServer. Rewriting to the request's LAN authority was a live-found bug: TorrServer
-    // couldn't dial its own LAN IP (192.168.10.108:8095 → connection refused, seen in server.log),
-    // so every .torrent-only release (all current indexers return link, no magnet) stalled forever.
-    // Rewrite to loopback + our /jackett reverse-proxy instead — TorrServer is co-located with the
-    // manager by design.
+    // Jackett's Link points at its own loopback download endpoint; TorrServer (not the TV) fetches it
+    // and can't dial its own LAN IP, so rewrite to loopback + our /jackett proxy, not the request's LAN authority.
     private static string RewriteJackettLinks(string resultsJson)
     {
         var proxyBase = $"http://127.0.0.1:{AppPaths.PluginHubPort}/jackett";
@@ -818,12 +757,8 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        // Lampa asks the hosted app root for these two assets on every start and 404s when they're
-        // absent — harmless but noisy (and modification.js's 404 came back with a JSON MIME type,
-        // which the browser refuses to execute as a script). Serve minimal valid stubs instead:
-        // the blacklist as an empty array (the app appends it to the Status 'custom' line, see
-        // vendor/lampa-source/src/core/plugins.js loadBlackList) and modification.js as an empty
-        // script — that plugin is simply not part of this Lampa build.
+        // Lampa 404s on these two assets on every start otherwise (modification.js's 404 came back as
+        // JSON, which the browser refuses to execute) — serve harmless stubs, neither is part of this build.
         if (relativePath.Replace('\\', '/').Equals("plugins_black_list.json", StringComparison.OrdinalIgnoreCase))
         {
             await WriteTextAsync(response, "[]", "application/json; charset=utf-8");
@@ -998,14 +933,8 @@ internal sealed class PluginHub : IDisposable
 
             if (plugin.Id.Length > 100 || plugin.Name.Length > 100 || plugin.Category.Length > 50 || plugin.Url.Length > 2048)
                 throw new InvalidDataException("Идентификатор, название, категория или URL плагина слишком длинные.");
-            // A `builtin://` URL passes here even if it doesn't (or no longer) name a real entry in
-            // BuiltInPlugins.Definitions — e.g. a plugin removed from a later app version, still
-            // sitting in a config saved by an older one. Rejecting it here as "not a valid URL" would
-            // throw out of Validate(), which LoadConfiguration() catches by discarding the *entire*
-            // configuration and starting over empty — silently deleting every other plugin's settings
-            // over one orphaned reference (confirmed live: removing Smart TS wiped Online Mod's entry
-            // too on the next startup). Whether the built-in still exists is BuiltInPlugins.Read's job
-            // at actual use time, which already fails narrowly, just for that one plugin.
+            // Any `builtin://` URL passes here even if unregistered — see docs/reference/architecture-map.md#gotchas
+            // for why rejecting it would wipe every other plugin's config, not just this one.
             if (!BuiltInPlugins.IsBuiltIn(plugin.Url) &&
                 !plugin.Url.StartsWith("builtin://", StringComparison.OrdinalIgnoreCase) &&
                 (!Uri.TryCreate(plugin.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")))

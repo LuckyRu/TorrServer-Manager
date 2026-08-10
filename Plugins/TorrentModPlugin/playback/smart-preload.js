@@ -1,40 +1,6 @@
-    // ---------- GST-only playback with audio-track preflight ----------
-    //
-    // A click mounts Lampa's own Player shell immediately. The shell has no media source yet: it
-    // only shows the native loading state while the torrent is registered, metadata is resolved,
-    // and the mandatory GST probe selects an audio track. The real Player.play still receives a
-    // concrete URL, so no direct/GST task can start before preflight has completed.
-    //
-    //   register torrent                POST /torrents action:add
-    //     → pollFiles: Torserver.files(hash)  until metadata resolves → file_stats
-    //     → pickBestFile()              score season/episode signals in file paths (ours)
-    //     → GET /gst/:hash/probe        discover actual audio tracks
-    //     → Lampa.Player.play({GST url, voiceovers, timeline, playlist})
-    //
-    // TRANSPORT: every file is opened through TorrServer GST/HLS. The direct browser stream does not
-    // provide a portable contract for embedded audio tracks, subtitles, or codecs across WebOS TVs.
-    // A probe always precedes Player.play: it supplies `voiceovers` and selects either the user's
-    // saved studio or the first audio track. Do not patch global Lampa Player/Torserver APIs.
-    //
-    // PLAYBACK LIFECYCLES: every launch owns one player scope; each selected file owns a child
-    // scope. Register/files and the early shell belong to the parent. Probe/retry and listeners for
-    // a concrete episode belong to its child, so changing files cancels stale file work without
-    // ending the player session. The Torrent Mod SCREEN does NOT own either scope — playback
-    // intentionally outlives the results screen. `session.alive` is a compatibility getter over
-    // playerScope.isAlive(), not a second lifecycle mechanism.
-    //
-    // Three native side effects of the old Lampa.Torrent.start path are compensated explicitly
-    // (native torrent.js used to do them on hover:enter — torrent.js:437/333/446):
-    //   1. Favorite.add('history', movie)      — continue-watch card
-    //   2. timeline: Timeline.view(parsed.hash) — per-episode watch history (the hash Timeline
-    //      reads, NOT the torrent infohash)
-    //   3. data.playlist from all playable files of the pack — next-episode inside a season pack
-    //      (Player.play wires Playlist from data.playlist, player.js:1243)
-    //
-    // Plus, still silent: an initial fire-and-forget `&preload` cache nudge and next-episode
-    // cache warming near the end of the current file. The plugin builds the direct cache endpoint
-    // itself; it is never a Player transport. No global patching of Lampa.Player.play /
-    // Torserver.stream (ADR-0003).
+    // GST-first playback with audio-track preflight (register -> files -> probe -> GST play); full
+    // design, lifecycle-scope rules, and native side-effect compensation: docs/adr/0003-no-global-player-patching.md,
+    // docs/reference/lampa-player-api.md, docs/system-design/torrent-mod-audio-track-mvp.md.
     import { parseSignals } from '../shared/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
@@ -72,9 +38,7 @@
         session.preparationOverlay = null;
     }
 
-    // Lampa does not accept a function as the first Player.play(data.url), but Player.render() is
-    // public and returns the already initialized native shell. Mount it without a media source so
-    // the user enters the player immediately while the required preflight remains truly first.
+    // Player.play(data.url) can't take a function for the first play; Player.render() mounts the real shell early instead (docs/reference/lampa-player-api.md).
     function openPreparationShell(session) {
         if (!session || !session.alive || !Lampa.Player || !Lampa.Player.render) return;
         try {
@@ -149,9 +113,7 @@
         }
     }
 
-    // Player.play can spend time in its own preload() before it appends and reveals the native
-    // controls. Keep the already-mounted shell and our visible status overlay in place until the
-    // native Player announces `ready`; detaching it before play() creates a second black gap.
+    // Keep the preflight shell/overlay up until Player announces 'ready' — detaching earlier reopens the black gap Player.play's own preload() takes to fill.
     function handoffPreparationShell(session) {
         if (!session || !session.preparationMounted) return function () {};
         var settled = false;
@@ -174,8 +136,7 @@
             session.preparationShell = null;
             try { shell.removeClass('player--loading player--panel-visible torrent-mod-player-preparing'); } catch (e) {}
             removePreparationOverlay(session);
-            // Do not detach the shared shell or remove body.player--viewing: ownership has passed
-            // to native Player.play, which is already using this exact DOM node.
+            // Not detached: ownership of this DOM node has already passed to native Player.play.
         }
         try {
             Lampa.Player.listener.follow('ready', onReady);
@@ -196,10 +157,7 @@
         return session.fileScope;
     }
 
-    // The normal TorrServer stream endpoint accepts `&preload` to start filling the torrent cache.
-    // Do not obtain this URL from Lampa.Torserver.stream(): when its global `torrserver_gts` switch
-    // is on, it returns a GST master URL instead and a cache nudge would accidentally create an
-    // audio=0 GST task before our probe has selected the real track.
+    // Built directly, not via Lampa.Torserver.stream(): with the global torrserver_gts switch on, that returns a GST URL and would preempt our own audio-track probe with an audio=0 task.
     function preloadUrlFor(file, hash) {
         var base = torrServerBase();
         if (!base || !file) return '';
@@ -216,8 +174,6 @@
         return url;
     }
 
-    // A prepared file has a concrete GST URL and metadata. hls.js needs the long timeout because
-    // TorrServer can still wait for pieces of a torrent before returning the manifest.
     function urlsFor(session, file) {
         return (session.transports && session.transports[String(file.id)]) || {};
     }
@@ -374,9 +330,7 @@
     }
 
     function registeredHashKey(item) {
-        // Jackett's protected /dl URL can change between searches while the torrent itself stays
-        // identical. Use release identity rather than the ephemeral URL so selecting the same
-        // movie again does not make TorrServer add the same infohash a second time.
+        // Release identity, not Jackett's /dl URL: that URL can change between searches for the same torrent.
         return [item.tracker || '', item.title || '', item.size || ''].join('|');
     }
 
@@ -396,12 +350,7 @@
         } catch (e) {}
     }
 
-    // Registers the torrent with TorrServer directly (POST /torrents action:add). We intentionally
-    // do NOT call Lampa.Torserver.hash here: this Lampa build passes its JSON string with jQuery's
-    // default application/x-www-form-urlencoded content type (visible in DevTools), while
-    // TorrServer's endpoint only accepts application/json. Series happened to work on paths where
-    // the request was not exercised in the same way; movie selection exposed the malformed request
-    // reliably. Keep the native payload shape, but send it with the correct content type ourselves.
+    // Not Lampa.Torserver.hash: this Lampa build sends its JSON payload as application/x-www-form-urlencoded, which TorrServer's endpoint rejects — same payload shape, sent with the correct content type ourselves.
     function registerTorrent(session) {
         var item = session.item;
         var target = session.target;
@@ -480,10 +429,7 @@
         }
 
         function findExistingTorrent(onMissing) {
-            // The persisted hash cache is the fast path. The list fallback covers a fresh browser
-            // profile, a cleared Lampa storage, and a URL token that changed since the last search.
-            // Match the exact Lampa title first; the fallback without the prefix handles torrents
-            // created by the native Lampa screen.
+            // Fallback for a fresh profile/cleared storage/changed URL token; matches native-screen torrents too via the title without the [LAMPA] prefix.
             $.ajax({
                 url: base + '/torrents',
                 method: 'POST',
@@ -506,8 +452,7 @@
         var knownHash = readRegisteredHash(item);
         if (knownHash) {
             log('playback', 'registerTorrent: проверяю кэшированный hash ' + knownHash);
-            // Validate the cached hash first. If TorrServer was restarted and the torrent is no
-            // longer available, fall back to one normal add; never blindly reuse stale state.
+            // Validated, not blindly reused: a TorrServer restart can invalidate a cached hash.
             $.ajax({
                 url: base + '/torrents',
                 method: 'POST',
@@ -526,9 +471,7 @@
         }
     }
 
-    // Polls Torserver.files(hash) until metadata resolves (file_stats), then filters playable
-    // files, enriches them with path_human (Torserver.clearFileName, required by Torserver.parse)
-    // and picks the best one. Mirrors the native files() polling (torrent.js:149-169, 2s interval).
+    // Mirrors native files() polling (torrent.js:149-169, 2s interval) up to file_stats resolving.
     function pollFiles(session) {
         var attempts = 0;
         var maxAttempts = 45;
@@ -576,8 +519,7 @@
             }
         }
         session.filesTimer = session.scope.setInterval(attempt, 2000);
-        // Do not deliberately sleep for the first interval: metadata is usually already available
-        // when action:add returns, and this exact 2-second gap was visible before the player appeared.
+        // Called immediately, not after the first interval: metadata is usually already there when action:add returns.
         attempt();
     }
 
@@ -607,10 +549,7 @@
         });
     }
 
-    // Builds the player playlist from ALL playable files of the pack — the native torrent screen
-    // used to do this (torrent.js:415-429) and handed it to Player.playlist, which is what made
-    // "next episode" inside a season pack work via Video.ended → Playlist.next(). We reproduce it
-    // so that behaviour doesn't regress.
+    // All playable files of the pack, mirroring native torrent.js:415-429 — this is what powers "next episode" via Video.ended -> Playlist.next().
     function buildPlaylist(session) {
         var hash = session.hash;
         var movie = (session.target && session.target.movie) || {};
@@ -666,8 +605,7 @@
                     startNextEpisodePreload(session);
                 };
                 continuePlayback();
-                // Lampa's callback destroys then immediately creates its next Player synchronously.
-                // Keep the session alive through that destroy event; clear on the next task turn.
+                // Cleared next tick, not synchronously: Lampa's callback destroys and recreates the Player synchronously, and the session must stay alive through that destroy event.
                 session.scope.setTimeout(function () { session.playlistTransition = false; }, 0);
             }, function (message) {
                 if (!session.alive) return;
@@ -755,8 +693,7 @@
     }
 
     function restartGstPlayback(session, file) {
-        // Lampa does not expose a source-replace API. `close()` synchronously destroys the old video;
-        // the switching guard keeps the playback session alive until the new GST Player is created.
+        // No source-replace API: close() destroys the old video synchronously; the switching guard keeps the session alive until the new Player is created.
         try { Lampa.Player.close(); } catch (e) {}
         if (!session.alive) return;
         session.clicked = false;
@@ -764,8 +701,7 @@
         startGstPlayback(session);
     }
 
-    // Starts playback through the exact data shape the native screen builds for a file element
-    // (torrent.js:336-350). Player.play itself wires Playlist from data.playlist (player.js:1243).
+    // Mirrors the data shape the native screen builds for a file element (torrent.js:336-350).
     function startGstPlayback(session) {
         if (!session.alive || session.clicked) return;
         session.clicked = true;
@@ -784,11 +720,7 @@
 
         log('playback', 'startGstPlayback: запуск Player.play', { mode: session.mode, hasUrl: !!data.url, audio: session.activeAudioIndex, playlistLength: (data.playlist || []).length });
 
-        // Which controller the Torrent Mod screen had before playback — the player's Back should
-        // return there, not to a 'modal' that may not exist (native torrent.js routes to modal
-        // because ITS caller is a modal; ours is the screen, found by the architect).
-        // Captured before mounting the preparation shell. Reading Controller.enabled() here would
-        // return PREPARING_CONTROLLER and Back could lead to a controller that no longer exists.
+        // Captured before the preparation shell mounts: reading Controller.enabled() here would return PREPARING_CONTROLLER instead of the screen Back should actually return to.
         var backController = session.backController || 'content';
 
         var started = false;
@@ -804,22 +736,12 @@
         }
         session.phase = 'started';
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle(backController); }); } catch (e) {}
-        // Warm the NEXT episode's cache while this one plays — the fix for stalls on episode switch.
-        // The session must STAY ALIVE for these listeners to work: disposing here would strip them
-        // immediately and silently kill next-episode preloading (found in review).
         try { startNextEpisodePreload(session); } catch (e) {}
-        // Release the session when the player itself goes away (but keep it across a controlled
-        // audio switch and Lampa's destroy→play playlist transition).
+        // Not on audio-switch or the playlist's own destroy->play transition — only when the player itself actually goes away.
         bindPlayerLifecycle(session);
     }
 
-    // Pre-load the NEXT file of the pack while the current one is still playing (the actual fix for
-    // "прерывания на дозагрузку" when the player switches to the next episode via the playlist):
-    // as the current file approaches its end (~85% or <=60s left), ask TorrServer to warm the next
-    // playable file's cache so Playlist.next() starts with data already downloaded. One file only,
-    // fire-and-forget, gated by the torrent_mod_preload_next setting; nothing is shown and nothing
-    // in the player/playlist is touched (ADR-0003). Listeners belong to the current FILE scope:
-    // episode transition removes them without ending the enclosing Player session.
+    // Silent cache warm-up for the next file near the end of the current one (docs/adr/0003-no-global-player-patching.md); listeners live on the file scope so an episode switch clears them without ending the Player session.
     function startNextEpisodePreload(session) {
         if (session.nextEpisodeCleanup) session.nextEpisodeCleanup();
         var files = session.files || [];
@@ -921,9 +843,7 @@
 
     export function startDownload(item, target) {
         log('playback', 'startDownload: "' + item.title + '" (' + item.tracker + ', ' + item.seeders + ' сидов), mode=' + (target && target.mode));
-        // A new launch disposes any still-pending one — its late async callbacks become harmless
-        // because they all check session.alive (found by the architect: pending.clicked alone was
-        // not a lifecycle token, so an old /files callback could start the wrong torrent).
+        // Disposed, not left running: every async callback checks session.alive, so a stale session's late /files response can't start the wrong torrent.
         if (currentSession) { log('playback', 'startDownload: отменяю предыдущую незавершённую сессию #' + currentSession.id); currentSession.dispose(); }
 
         notify((item.tracker || 'Torrent Mod') + ' · ' + item.seeders + ' сидов');

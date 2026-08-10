@@ -30,7 +30,7 @@
     // chip while searching just "Футурама" was a lie (and with the local pool model, clicking an
     // episode doesn't change the underlying query either).
     export function searchQueryText(target) {
-        return defaultSearchName(target.movie);
+        return defaultSearchName(target.movie, target.englishTitle);
     }
 
     // Options come from what's actually in the whole-work pool once it's loaded — no point offering

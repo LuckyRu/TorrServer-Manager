@@ -100,6 +100,16 @@
             // torrent_mod_last_episode for reopen (selection-interactor).
             activeEpisode: 0,
             customQuery: null,
+            // A TMDB en-US lookup (metadata/tmdb.js's fetchEnglishTitle), fetched once and cached
+            // here — `null` means "not fetched yet" (episodes-interactor.js's ensureEnglishTitle
+            // treats this as the sentinel to know whether a fetch is still needed), `''` means "the
+            // fetch settled, no English title available" (both are valid, distinct states — every
+            // target-builder in this file's target shape reads `state.englishTitle` and degrades
+            // gracefully to the movie's own original_title when either is true). See
+            // query-building.js's baseTitles/defaultSearchName for why this matters: on Russian
+            // trackers, searching/matching with an Asian show's native-script original_title is
+            // close to useless — requested directly by the user.
+            englishTitle: null,
 
             // Side picker panel (right-arrow on an episode row): candidates for one episode, shown
             // in a slide-in panel instead of the full-screen candidates stage. ONLY the UI intent

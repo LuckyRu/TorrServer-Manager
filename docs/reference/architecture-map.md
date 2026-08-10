@@ -44,8 +44,15 @@
 - `LoadConfiguration()`'s catch-all раньше мог стереть **всю** конфигурацию плагинов из-за ошибки в
   ОДНОЙ записи (см. фикс в `PluginHub.cs Validate()` — `builtin://` схема теперь принимается структурно
   валидной независимо от того, зарегистрирован ли ещё такой плагин).
-- `/plugins/*.js` и `/lampa.js` отдаются с `Cache-Control: no-cache` — без этого устройство в LAN может
-  бесконечно держать устаревшую копию, не спрашивая сервер вообще.
+- `/plugins/*.js` и `/lampa.js` отдаются с `Cache-Control: no-cache` (не `no-store`) + `ETag`, с реальным
+  304 на `If-None-Match` — без этого устройство в LAN может бесконечно держать устаревшую копию, не
+  спрашивая сервер вообще; `no-cache` вместо `no-store` сохраняет дешёвую реревалидацию (204 без тела).
+- `HttpListener` требует `Content-Length` даже на пустой POST — `curl -X POST` без `-H "Content-Length: 0"`
+  или `-d ""` получит 411. Актуально для `/api/plugins/refresh` и любого другого mutating-эндпоинта.
+- Прямой бинд Jackett на `0.0.0.0` отвергнут — `JackettConsole.exe` отказывается слушать публично без
+  elevated-запуска (собственная внутренняя проверка, не HTTP.SYS/URL-ACL); отсюда reverse-proxy `/jackett/*`
+  вместо прямого LAN-доступа к Jackett. См. [ADR-0002](../adr/0002-jackett-loopback-reverse-proxy.md) и
+  [`explanation/why-jackett-stays-loopback.md`](../explanation/why-jackett-stays-loopback.md).
 
 ## Плагины Lampa
 

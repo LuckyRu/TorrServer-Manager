@@ -1,11 +1,6 @@
-    // ---------- domain: selectors (derived data, computed fresh, never stored) ----------
-    //
-    // Global "is anything busy" and the filter-panel/badge data are both *derivations* over stored
-    // fields, not fields of their own — a separately-maintained flag that has to be kept in sync by
-    // hand in multiple places is a second source of truth that can drift (miss one clear-path on an
-    // error branch and it's stuck wrong forever, the same class of bug the old code's ad hoc
-    // staleness checks were prone to). A pure function over already-stored state can't drift by
-    // construction and costs nothing worth avoiding to recompute on each render.
+    // Selectors: derived data computed fresh from state, never stored — see
+    // docs/system-design/torrent-mod-domain-architecture.md for why (avoids a second, driftable
+    // source of truth).
     import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeText } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
@@ -17,11 +12,8 @@
     export function selectFilterChipData(state, movie, hasSeasons) {
         return {
             seasonLabel: currentSeasonLabel(movie, hasSeasons, state),
-            // Season picker items, refreshed on every season change: Lampa.Filter renders the
-            // "selected" marker straight off these objects (it mutates them in place via
-            // Filter.prototype.selected), so the array handed to filter.set('sort', ...) must be
-            // rebuilt with the new season's selected flag — otherwise the chip keeps showing the
-            // previously picked season as active on every reopen.
+            // Rebuilt fresh each time: Lampa.Filter mutates these objects in place to mark
+            // "selected", so a stale array would keep showing the previous season as active.
             seasonItems: buildSeasonItems(movie, state.season),
             activeLabels: activeFilterLabels(state),
             filterItems: buildFilterItems(movie, hasSeasons, state)
@@ -32,14 +24,9 @@
         return buildFilterItems(movie, hasSeasons, state);
     }
 
-    // Same target shape every interactor that needs one builds — kept in one place so the shape
-    // itself only has to agree with candidatesForEpisode's own expectations in a single spot.
     // customQuery must travel with the target: passesMatchGate (search/scoring.js) skips the
     // title-similarity gate when it's set, since a manual name override means the original TMDB
-    // title is known to mismatch real torrent titles. Omitting it here re-gated episode badges and
-    // the side picker against the stale title even after the user searched under a better name,
-    // while a plain click on the same episode (selectEpisode, which always included it) found
-    // matches fine — the UI visibly contradicted itself (found in review).
+    // title is known to mismatch real torrent titles.
     export function buildEpisodeTarget(object, state, number, mode) {
         return {
             movie: object.movie,
@@ -48,7 +35,10 @@
             episode: number,
             seasonEpisodeCount: state.seasonEpisodeCount,
             avgRuntimeMinutes: state.avgRuntimeMinutes,
-            customQuery: state.customQuery
+            customQuery: state.customQuery,
+            // Safe to read before it resolves — null degrades gracefully to original_title in
+            // scoring.js's titleSimilarity.
+            englishTitle: state.englishTitle
         };
     }
 
@@ -57,31 +47,11 @@
         return candidatesForEpisode(state.pool, target, state);
     }
 
-    // `seasonDefault` (the persisted per-season default torrent, if any — read by the caller via
-    // Lampa.Storage, since this module stays framework-agnostic) is threaded through to badgeText
-    // so every episode's badge reflects what a click would actually start playing, not just the
-    // top-ranked candidate.
-    //
-    // Before the whole-work pool has ever resolved (state.pool === null) every badge used to come
-    // back as an empty string — visually indistinguishable from "haven't looked at this yet" and
-    // from "searched and found nothing", on a screen whose FIRST cold search against every Jackett
-    // indexer can legitimately take up to ~40s (see PluginHub's own 45s CancelAfter). Same problem,
-    // narrower: a season the pool came back empty for (ensureSeasonLoaded's own lazy per-season
-    // fetch) shows the identical blank state while that fetch is in flight.
-    //
-    // Each entry is `{text, loading}`, not a plain string: `loading` drives a shimmer/skeleton
-    // element in the View instead of the "поиск…" text itself (part of the search-progress-widget
-    // work — a UX/product/error-domain design consilium documented in CLAUDE.md decided static text
-    // wasn't dynamic enough). `text` is still always populated (loading rows carry a plain-language
-    // fallback too) so nothing downstream that reads `.text` directly needs a loading-aware branch.
-    //
-    // CANDIDATES ARE CHECKED FIRST, before loading/error — the pool search is now progressive
-    // (parallel-per-indexer, search/parallel-search.js): `state.pool` fills in as each tracker
-    // answers, so an episode can genuinely have real candidates already while OTHER, slower trackers
-    // are still being waited on. Showing "поиск…" for an episode that already has a real match would
-    // hide data that's already there, exactly the "мучительно больно ждать" complaint this whole
-    // redesign was for — requested directly by the user: "начать показывать торренты от самого
-    // быстрого трекера". Only falls through to loading/error/empty once there's truly nothing yet.
+    // `seasonDefault` is threaded into badgeText so a badge shows what a click would actually play,
+    // not just the top-ranked candidate. Each entry is `{text, loading}` (loading drives a shimmer
+    // element in the View). Candidates are checked before loading/error since the pool search is
+    // progressive (search/parallel-search.js) — an episode can already have real matches while
+    // other trackers are still pending.
     export function selectEpisodeBadges(object, state, seasonDefault) {
         var poolSettling = state.poolStatus === 'loading' || state.poolStatus === 'idle';
         var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');

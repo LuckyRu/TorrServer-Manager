@@ -19,7 +19,12 @@ const tvMovie = {
     first_air_date: '1999-03-28', number_of_seasons: 10,
     seasons: [{ season_number: 1, episode_count: 13 }, { season_number: 2, episode_count: 19 }, { season_number: 3, episode_count: 22 }]
 };
-const movie = { id: 1, title: 'Дюна', original_title: 'Dune', release_date: '2024-02-01' };
+// Real TMDB title for the 2024 film — matters now that titleSimilarity (search/scoring.js)
+// requires a candidate's own clean title segment to have the SAME WORD COUNT as the target, not
+// just contain its words somewhere: a stub title of plain "Дюна"/"Dune" (missing "Часть
+// вторая"/"Part Two") used to still match "Дюна: Часть вторая / Dune: Part Two..." raw titles
+// under the old scattered bag-of-words check, papering over this fixture being inaccurate.
+const movie = { id: 1, title: 'Дюна: Часть вторая', original_title: 'Dune: Part Two', release_date: '2024-02-01' };
 
 function jackettRaw(title, seeders, peers, hash) {
     return {
@@ -219,8 +224,8 @@ runner.test('фильм: список появляется и растёт до 
     domain.start();
     if (domain.store.get().stage !== 'message') throw new Error('до первого кандидата нужен loading message');
 
-    const first = mappedCandidate('Дюна / Dune (2024) 1080p WEB-DL', 'partial-movie-1', 'movie');
-    const second = mappedCandidate('Дюна / Dune (2024) 2160p Remux', 'partial-movie-2', 'movie');
+    const first = mappedCandidate('Дюна: Часть вторая / Dune: Part Two (2024) 1080p WEB-DL', 'partial-movie-1', 'movie');
+    const second = mappedCandidate('Дюна: Часть вторая / Dune: Part Two (2024) 2160p Remux', 'partial-movie-2', 'movie');
     domain.store.patch({ pool: [first] });
     let state = domain.store.get();
     if (state.poolStatus !== 'loading') throw new Error('тест должен оставлять медленные трекеры loading');

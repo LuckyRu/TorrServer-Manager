@@ -1,8 +1,5 @@
     // ---------- search backend ----------
-    // Raw Jackett response mapping (mapTorrent) and the actual multi-query fetch/merge
-    // orchestration (searchTorrentMod) — the two functions that talk to
-    // /api/torrent-search/{start,poll,cancel} via parallel-search.js. Scoring/gating of the results
-    // this returns lives in scoring.js, not here.
+    // Raw Jackett mapping + query orchestration; scoring/gating lives in scoring.js.
     import { buildQueries as buildQueriesForTarget } from './query-building.js';
     import { compact, unique } from '../shared/utils.js';
     import { startParallelSearch } from './parallel-search.js';

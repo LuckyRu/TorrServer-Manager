@@ -1,9 +1,4 @@
     // ---------- domain: selection interactor ----------
-    //
-    // selectEpisode/searchWithQuery/playCandidate grouped together: all terminate in either
-    // finishSelection (candidate list or auto-play) or a direct startDownload; all populate
-    // candidates/stage/searchGeneration. searchWithQuery is the manual name-override path — it
-    // re-fetches data under the new name instead of starting playback, see its own comment below.
     import { searchMovieTorrents } from '../search/movie-search.js';
     import { searchSeriesTorrents } from '../search/series-search.js';
     import { applyStateFilters, scoreCandidate } from '../search/scoring.js';
@@ -26,64 +21,31 @@
         var isDestroyed = options.isDestroyed;
         var requery = options.requery;
         var ensureSeasonLoaded = options.ensureSeasonLoaded;
-        // Shared lifecycle scope (shared/core/lifecycle.js, results-domain.js) — the watcher
-        // subscription below registers into it instead of each interactor keeping its own
-        // destroy()-method bookkeeping (see the scope's own header comment for why: two
-        // separately hand-written destroy() methods across this file and episodes-interactor.js
-        // were exactly the kind of thing a future timer is one missed edit away from outliving its
-        // screen — this happened for real, twice).
+        // Shared lifecycle scope — see docs/system-design/torrent-mod-domain-architecture.md.
         var scope = options.scope;
 
-        // A click made while its season's lazy fetch was still in flight — replayed by the watcher
-        // below once seasonLoads[season] settles. The LAST such click wins (a newer pick made while
-        // still waiting overwrites an earlier one — replaying the first would ignore it). Not domain
-        // state: it's an internal retry intent, not renderable UI (same reasoning as pendingSelection
-        // just below).
+        // Replayed by the watcher once seasonLoads[season] settles; a newer click overwrites an older pending one.
         var pendingClick = null; // { season, episode, pickerOnly }
 
-        // Pending click while the progressive whole-work pool has no matching candidate yet.
-        // Re-evaluated on EVERY pool growth, not only once poolStatus becomes ready: `loading`
-        // means slower trackers are still running, not that already-merged results are unusable.
+        // Re-evaluated on every pool growth, not just once poolStatus is ready — a still-loading pool can already have a usable match.
         var pendingSelection = null;
         var replayingPendingSelection = false;
 
-        // Movie candidate lists are the movie screen's primary content. Keep the presentation
-        // intent alive while the pool grows so the first fast tracker can open the list and later
-        // tracker responses can extend it without waiting for the whole job to settle.
-        // `{autoPlaySaved, allowConfidenceAutoplay}` preserves the two existing policies:
-        // initial entry only auto-plays an explicitly saved default; a non-picker explicit select
-        // may auto-play a confident result; manual search (`pickerOnly`) always shows the list.
+        // Kept alive while the pool grows so a fast tracker's results can render before the whole job settles.
         var moviePresentation = null;
 
         // ---------- reactive watcher: replaces the old callback-threading pattern ----------
-        //
-        // ensureSeasonLoaded (episodes-interactor.js) is fire-and-forget now — it only ever writes
-        // seasonLoads[season]/pool to the store, it has no idea pickers or pending clicks exist.
-        // This is the ONE place that reacts to that write to decide what UI-facing thing, if any,
-        // needs to happen next — subscribing to state changes, not being threaded a "call me back"
-        // callback. This directly closes the bug class documented in CLAUDE.md (two separate
-        // `RangeError: Maximum call stack size exceeded` crashes, both from a caller's retry-via-
-        // callback assumption that "the callback fired" always means "something changed" — an
-        // assumption that broke whenever ensureSeasonLoaded's own early-bail branches fired the
-        // callback with nothing having changed). A task that only ever writes state, plus a watcher
-        // that only ever reacts to state, cannot recurse into itself — there is no callback chain
-        // left to loop. Cheap to run on every state change (a TV remote UI, a few transitions a
-        // minute at most — see store.js's own header comment) since both checks below are a handful
-        // of property reads, `ensureSeasonLoaded` itself is idempotent, and this only matters at all
-        // while a picker is open or a click is pending.
+        // ensureSeasonLoaded only writes state; this watcher reacts to it — see
+        // docs/system-design/torrent-mod-domain-architecture.md for the generation-guard rationale.
         scope.subscribe(store, function (state, previous) {
             if (isDestroyed()) return;
-            // Picker open with nothing to show for its episode yet — make sure that season's lazy
-            // fetch is running. Safe to call unconditionally: ensureSeasonLoaded no-ops once it's
-            // already loading or settled.
+            // ensureSeasonLoaded no-ops once already loading/settled, safe to call unconditionally.
             if (state.picker.open && hasSeasons && !state.customQuery && ensureSeasonLoaded &&
                 (state.poolStatus === 'ready' || state.poolStatus === 'error')) {
                 var pickerCandidates = selectCandidatesForEpisode(object, state, state.picker.episode);
                 if (!pickerCandidates.length) ensureSeasonLoaded(state.season);
             }
-            // A click made while its season was still loading — replay it now that it settled.
-            // Dropped (not replayed) if the user has since switched to a different season, same as
-            // the old pendingEpisode's own season check.
+            // Dropped, not replayed, if the user switched season while waiting.
             if (pendingClick && state.seasonLoads &&
                 (state.seasonLoads[pendingClick.season] === 'ready' || state.seasonLoads[pendingClick.season] === 'error')) {
                 var pending = pendingClick;
@@ -91,12 +53,7 @@
                 if (state.season === pending.season) selectEpisode(pending.episode, pending.pickerOnly);
             }
 
-            // A series click made before its candidate arrived. Pool updates are the wake-up
-            // signal; a 400ms polling timer used to wait for poolStatus=ready and therefore ignored
-            // perfectly usable results until the slowest tracker finished. Consume before replay
-            // to make nested store.patch calls re-entrancy-safe; selectEpisode puts it back only if
-            // the new pool still has no match and is still settling. A changed season/query drops
-            // the stale intent instead of launching it in a different context.
+            // Consumed before replay so a nested store.patch stays re-entrancy-safe; selectEpisode re-queues it if still unmatched.
             if (pendingSelection && (state.pool !== previous.pool || state.poolStatus !== previous.poolStatus)) {
                 var selection = pendingSelection;
                 pendingSelection = null;
@@ -107,9 +64,7 @@
                 }
             }
 
-            // The movie list is a live projection of the progressively growing pool. Also refresh
-            // on filters: storing one snapshot of candidates made a movie list stale as soon as a
-            // later tracker or a user filter changed the source pool.
+            // Also refreshes on filter changes, not just pool growth, so the list never shows a stale snapshot.
             if (!hasSeasons && moviePresentation && (
                 state.pool !== previous.pool || state.poolStatus !== previous.poolStatus ||
                 state.voiceType !== previous.voiceType || state.resolution !== previous.resolution ||
@@ -117,8 +72,7 @@
             )) syncMoviePresentation();
         });
 
-        // `pickerOnly` means "present the candidate list, do NOT auto-play the top match". Only the
-        // movie/customQuery flows still use it; a series click now plays immediately (see below).
+        // pickerOnly: show the candidate list without auto-playing the top match (movie/customQuery flows only).
         function finishSelection(candidates, target, pickerOnly) {
             var best = candidates[0];
             var next = candidates[1];
@@ -133,16 +87,7 @@
             });
         }
 
-        // Saved per-season default torrent, keyed movie.id → season. Only set by an explicit pick
-        // — a plain Enter on a candidate row (playCandidate) or a pick from the side picker
-        // (playPickerCandidate) — NEVER by an auto-play (the user asked for it to be "remembered").
-        // Deliberately season-wide, not per-episode: confirmed directly by the user ("Запоминать
-        // выбор на весь сезон - хорошая практика") after a brief detour into a per-episode design —
-        // a season pack is one torrent for the whole season, and remembering it once should cover
-        // every episode, not need re-picking per episode. "As long as it still exists":
-        // findSavedDefault (results-core.js) only returns a saved pick that's still present in the
-        // CURRENT candidates list, so a torrent that drops out of search results naturally stops
-        // being auto-played/marked without any extra expiry logic here.
+        // Season-wide (not per-episode) default, set only by an explicit pick, never by auto-play; expires naturally once the saved item drops out of the current candidate list.
         function readSeasonDefault(movie, season) {
             try {
                 var all = Lampa.Storage.cache(DEFAULT_KEY, PER_MOVIE_CACHE_MAX, {});
@@ -161,17 +106,12 @@
             } catch (e) {}
         }
 
-        // Public read-only accessor for the view — it needs the saved default to show the picker's
-        // initial cursor on the right row and to make the main episode list's badges reflect what a
-        // click would actually play, not just the top-ranked candidate (both this module's own
-        // domain state, `results-core.js`/`results-selectors.js` stay Lampa-agnostic on purpose).
+        // Read-only accessor so the view can show the picker cursor and episode badges without results-core.js/results-selectors.js touching Lampa.Storage directly.
         function getSeasonDefault(season) {
             return readSeasonDefault(object.movie, season);
         }
 
-        // Remember where the user was (season + episode) so the screen can restore focus there on
-        // reopen — the season half already lives in torrent_mod_last_season (filters-interactor);
-        // this is the episode half, written together with the season it belonged to.
+        // Episode half of focus-restore-on-reopen; the season half lives in torrent_mod_last_season (filters-interactor.js).
         function saveLastEpisode(movie, season, episode) {
             try {
                 var all = Lampa.Storage.cache(LAST_EPISODE_KEY, PER_MOVIE_CACHE_MAX, {});
@@ -188,15 +128,7 @@
             } catch (e) { return null; }
         }
 
-        // Shared by startMovie/showMoviePool's zero-candidates branch: a genuinely FAILED
-        // whole-work search (Jackett 502/timeout) used to show the exact same "Раздач не нашлось"
-        // as a search that ran cleanly and found nothing — reported directly by the user testing
-        // this live. When it's the pool that actually failed (not just empty), offer a real retry
-        // via requery() (the same re-fetch searchWithQuery already uses) instead of a dead end.
-        // The attempt suffix ("попытка N") uses state.poolAttempt — requery's own isRetry=true bumps
-        // it, so pressing "Повторить" repeatedly climbs the counter visibly (product decision,
-        // search-progress-widget consilium: a display-only counter, no gating role — poolGeneration
-        // alone still protects against a stale response, see requery's own comment).
+        // Distinguishes a genuinely failed pool search (offers retry) from a clean search that found nothing.
         function emptyPoolMessage(onRetryComplete) {
             var state = store.get();
             if (state.poolStatus === 'error') {
@@ -209,11 +141,7 @@
             return { text: 'Раздач не нашлось', retry: null };
         }
 
-        // MOVIE flow — a movie's primary content IS its torrents (no episode list). On entry:
-        // auto-play ONLY a previously picked (persisted season-0 default) torrent if it's still a
-        // valid candidate; otherwise show the torrent list so the user can actually pick one (the
-        // old unconditional auto-play made it impossible to choose on first entry — found by the
-        // architect). Reuses the same candidates/persistence/picker primitives as the series flow.
+        // Movie entry auto-plays only a previously saved default; otherwise shows the list so a first-time pick is possible.
         function syncMoviePresentation() {
             if (!moviePresentation || isDestroyed()) return;
             var state = store.get();
@@ -238,9 +166,7 @@
                 return;
             }
             if (state.poolStatus === 'loading' || state.poolStatus === 'idle') {
-                // results-domain installs the initial message before search starts; repeat the
-                // shape here for requery/manual-search paths so an empty progressive pool is never
-                // rendered as a blank candidate list.
+                // Mirrors results-domain's initial message so requery/manual-search paths never render a blank list.
                 store.patch({ stage: 'message', message: { text: 'Ищем раздачи по всем трекерам…', retry: null } });
                 return;
             }
@@ -263,17 +189,12 @@
                 episode: 0,
                 seasonEpisodeCount: 0,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery
+                customQuery: state.customQuery,
+                englishTitle: state.englishTitle
             };
         }
 
-        // Shows the movie candidate list straight from the already-fetched whole-work pool — no
-        // network call. Shared by selectEpisode's non-customQuery movie branch and by
-        // searchWithQuery's post-requery callback, which used to call selectEpisode(0, true) instead:
-        // since customQuery was already set by then, that re-entered selectEpisode's customQuery
-        // branch and fired a second, identical freshSearch on top of the requery() that just ran —
-        // every manual-name movie search cost two full Jackett round trips for the same query
-        // (found in review).
+        // Reads the already-fetched pool directly (no network call) — avoids double-searching when customQuery is already set.
         function showMoviePool(pickerOnly) {
             moviePresentation = { autoPlaySaved: false, allowConfidenceAutoplay: !pickerOnly };
             syncMoviePresentation();
@@ -289,7 +210,8 @@
                 episode: episode,
                 seasonEpisodeCount: state.seasonEpisodeCount,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
-                customQuery: state.customQuery
+                customQuery: state.customQuery,
+                englishTitle: state.englishTitle
             };
             store.patch({
                 lastEpisode: episode,
@@ -306,18 +228,13 @@
             // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
             if (!hasSeasons) { showMoviePool(pickerOnly); return; }
 
-            // Series click = PLAY NOW from whatever the progressive pool already contains. The
-            // pool's settlement status is deliberately checked only AFTER candidates: `loading`
-            // merely says some trackers are still pending, not that merged candidates are invalid.
+            // Pool settlement status is checked only after candidates — a still-loading pool can already have a valid match.
             var candidates = selectCandidatesForEpisode(object, state, episode);
             if (candidates.length) {
                 var saved = readSeasonDefault(object.movie, state.season);
                 var savedMatch = findSavedDefault(candidates, saved);
                 var chosen = savedMatch || candidates[0];
-                // `chosen === saved` never worked here (found while chasing the persistence bug
-                // below) — `chosen` is a pool candidate, `saved` the persisted {id,title,size}
-                // record itself, always a different object even on a genuine match; the label was
-                // silently always "лучший по рейтингу" regardless of which one actually launched.
+                // `chosen` is a pool candidate object, `saved` the persisted record — never the same reference, so compare via savedMatch, not `===`.
                 log('selection', 'selectEpisode(' + episode + '): запуск — ' + chosen.title + (savedMatch ? ' (сохранённый дефолт)' : ' (лучший по рейтингу)'));
                 startDownload(chosen, target);
                 return;
@@ -333,19 +250,14 @@
             // Zero candidates. A season already settled with nothing for it → dead end.
             var loadStatus = state.seasonLoads && state.seasonLoads[state.season];
             if (loadStatus === 'ready' || loadStatus === 'error') { notify('Раздач не нашлось'); return; }
-            // Not yet settled (undefined, or already 'loading' from an earlier click/picker open) —
-            // make sure the lazy fetch is running (ensureSeasonLoaded is idempotent, safe to call
-            // either way) and remember to replay this click once it does; the reactive watcher above
-            // does the replay, not a callback threaded through ensureSeasonLoaded itself.
+            // Not yet settled — ensureSeasonLoaded is idempotent; the watcher above replays this click once it settles.
             log('selection', 'selectEpisode(' + episode + '): раздач в пуле нет для сезона ' + state.season + ', жду дозагрузки');
             pendingClick = { season: state.season, episode: episode, pickerOnly: pickerOnly };
             notify('Ищем раздачи для сезона…');
             if (ensureSeasonLoaded) ensureSeasonLoaded(state.season);
         }
 
-        // The episode currently under focus — dispatched by the view on row focus. This is the
-        // reactive source of truth for "where the user is": the picker opens for it, and the picker
-        // close restores the cursor to it (no view-closure bookkeeping). Persisted for reopen.
+        // Reactive source of truth for "where the user is" — the picker opens for and restores to this on close.
         function setActiveEpisode(episode) {
             var state = store.get();
             if (!episode || episode === state.activeEpisode) return;
@@ -353,15 +265,7 @@
             saveLastEpisode(object.movie, state.season, episode);
         }
 
-        // Side picker panel: right-arrow on an episode row shows the candidate list for THAT episode
-        // in a slide-in panel. The episode normally comes from reactive state (activeEpisode, set by
-        // the row's hover:focus before the picker opens); an explicit `episode` argument is used by
-        // the deferred path (panel requested while the pool was still loading). Its actual content
-        // (items/status/target/selectedId) is NOT computed here — selectPickerData
-        // (results-selectors.js) derives it fresh from state.pool/seasonLoads on every render, the
-        // same way selectEpisodeBadges already does for the row badges. This function's only job is
-        // recording the UI intent (open, for which episode); the watcher above independently makes
-        // sure that episode's season actually gets loaded if needed.
+        // Records only the open/episode intent — content is derived fresh by selectPickerData (results-selectors.js), not stored here.
         function openPicker(episode) {
             var state = store.get();
             if (episode === undefined) episode = state.activeEpisode || state.lastEpisode || 0;
@@ -393,27 +297,16 @@
             });
 
             var search = target.mode === MODE_MOVIE ? searchMovieTorrents : searchSeriesTorrents;
-            // The generation check alone is not enough here: setSeason() bumps only seasonGeneration
-            // (freshSearch's own searchGeneration stays put), so a late response also has to be
-            // re-checked against the season/query it was actually made for — otherwise a late
-            // season-2 search response could surface candidates for season 2 on a screen now showing
-            // season 3 (found in review). isStillValid carries exactly that extra check.
+            // Generation alone isn't enough: setSeason() doesn't bump searchGeneration, so isStillValid also re-checks season/query.
             var stillTargeted = function (state) { return state.season === target.season && state.customQuery === target.customQuery; };
             search(target).then(function (response) {
-                // Screen closed, or a newer selectEpisode()/season switch has since taken over —
-                // don't paint a stale result (or a misleading "Jackett недоступен" toast caused by
-                // this exact request being the one cancelSearch() just cancelled on destroy, not by
-                // an actual Jackett problem) over whatever the user is looking at now.
+                // Avoids painting a stale result, or a misleading toast from a destroy-time cancellation, over what the user is now looking at.
                 if (!isCurrentGeneration(store, 'searchGeneration', generation, isDestroyed, stillTargeted)) {
                     log('selection', 'freshSearch отброшен как устаревший, generation=' + generation);
                     return;
                 }
                 if (response.failed) {
-                    // Was a bare notify() toast that just faded away — now the same retryable-message
-                    // pattern loadEpisodes' TMDB failure already uses (results-state.js's
-                    // message.retry), so two failures that are the same thing to the user ("couldn't
-                    // load data, try again") get the same UX instead of one having a real "Повторить"
-                    // affordance and the other just a disappearing toast (found in review).
+                    // Same retryable-message pattern loadEpisodes' TMDB failure uses (results-state.js's message.retry), for consistent UX.
                     warn('selection', 'freshSearch: поиск не удался (Jackett недоступен)');
                     store.patch({
                         searchStatus: 'error', stage: 'message',
@@ -429,8 +322,7 @@
                     return;
                 }
 
-                // matchScore is a hard gate here, not a ranking input (see scoreCandidate): wrong
-                // title/season/episode candidates are dropped entirely, never just ranked lower.
+                // matchScore is a hard gate, not a ranking input — see docs/reference/torrent-mod-scoring-model.md.
                 pool.forEach(function (item) { item._score = scoreCandidate(item, target); });
                 if (enabled('torrent_mod_debug', false)) debugLogCandidates(pool, target);
                 var candidates = pool.filter(function (item) { return item._score.passes; });
@@ -443,18 +335,11 @@
             });
         }
 
-        // A manual name override (customQuery) is persistent *query context* — the plugin was
-        // launched from an already-found TMDB card, so re-wording the name means "keep this screen,
-        // re-fetch the torrent data for this same work under a better-matched name", like Online
-        // Mod re-fetching its balancer for a re-worded query instead of leaving the screen.
-        // It is NOT a request to switch to a different movie (we'd have no TMDB data for that), and
-        // it is NOT a request to start playback of the top match right now.
+        // customQuery is persistent query context (re-fetch under a new name), not a request to switch movies or start playback.
         function searchWithQuery(value) {
             if (!value) return;
             log('selection', 'searchWithQuery: "' + value + '"');
-            // Bump searchGeneration: any in-flight freshSearch (e.g. an episode click made while a
-            // customQuery was already active) belongs to the previous query context and must be
-            // discarded, not painted over the new one (found in review).
+            // Bumping searchGeneration discards any in-flight freshSearch from the previous query context.
             var current = store.get();
             pendingSelection = null;
             pendingClick = null;

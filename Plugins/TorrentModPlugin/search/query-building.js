@@ -1,10 +1,19 @@
     // ---------- query building ----------
     import { enabled, pad, compact, unique } from '../shared/utils.js';
 
-    export function baseTitles(movie) {
+    // `englishTitle` (optional — metadata/tmdb.js's fetchEnglishTitle, threaded through domain
+    // state as state.englishTitle) is a TMDB en-US lookup, separate from `original_title` — for
+    // Western content the two are the same string (harmless: unique() below dedupes them into one
+    // query/one match candidate), but for Asian-origin content `original_title` is the SOURCE
+    // LANGUAGE title (native script or its own romanization), which Russian-scene trackers almost
+    // never use — they follow "Russian title / ENGLISH title", never the native-script one.
+    // Requested directly by the user after confirming this live: "используя язык оригинала на
+    // русских торрентах это пиздец. Надо использовать английский перевод из TMDB для поиска."
+    export function baseTitles(movie, englishTitle) {
         return unique([
             movie.title || movie.name,
-            movie.original_title || movie.original_name
+            movie.original_title || movie.original_name,
+            englishTitle
         ].filter(Boolean), function (title) { return compact(title); });
     }
 
@@ -12,11 +21,14 @@
     // one the native torrent screen uses to build its query (vendor/lampa-source/src/components/full/start/torrents.js):
     // original_title/title + year combinations, default 'df' = original_title. Falls back to the
     // localized title if the chosen combo comes up empty (e.g. no original title on the card).
-    export function defaultSearchName(movie) {
+    // `englishTitle`, when available, is used in place of `original_title` for every 'df'-family
+    // combo — see baseTitles' own comment for why a native-script original is actively harmful as
+    // a SEARCH QUERY on Russian trackers, not just a weaker match target.
+    export function defaultSearchName(movie, englishTitle) {
         try {
             var format = Lampa.Storage.field('parse_lang') || 'df';
             var title = movie.title || movie.name || '';
-            var original = movie.original_title || movie.original_name || '';
+            var original = englishTitle || movie.original_title || movie.original_name || '';
             var year = String(movie.first_air_date || movie.release_date || '0000').slice(0, 4);
             var combos = {
                 'df': original,
@@ -47,7 +59,7 @@
         // 2 сезон»). Jackett already aggregates all indexers and dedups results across queries, so
         // the only thing the duplicate names bought was extra network load, not extra recall.
         // Which one name: Lampa's own parse_lang setting (see defaultSearchName above).
-        var name = target.customQuery || defaultSearchName(target.movie);
+        var name = target.customQuery || defaultSearchName(target.movie, target.englishTitle);
         if (!name) return [];
         var queries = [];
 

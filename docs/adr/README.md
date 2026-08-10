@@ -17,3 +17,4 @@
 | [0003](0003-no-global-player-patching.md) | Torrent Mod не патчит Lampa.Player/Torserver глобально | Принято |
 | [0004](0004-lampa-filter-not-handbuilt-chips.md) | Тулбар — настоящий `Lampa.Filter`, не самодельные чипы | Принято |
 | [0005](0005-search-whole-season-once.md) | Искать весь сезон один раз в фоне, а не по клику на серию | Принято |
+| [0006](0006-native-player-fallback-not-ffprobe-gate.md) | Нативный `url_reserve`-фолбек плеера вместо ffprobe-гейта кодеков | Заменено → [0003](0003-no-global-player-patching.md) |

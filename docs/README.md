@@ -45,22 +45,32 @@ ADR/system-design/reference там, где одно объясняет друг�
 - **Точная карта компонентов** → [`reference/architecture-map.md`](reference/architecture-map.md)
 - **API Lampa для плагинов** (Component/Activity, Explorer/Scroll/Filter/Select/Controller, Template,
   TMDB, дизайн-токены, нативные парсеры сезонов/серий) → [`reference/lampa-plugin-api.md`](reference/lampa-plugin-api.md)
-- **API плеера Lampa** (`Player.play(data)` контракт, `url_reserve` нативный фолбек, потенциальный
+- **API плеера Lampa** (`Player.play(data)` контракт, GST-first вместо `url_reserve`, потенциальный
   `data.ffprobe` трек-пикер, плейлист/переключение серий, события `PlayerVideo`/`Panel`) →
   [`reference/lampa-player-api.md`](reference/lampa-player-api.md)
 - **Порты, пути, эндпоинты** → [`reference/ports-paths-and-endpoints.md`](reference/ports-paths-and-endpoints.md)
-- **Формула оценки раздач Torrent Mod** →
+- **Формула оценки раздач Torrent Mod** (гейт, скоринг, сегодняшний фикс шумного поиска по названию) →
   [`reference/torrent-mod-scoring-model.md`](reference/torrent-mod-scoring-model.md)
+- **Справочник по граблям JS/API Torrent Mod** (кириллица в регэкспах, `Component.create`,
+  identity для персиста, порядок null-проверок) → [`reference/torrent-mod-gotchas.md`](reference/torrent-mod-gotchas.md)
 - **Почему Jackett не слушает LAN напрямую** →
   [`explanation/why-jackett-stays-loopback.md`](explanation/why-jackett-stays-loopback.md)
-- **Как вообще с Lampa работать плагину, чтобы не ломать её** →
+- **Как вообще с Lampa работать плагину, чтобы не ломать её** (Controller/Activity/Explorer/Select/
+  Scroll — 10 задокументированных багов и общий контракт) →
   [`system-design/lampa-navigation-contract.md`](system-design/lampa-navigation-contract.md)
 - **Как устроен поиск/скоринг/буферизация Torrent Mod целиком** →
   [`system-design/torrent-mod-search-pipeline.md`](system-design/torrent-mod-search-pipeline.md)
 - **План перестройки Torrent Mod на единый пул раздач** →
   [`system-design/torrent-mod-unified-pool.md`](system-design/torrent-mod-unified-pool.md)
+- **Доменная архитектура Torrent Mod** (Store/State/Interactors, `shared/core/` примитивы надёжности,
+  селекторы, урок о границе View/Domain) →
+  [`system-design/torrent-mod-domain-architecture.md`](system-design/torrent-mod-domain-architecture.md)
+- **Параллельный поиск по трекерам** (протокол start/poll/cancel, lifecycle scope, именованный
+  виджет трекеров, история про то, где на самом деле проходит граница View и Domain) →
+  [`system-design/torrent-mod-parallel-search.md`](system-design/torrent-mod-parallel-search.md)
 - **Бэклог: выбор аудиодорожки** (почему субтитры уже работают, а звук нет; что нужно поменять в
   самом TorrServer; история исследования) → [`system-design/torrent-mod-audio-tracks-backlog.md`](system-design/torrent-mod-audio-tracks-backlog.md)
 - **MVP: предпочтительная аудиодорожка в сериалах** (probe-preflight, выбор студии для каждой
   серии и контролируемый GST-перезапуск с сохранением позиции) → [`system-design/torrent-mod-audio-track-mvp.md`](system-design/torrent-mod-audio-track-mvp.md)
-- **Все зафиксированные архитектурные решения** → [`adr/`](adr/) (см. `adr/README.md` за списком)
+- **Все зафиксированные архитектурные решения** → [`adr/`](adr/) (см. `adr/README.md` за списком, включая
+  [ADR-0006](adr/0006-native-player-fallback-not-ffprobe-gate.md) — исторический, заменён актуализацией ADR-0003)

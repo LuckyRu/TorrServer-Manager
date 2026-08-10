@@ -1,6 +1,7 @@
     // ---------- TMDB season/episode data ----------
     import { field, request } from '../shared/utils.js';
     import { ok, err } from '../shared/core/result.js';
+    import { MODE_MOVIE } from '../shared/state.js';
 
     export function canonicalTimeline(movie, season, episode) {
         if (!movie || !season || !episode || !Lampa.Timeline || !Lampa.Timeline.watchedEpisode) return null;
@@ -79,5 +80,29 @@
         return request(Lampa.TMDB.api(path), 15000).then(function (data) {
             if (data === null) return err('network', 'Список серий недоступен', { retryable: true });
             return ok(Array.isArray(data.episodes) ? data.episodes : []);
+        });
+    }
+
+    // A one-off TMDB lookup for the show/movie's own ENGLISH title — deliberately NOT the same
+    // thing as `movie.original_title`/`original_name` (the card's own field, already known without
+    // a network call): `original_title` is the SOURCE-LANGUAGE title as TMDB has it registered
+    // (native script or its own romanization for Asian-origin content), while Russian-scene
+    // trackers overwhelmingly follow a "Russian title / ENGLISH title" naming convention and
+    // essentially never use the native-script original. Searching/matching against the native
+    // original for e.g. a Korean or Japanese show is close to useless on these trackers — requested
+    // directly by the user after confirming this live ("используя язык оригинала на русских
+    // торрентах это пиздец. Надо использовать английский перевод из TMDB для поиска"). For Western
+    // content this just resolves to the same string as original_title — harmless, `baseTitles`/
+    // `unique()` (query-building.js) already collapse an identical duplicate into one entry, no
+    // extra query round trip. Best-effort only: on failure this returns ok('') rather than a
+    // retryable error — the whole feature is additive (search/matching already work, just less
+    // precisely, without it), not worth a user-facing retry prompt for what's essentially free
+    // recall on top of an already-working baseline.
+    export function fetchEnglishTitle(movie, mode) {
+        var kind = mode === MODE_MOVIE ? 'movie' : 'tv';
+        var path = kind + '/' + movie.id + '?api_key=' + Lampa.TMDB.key() + '&language=en-US';
+        return request(Lampa.TMDB.api(path), 15000).then(function (data) {
+            if (!data) return ok('');
+            return ok(String(data.name || data.title || ''));
         });
     }

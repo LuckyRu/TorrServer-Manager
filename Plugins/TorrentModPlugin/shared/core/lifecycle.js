@@ -1,31 +1,16 @@
-    // ---------- core: lifecycle scope ----------
-    //
-    // A single object every async resource tied to one "plugin launch" (one movie/series screen,
-    // from Activity push to back-navigation) registers into — timers, store subscriptions, anything
-    // with a cleanup step — so leaving the screen disposes ALL of it through one dispose() call,
-    // instead of N separately-remembered destroy() methods that are easy to forget to update when a
-    // new timer is added. This happened for real, twice, in this project's history before this
-    // existed: the pool AND season auto-retry timers (episodes-interactor.js) each needed a
-    // destroy() retrofitted in after the fact, once test leaks (dangling timers bleeding into later
-    // tests) and the general "outlives its screen" risk surfaced them — see CLAUDE.md's own account.
-    // Requested directly by the user after that: a designed, reusable scope, not another one-off
-    // destroy() per module that has to be remembered.
-    //
-    // A scope is not tied to one particular UI. Playback uses the same primitive independently of
-    // the results screen: one player scope owns child file scopes. Disposing a parent disposes all
-    // children; disposing one child (episode switch) leaves its parent and sibling state alive.
+    // Shared registry every async resource of one screen/session registers into, so one dispose()
+    // tears down all of it; see docs/system-design/torrent-mod-parallel-search.md. Not tied to one
+    // particular UI — playback uses the same primitive independently, with a parent scope owning
+    // child (per-file) scopes.
     export function createLifecycle() {
         var alive = true;
         var disposers = [];
 
         function isAlive() { return alive; }
 
-        // Register an arbitrary cleanup function, run once on dispose(). Returns an "untrack"
-        // function that removes it WITHOUT running it — for a resource that already cleaned up
-        // after itself (e.g. a one-shot timer that already fired normally). If the scope is already
-        // disposed, runs the cleanup immediately instead of silently discarding it: registering
-        // after dispose() almost always means a stray async completion racing teardown, and leaking
-        // the resource forever would be worse than disposing it one tick late.
+        // Returns an "untrack" fn to remove the cleanup without running it. If already disposed,
+        // runs the cleanup immediately rather than discarding it — a stray async completion racing
+        // teardown should still get cleaned up, just a tick late.
         function track(dispose) {
             if (!alive) { dispose(); return function () {}; }
             disposers.push(dispose);
@@ -35,10 +20,7 @@
             };
         }
 
-        // Scoped setTimeout: cancelled automatically on dispose(). Untracks itself the moment it
-        // fires normally — nothing left to cancel at that point, no reason to hold the disposer
-        // reference forever for what is (by far) the common case, a timer that just runs to
-        // completion.
+        // Cancelled automatically on dispose(); untracks itself once it fires normally.
         function scopedSetTimeout(fn, ms) {
             var untrack;
             var id = setTimeout(function () {
@@ -49,29 +31,24 @@
             return id;
         }
 
-        // Scoped setInterval: cancelled automatically on dispose(). Unlike setTimeout, an interval
-        // never self-terminates, so there is no "fires once, untracks itself" case — the caller is
-        // still expected to clearInterval(id) itself on its own normal stop condition (e.g. a
-        // status-ticking interval stopping once the state it was ticking for settles); the returned
-        // id is a plain native interval id, so that call works exactly as it always has. The scope's
-        // own tracked cleanup is only the LAST-RESORT net for "the screen closed before that normal
-        // stop condition was ever reached."
+        // Cancelled automatically on dispose(), but (unlike setTimeout) never self-terminates — the
+        // caller must still clearInterval(id) itself on its own stop condition; the scope's cleanup
+        // is only the last-resort net for a screen that closed before that.
         function scopedSetInterval(fn, ms) {
             var id = setInterval(fn, ms);
             track(function () { clearInterval(id); });
             return id;
         }
 
-        // Scoped store subscription: unsubscribed automatically on dispose().
+        // Unsubscribed automatically on dispose().
         function scopedSubscribe(store, listener) {
             var unsubscribe = store.subscribe(listener);
             track(unsubscribe);
             return unsubscribe;
         }
 
-        // Nested scope with structural ownership. It is tracked by this parent immediately, so a
-        // parent teardown cannot forget the child. Explicitly disposing the child first untracks it
-        // from the parent and does not accumulate dead child disposers during a long playlist.
+        // Nested scope, tracked by this parent immediately so a parent teardown can't forget it;
+        // disposing the child directly untracks it from the parent instead of leaving a dead disposer.
         function child() {
             var nested = createLifecycle();
             var nestedDispose = nested.dispose;
@@ -83,13 +60,8 @@
             return nested;
         }
 
-        // Idempotent: a second dispose() call is a no-op (returns false) rather than re-running
-        // cleanups or flipping already-false state. Runs cleanups in reverse registration order
-        // (last-registered, first-disposed) — the usual convention for teardown stacks, and means a
-        // resource that happens to depend on an earlier one (rare here, but not impossible) tears
-        // down first. Each cleanup is individually try/caught so one throwing doesn't stop the rest
-        // from running — a screen tearing down must not leave HALF its resources leaked because one
-        // cleanup function had a bug.
+        // Idempotent (a second call is a no-op); runs cleanups in reverse registration order, each
+        // individually try/caught so one throwing cleanup can't leak the rest.
         function dispose(onDispose) {
             if (!alive) return false;
             alive = false;

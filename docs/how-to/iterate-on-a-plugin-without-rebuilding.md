@@ -12,30 +12,45 @@ build/publish/restart-цикл на каждую правку одной стр�
 
 ## Шаги
 
-1. Отредактировать `TorrentModPlugin.js` в репозитории как обычно.
-2. Скопировать в override-директорию:
+Исходник живёт как настоящие ES-модули под `Plugins/TorrentModPlugin/` (не один плоский файл — см.
+[`reference/architecture-map.md`](../reference/architecture-map.md) за структурой папок), поэтому
+итерация идёт через esbuild, не через ручное копирование:
+
+1. Отредактировать нужные файлы под `Plugins/TorrentModPlugin/` как обычно.
+2. Запустить один раз (или держать в фоне) — оба пишут в тот же override-путь, который
+   `BuiltInPlugins.Read()` проверяет первым:
    ```bash
-   cp TorrentModPlugin.js "$LOCALAPPDATA/TorrServer/dev-plugins/TorrentModPlugin.js"
+   npm run dev:plugin          # esbuild watch — пересобирает на каждое сохранение, не завершается
+   # либо разово:
+   npm run install:plugin-dev  # тот же билд, но один раз и с выходом (для CI/задач)
    ```
-3. Дёрнуть локальный (loopback-only) эндпоинт обновления кэша Plugin Hub — **обязательно с `-d ""`**,
-   иначе `HttpListener` ответит 411 (нет Content-Length у POST-запроса без тела):
+3. Дёрнуть локальный (loopback-only) эндпоинт обновления кэша Plugin Hub — **обязательно с телом**
+   (даже пустым), иначе `HttpListener` ответит 411 (нет `Content-Length` у POST без тела):
    ```bash
-   curl -s -X POST http://127.0.0.1:8095/api/plugins/refresh -d ""
+   curl -s -X POST -H "Content-Length: 0" http://127.0.0.1:8095/api/plugins/refresh
    ```
    Дальше срабатывает обычный путь SHA-256-диффинга — если контент изменился, кэш обновляется без
    пересборки/republish/рестарта процесса.
 4. Обновить страницу в браузере (`http://127.0.0.1:8095/app/`), если тестируете там, или дождаться, пока
    ТВ-устройство подхватит новую версию (см. ниже про кэш на стороне устройства).
 
-## Проверка синтаксиса перед деплоем
+**Перед «настоящим» деплоем (см. [`release-a-change.md`](release-a-change.md)) обязательно удалить
+override-файл** (`%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js`) — иначе задеплоенный
+`.exe` тихо продолжит отдавать старый dev-JS поверх свежего встроенного ресурса, и это не будет заметно
+без явной проверки хеша. Это реально происходило.
+
+## Проверка перед деплоем
 
 ```bash
-node --check TorrentModPlugin.js
+npm run test:plugin   # test/{parsing,domain,smoke}.test.mjs — pure-функции и доменные сценарии
+npm run build:plugin   # финальная сборка бандла esbuild'ом, ловит синтаксис/резолв импортов
 ```
-Дешёвая проверка, ловит опечатки до того, как они дойдут до `Lampa.Component.create`'s try/catch, который
-на любое исключение конструктора **молча** подменяет компонент на `nocomponent` (пустой экран «Здесь
-пусто», без видимой ошибки) — см.
-[`reference/architecture-map.md`](../reference/architecture-map.md#gotchas) за подробностями этой ловушки.
+Дешёвая, но не покрывает DOM/Lampa-интеграцию — та часть остаётся live-verified (см.
+[`verify-lampa-behavior-live.md`](verify-lampa-behavior-live.md)). Синтаксическая опечатка, которая всё
+же доедет до рантайма, обычно проявится как `Lampa.Component.create`'s try/catch, который на любое
+исключение конструктора **молча** подменяет компонент на `nocomponent` (пустой экран «Здесь пусто», без
+видимой ошибки) — см. [`reference/architecture-map.md`](../reference/architecture-map.md#gotchas) и
+[`reference/torrent-mod-gotchas.md`](../reference/torrent-mod-gotchas.md) за подробностями этой ловушки.
 
 ## Кэш на стороне устройства
 

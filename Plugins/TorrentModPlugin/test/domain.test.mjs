@@ -23,7 +23,8 @@ import {
     selectCandidatesForEpisode, selectEpisodeBadges, selectStatusText, selectSearchProgress,
     selectPickerData, selectPoolIndexers
 } from '../domain/results-selectors.js';
-import { episodeCounts, getSeasonMeta } from '../metadata/tmdb.js';
+import { episodeCounts, getSeasonMeta, fetchEnglishTitle } from '../metadata/tmdb.js';
+import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
 import { pickBestFile } from '../playback/file-selection.js';
 import { createSeriesResultsViewModel } from '../domain/series-results-viewmodel.js';
@@ -108,6 +109,31 @@ runner.test('режимы парсинга: фильм не экспортиру
 runner.test('baseTitles возвращает оба названия', () => {
     const t = baseTitles(tvMovie);
     if (t.indexOf('Футурама') < 0 || t.indexOf('Futurama') < 0) throw new Error(JSON.stringify(t));
+});
+runner.test('baseTitles/defaultSearchName с englishTitle: используется вместо native-script original для азиатского тайтла', () => {
+    // original_title для азиатского произведения — язык оригинала (тут условно кириллица как
+    // заглушка для "не-английского нечитаемого на русских трекерах названия"), а englishTitle —
+    // отдельный TMDB en-US lookup (metadata/tmdb.js fetchEnglishTitle). Требование пользователя
+    // напрямую: "используя язык оригинала на русских торрентах это пиздец. Надо использовать
+    // английский перевод из TMDB для поиска."
+    // original_title in a script compact() doesn't tokenize at all (only a-z/а-я/0-9 — see
+    // shared/utils.js) compacts to an empty string, and unique() (shared/utils.js) drops any
+    // candidate with an empty dedup key — already true before this change, just never surfaced:
+    // a Japanese-script original_title was ALREADY useless for search/matching (an empty query,
+    // an empty match key), so dropping it outright is correct, not a regression. englishTitle is
+    // exactly what makes this show searchable/matchable at all.
+    const asianMovie = { id: 999, name: 'Демон-истребитель', original_name: '鬼滅の刃', title: 'Демон-истребитель', original_title: '鬼滅の刃' };
+    const withEnglish = baseTitles(asianMovie, 'Demon Slayer');
+    if (withEnglish.indexOf('Demon Slayer') < 0) throw new Error('englishTitle отсутствует в baseTitles: ' + JSON.stringify(withEnglish));
+    if (withEnglish.indexOf('鬼滅の刃') >= 0) throw new Error('non-Latin/Cyrillic original_title должен отсеиваться unique() как бесполезный ключ: ' + JSON.stringify(withEnglish));
+
+    const name = defaultSearchName(asianMovie, 'Demon Slayer');
+    if (name !== 'Demon Slayer') throw new Error('defaultSearchName должен предпочесть englishTitle: ' + name);
+
+    // Западный тайтл: englishTitle совпадает с original_title — не должно давать лишний
+    // дублирующий вариант (unique() уже дедуплицирует по compact()).
+    const westernWithEnglish = baseTitles(tvMovie, 'Futurama');
+    if (westernWithEnglish.length !== 2) throw new Error('дубликат original_title/englishTitle не должен добавлять третий вариант: ' + JSON.stringify(westernWithEnglish));
 });
 
 // ---------- results-core ----------
@@ -357,6 +383,41 @@ runner.test('scoreCandidate: гейт пропускает правильный 
     const wrong = scoreCandidate(single, { movie: tvMovie, season: 3, episode: 7, seasonEpisodeCount: 22, avgRuntimeMinutes: 22 });
     if (wrong.passes) throw new Error('раздача S02E07 прошла гейт для S03E07');
 });
+runner.test('titleSimilarity (через гейт): отсеивает шум для однословной цели "The Boys", реальные совпадения проходят', () => {
+    // Живой репорт пользователя: поиск "Пацаны"/"The Boys" был крайне шумным — старый scattered
+    // bag-of-words гейт считал "the" полноценным сигналом совпадения (входит почти в любой
+    // английский тайтл), а после его исключения оставалось только "boys" — слишком частое слово
+    // само по себе (Pet Shop Boys, The Beach Boys, The Hardy Boys, Monster Boy, Lost Boys...),
+    // чтобы что-либо различить. Живая проверка через реальный /api/torrent-search дала 11 из 12
+    // руками отобранных заведомо левых тайтлов, проходящих старый гейт — см. CLAUDE.md.
+    const boysMovie = {
+        id: 76479, name: 'Пацаны', original_name: 'The Boys', title: 'Пацаны', original_title: 'The Boys',
+        first_air_date: '2019-07-25', number_of_seasons: 5
+    };
+    const boysTarget = { movie: boysMovie, season: 1, episode: 0, seasonEpisodeCount: 8, avgRuntimeMinutes: 60, customQuery: null };
+    function passesFor(title) {
+        const release = parseSeriesRelease(title);
+        const item = { title, tracker: 'x', size: 2_000_000_000, seeders: 5, peers: 2, publishedAt: 0, magnet: 'magnet:?x', link: '', release };
+        return scoreCandidate(item, boysTarget).passes;
+    }
+    const noise = [
+        'Ведьмак: Сирены глубин /  The Witcher- Sirens of the Deep - AniLiberty.TOP [WEB-DLRip 1080p][AVC][Фильм]',
+        'Monster Boy and the Cursed Kingdom [MOEMOE]',
+        'Парни в лодке / The Boys in the Boat (Джордж Клуни ) [2023, биография, драма, спорт, WEB-DL 1080p] [Jaskier]',
+        'Братья Харди / The Hardy Boys, S1E1-13 of 13 (2020) WEBRip',
+        'The Beach Boys - The Pet Sounds Sessions [Deluxe Edition] (2026) FLAC',
+        'Pet Shop Boys - Smash (The Singles 1985-2020) (Box Set) - 2023, FLAC',
+        'Пропащие ребята 3: Жажда / Lost Boys: The Thirst (2010) BDRip',
+        'Всем парням: С любовью... / To All the Boys: Always and Forever (Майкл Фимоньяри) [2021, мелодрама, комедия, WEB-DL 1080p] [Netflix]',
+        'Братья Ньютон / The Newton Boys (1998) BDRemux'
+    ];
+    const real = [
+        'Пацаны / The Boys / S1E1-8 of 8 (Филип Сгриккиа, Дэниэл Эттиэс, Эрик Крипке) [2019, фантастика, боевик, комедия, криминал, WEB-DL 1080p] [LostFilm]',
+        'Пацаны / The Boys [S01] (2019) BDRip-HEVC 1080p от RIPS CLUB | P, P2'
+    ];
+    noise.forEach((title) => { if (passesFor(title)) throw new Error('шум прошёл гейт: ' + title); });
+    real.forEach((title) => { if (!passesFor(title)) throw new Error('реальное совпадение не прошло гейт: ' + title); });
+});
 runner.test('applyStateFilters: пустой фильтр оставляет пул, несуществующий не ломает', () => {
     const f = applyStateFilters(state.pool, { ...state, voiceType: 'Дубляж' });
     if (f.length !== 2) throw new Error('не должен сужать до пустоты: ' + f.length);
@@ -380,6 +441,21 @@ runner.test('openTarget не бросает', () => {
     openTarget(tvMovie, 2, 'content');
 });
 
+runner.test('fetchEnglishTitle: TMDB en-US lookup, ok(\'\') (не error) при сетевом сбое', async () => {
+    globalThis.__clearReguest();
+    globalThis.__mockReguest((url) => url.includes('/tv/') && url.includes('language=en-US'), { name: 'Demon Slayer: Kimetsu no Yaiba' });
+    const result = await fetchEnglishTitle({ id: 777 }, MODE_SERIES);
+    if (!result.ok || result.value !== 'Demon Slayer: Kimetsu no Yaiba') {
+        throw new Error('ожидал английское название сериала: ' + JSON.stringify(result));
+    }
+
+    // Best-effort фича — сбой сети не должен всплывать как error, только как пустая строка,
+    // чтобы вызывающий код тихо продолжил работать с original_title (см. metadata/tmdb.js's
+    // own comment on fetchEnglishTitle).
+    globalThis.__clearReguest();
+    const failed = await fetchEnglishTitle({ id: 778 }, MODE_MOVIE);
+    if (!failed.ok || failed.value !== '') throw new Error('при сбое сети ожидал ok(\'\'), не error: ' + JSON.stringify(failed));
+});
 runner.test('buildFilterItems — содержит измерение Битрейт только с реальными бакетами пула', () => {
     const items = buildFilterItems(tvMovie, true, state);
     const bitrate = items.find((i) => i.kind === 'bitrate');
