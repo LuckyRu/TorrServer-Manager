@@ -18,8 +18,6 @@
    Результат: `bin\Release\net10.0-windows\win-x64\publish\TorrServerManager.exe`.
 6. Задеплоить в реально работающую установку:
    - остановить запущенный `TorrServerManager.exe`;
-   - сохранить старый экзешник рядом как `TorrServerManager.v<старая-версия>.bak.exe` (тот же паттерн,
-     что у уже лежащих `.bak.exe` файлов);
    - скопировать свежесобранный `.exe` поверх `%LocalAppData%\Programs\TorrServer\TorrServerManager.exe`;
    - запустить снова с флагом `--background` (тот же флаг, что использует автозапуск).
 

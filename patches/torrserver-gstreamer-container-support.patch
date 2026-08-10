@@ -1,0 +1,282 @@
+diff --git a/server/gstreamer/pipeline_gst.go b/server/gstreamer/pipeline_gst.go
+index c19fff9..01c130a 100644
+--- a/server/gstreamer/pipeline_gst.go
++++ b/server/gstreamer/pipeline_gst.go
+@@ -451,11 +451,9 @@ func (r *gstRunner) createPipelineArgs() string {
+ 	if gstVersion.atLeast(1, 26) {
+ 		sb.WriteString("retry-backoff-factor=0.5 retry-backoff-max=10 ")
+ 	}
+-	if probe.IsAVIContainer() {
+-		sb.WriteString(" ! avidemux name=d ")
+-	} else {
+-		sb.WriteString(" ! matroskademux name=d ")
+-	}
++	sb.WriteString(" ! ")
++	sb.WriteString(probe.DemuxerName())
++	sb.WriteString(" name=d ")
+ 	sb.WriteString("multiqueue name=mq use-buffering=false max-size-buffers=5 max-size-bytes=0 max-size-time=0 ")
+ 
+ 	sb.WriteString("d.video_0 ! mq.sink_0 ")
+@@ -700,10 +698,8 @@ func videoIsTranscoded(conf Config, probe ProbeInfo) bool {
+ 		return conf.TranscodeAV1
+ 	case probe.IsVP9():
+ 		return conf.TranscodeVP9
+-	case probe.IsVP8():
+-		return conf.TranscodeVP8
+ 	default:
+-		return false
++		return probe.VideoCapsName() != ""
+ 	}
+ }
+ 
+diff --git a/server/gstreamer/pipeline_gst_test.go b/server/gstreamer/pipeline_gst_test.go
+index ef1d137..48547fb 100644
+--- a/server/gstreamer/pipeline_gst_test.go
++++ b/server/gstreamer/pipeline_gst_test.go
+@@ -46,6 +46,36 @@ func TestCreatePipelineArgsUsesSingleBufferAppSink(t *testing.T) {
+ 	}
+ }
+ 
++func TestCreatePipelineArgsUsesQuickTimeDemuxer(t *testing.T) {
++	runner := newVersionedVideoPipelineRunner(1.28)
++	runner.task.Probe.Container = "ISO MP4/M4A"
++
++	args := runner.createPipelineArgs()
++	if !strings.Contains(args, " ! qtdemux name=d ") {
++		t.Fatalf("createPipelineArgs() =\n%s\nwant qtdemux", args)
++	}
++}
++
++func TestCreatePipelineArgsUsesASFDemuxer(t *testing.T) {
++	runner := newVersionedVideoPipelineRunner(1.28)
++	runner.task.Probe.Container = "ASF"
++	runner.task.Probe.ContainerCapsName = "video/x-ms-asf"
++
++	if args := runner.createPipelineArgs(); !strings.Contains(args, "asfdemux name=d") {
++		t.Fatalf("pipeline does not use asfdemux: %s", args)
++	}
++}
++
++func TestUnknownVideoCodecUsesTranscodePipeline(t *testing.T) {
++	runner := newVersionedVideoPipelineRunner(1.28)
++	runner.task.Probe.Tracks[0].CapsName = "video/x-theora"
++
++	args := runner.createPipelineArgs()
++	if !strings.Contains(args, "mq.src_0 ! decodebin !") {
++		t.Fatalf("createPipelineArgs() =\n%s\nwant decode/transcode branch", args)
++	}
++}
++
+ func TestCreatePipelineArgsUsesMultiqueueWithoutBranchQueueLimits(t *testing.T) {
+ 	clearGStreamerRuntimeVersion(t)
+ 
+diff --git a/server/gstreamer/probe.go b/server/gstreamer/probe.go
+index 64e48b0..f7297cf 100644
+--- a/server/gstreamer/probe.go
++++ b/server/gstreamer/probe.go
+@@ -153,6 +153,43 @@ func (p ProbeInfo) IsAVIContainer() bool {
+ 	return strings.Contains(container, "video/x-msvideo") || strings.Contains(container, "avi")
+ }
+ 
++func (p ProbeInfo) IsISOBaseMediaContainer() bool {
++	container := strings.ToLower(strings.TrimSpace(p.Container + " " + p.ContainerCapsName))
++	return strings.Contains(container, "video/quicktime") ||
++		strings.Contains(container, "video/mp4") ||
++		strings.Contains(container, "audio/x-m4a") ||
++		strings.Contains(container, "quicktime") ||
++		strings.Contains(container, "iso mp4") ||
++		strings.Contains(container, "mpeg-4")
++}
++
++func (p ProbeInfo) IsASFContainer() bool {
++	container := strings.ToLower(strings.TrimSpace(p.Container + " " + p.ContainerCapsName))
++	return strings.Contains(container, "video/x-ms-asf") || strings.Contains(container, "asf")
++}
++
++func (p ProbeInfo) IsFLVContainer() bool {
++	container := strings.ToLower(strings.TrimSpace(p.Container + " " + p.ContainerCapsName))
++	return strings.Contains(container, "video/x-flv") || strings.Contains(container, "flash video") || strings.Contains(container, "flv")
++}
++
++func (p ProbeInfo) DemuxerName() string {
++	switch {
++	case p.IsMatroskaContainer():
++		return "matroskademux"
++	case p.IsISOBaseMediaContainer():
++		return "qtdemux"
++	case p.IsAVIContainer():
++		return "avidemux"
++	case p.IsASFContainer():
++		return "asfdemux"
++	case p.IsFLVContainer():
++		return "flvdemux"
++	default:
++		return ""
++	}
++}
++
+ func (p ProbeInfo) IsH264() bool { return p.VideoCapsName() == "video/x-h264" }
+ func (p ProbeInfo) IsH265() bool { return p.VideoCapsName() == "video/x-h265" }
+ func (p ProbeInfo) IsAV1() bool  { return p.VideoCapsName() == "video/x-av1" }
+diff --git a/server/gstreamer/probe_test.go b/server/gstreamer/probe_test.go
+index e440e2b..53d9c18 100644
+--- a/server/gstreamer/probe_test.go
++++ b/server/gstreamer/probe_test.go
+@@ -83,6 +83,23 @@ Properties:
+ 	}
+ }
+ 
++func TestProbeParsesISOBaseMediaContainer(t *testing.T) {
++	probe := probeFromDiscoverer(`
++Properties:
++  Duration: 0:01:00.000000000
++  container #0: ISO MP4/M4A
++    video #1: H.264 (High Profile)
++    audio #2: MPEG-4 AAC
++`)
++
++	if !probe.IsISOBaseMediaContainer() {
++		t.Fatal("ISO Base Media container was not accepted")
++	}
++	if got := probe.DemuxerName(); got != "qtdemux" {
++		t.Fatalf("DemuxerName() = %q, want qtdemux", got)
++	}
++}
++
+ func TestProbeParsesAACAudioCodec(t *testing.T) {
+ 	probe := probeFromDiscoverer(`
+ Properties:
+@@ -131,15 +148,53 @@ Properties:
+ 	}
+ }
+ 
+-func TestValidateProbeRejectsNonMatroska(t *testing.T) {
++func TestValidateProbeAcceptsISOBaseMedia(t *testing.T) {
+ 	err := validateProbe(ProbeInfo{
+-		Container: "Quicktime",
++		Container: "ISO MP4/M4A",
+ 		Tracks: []TrackInfo{
+ 			{Type: "video", CapsName: "video/x-h264"},
+ 		},
+ 	}, Config{})
+-	if err == nil {
+-		t.Fatal("non-Matroska source was accepted")
++	if err != nil {
++		t.Fatalf("ISO Base Media source was rejected: %v", err)
++	}
++}
++
++func TestProbeSelectsSequentialPadDemuxers(t *testing.T) {
++	tests := []struct {
++		name    string
++		probe   ProbeInfo
++		demuxer string
++	}{
++		{
++			name:    "ASF",
++			probe:   ProbeInfo{Container: "ASF", ContainerCapsName: "video/x-ms-asf"},
++			demuxer: "asfdemux",
++		},
++		{
++			name:    "FLV",
++			probe:   ProbeInfo{Container: "Flash Video", ContainerCapsName: "video/x-flv"},
++			demuxer: "flvdemux",
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if actual := tt.probe.DemuxerName(); actual != tt.demuxer {
++				t.Fatalf("DemuxerName() = %q, want %q", actual, tt.demuxer)
++			}
++		})
++	}
++}
++
++func TestValidateProbeAcceptsUnknownVideoForTranscode(t *testing.T) {
++	err := validateProbe(ProbeInfo{
++		Container: "Matroska",
++		Tracks: []TrackInfo{
++			{Type: "video", CapsName: "video/x-theora"},
++		},
++	}, Config{})
++	if err != nil {
++		t.Fatalf("video suitable for decode/transcode was rejected: %v", err)
+ 	}
+ }
+ 
+@@ -157,15 +212,12 @@ func TestValidateProbeAcceptsAVIOnlyWithTranscode(t *testing.T) {
+ 	}
+ }
+ 
+-func TestValidateProbeAcceptsVP8OnlyWithTranscode(t *testing.T) {
++func TestValidateProbeAcceptsVP8ForTranscode(t *testing.T) {
+ 	probe := ProbeInfo{
+ 		Container: "WebM",
+ 		Tracks:    []TrackInfo{{Type: "video", CapsName: "video/x-vp8"}},
+ 	}
+-	if err := validateProbe(probe, Config{}); err == nil {
+-		t.Fatal("VP8 was accepted without TranscodeVP8")
+-	}
+-	if err := validateProbe(probe, Config{TranscodeVP8: true}); err != nil {
+-		t.Fatalf("VP8 with TranscodeVP8 was rejected: %v", err)
++	if err := validateProbe(probe, Config{}); err != nil {
++		t.Fatalf("VP8 source suitable for decode/transcode was rejected: %v", err)
+ 	}
+ }
+diff --git a/server/gstreamer/service.go b/server/gstreamer/service.go
+index 9459202..9b01576 100644
+--- a/server/gstreamer/service.go
++++ b/server/gstreamer/service.go
+@@ -21,7 +21,6 @@ import (
+ 
+ var (
+ 	ErrBadSource               = errors.New("bad gstreamer source")
+-	ErrUnsupportedContainer    = errors.New("unsupported container; only Matroska/WebM is supported")
++	ErrUnsupportedContainer    = errors.New("unsupported container")
+-	ErrUnsupportedVideo        = errors.New("unsupported video codec")
+ 	ErrUnsupportedHDRTransfer  = errors.New("HDR tone mapping requires a PQ or HLG base layer")
+ 	ErrProbeUnavailable        = errors.New("gst-discoverer returned no stream info")
+@@ -328,18 +328,15 @@ func validateProbe(probe ProbeInfo, conf Config) error {
+ 	if conf.HDRToSDR && probe.Video().IsHDRVideo() && probe.Video().VideoTransfer != "pq" && probe.Video().VideoTransfer != "hlg" {
+ 		return ErrUnsupportedHDRTransfer
+ 	}
+-	transcodeAVI := probe.IsAVIContainer() && conf.TranscodeAVI
+-	if !probe.IsMatroskaContainer() && !transcodeAVI {
++	if probe.DemuxerName() == "" {
+ 		name := strings.TrimSpace(probe.Container)
+ 		if name == "" {
+ 			name = "<unknown>"
+ 		}
+ 		return fmt.Errorf("%w: %s", ErrUnsupportedContainer, name)
+ 	}
+-	supported := probe.IsH264() || probe.IsH265() || probe.IsAV1() || probe.IsVP9() ||
+-		(probe.IsVP8() && conf.TranscodeVP8) || transcodeAVI
+-	if !supported {
+-		return ErrUnsupportedVideo
++	if probe.IsAVIContainer() && !conf.TranscodeAVI {
++		return errors.New("AVI requires TranscodeAVI")
+ 	}
+ 	return nil
+ }
+diff --git a/server/gstreamer/service_test.go b/server/gstreamer/service_test.go
+index 74dc9d1..59b17a8 100644
+--- a/server/gstreamer/service_test.go
++++ b/server/gstreamer/service_test.go
+@@ -5,6 +5,7 @@ package gstreamer
+ import (
+ 	"context"
+ 	"errors"
++	"strings"
+ 	"sync/atomic"
+ 	"testing"
+ 	"time"
+@@ -189,7 +190,7 @@ func TestCachedProbeIsRevalidatedAfterConfigChange(t *testing.T) {
+ 	})
+ 
+ 	service.updateConfig(Config{})
+-	if _, err := service.Probe("hash", "1"); !errors.Is(err, ErrUnsupportedContainer) {
+-		t.Fatalf("Probe error=%v, want ErrUnsupportedContainer", err)
++	if _, err := service.Probe("hash", "1"); err == nil || !strings.Contains(err.Error(), "AVI requires TranscodeAVI") {
++		t.Fatalf("Probe error=%v, want AVI requires TranscodeAVI", err)
+ 	}
+ }

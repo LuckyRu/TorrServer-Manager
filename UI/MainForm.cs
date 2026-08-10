@@ -100,7 +100,7 @@ internal sealed class MainForm : Form
 
     public MainForm(bool startInBackground)
     {
-        updateService = new UpdateService(controller);
+        updateService = new UpdateService();
         flareSolverrUpdateTimer = new System.Threading.Timer(
             _ => _ = CheckFlareSolverrUpdateInBackgroundAsync(),
             null,
@@ -362,7 +362,7 @@ internal sealed class MainForm : Form
         updateText.Location = new Point(19, 45);
         updateText.Size = new Size(300, 24);
         checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 24), 100);
-        updateButton = CreateButton("Обновить", Accent, new Point(440, 24), 108);
+        updateButton = CreateButton("Инструкция", Accent, new Point(440, 24), 108);
         updateButton.Enabled = false;
         var updateButtonRow = CreateButtonRow(new Point(330, 24), new Size(218, 40), 40, checkButton, updateButton);
         updateButtonRow.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -374,7 +374,7 @@ internal sealed class MainForm : Form
         restartButton.Click += async (_, _) => await RunOperationAsync("Перезапуск…", RestartTorrServerAsync);
         openButton.Click += (_, _) => OpenWebInterface(useLanAddress: false);
         checkButton.Click += async (_, _) => await CheckForUpdatesAsync(showUpToDateMessage: true);
-        updateButton.Click += async (_, _) => await InstallAvailableUpdateAsync();
+        updateButton.Click += (_, _) => OpenTorrServerUpdateGuide();
         jackettStartButton.Click += async (_, _) => await RunJackettOperationAsync("Запуск…", StartJackettStackAsync);
         jackettStopButton.Click += async (_, _) => await RunJackettOperationAsync("Остановка…", StopJackettStackAsync);
         jackettRestartButton.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", RestartJackettStackAsync);
@@ -983,9 +983,9 @@ internal sealed class MainForm : Form
             if (UpdateService.IsNewer(release.Version, installed))
             {
                 availableRelease = release;
-                updateText.Text = $"Доступна {release.Version} · установлена {installed}";
+                updateText.Text = $"Доступна {release.Version} · установлена {installed} · нужна пересборка";
                 updateButton.Enabled = true;
-                trayIcon.ShowBalloonTip(5000, "Доступно обновление", $"TorrServer {release.Version}", ToolTipIcon.Info);
+                trayIcon.ShowBalloonTip(5000, "Доступно обновление", $"TorrServer {release.Version}: нужна пересборка", ToolTipIcon.Info);
             }
             else
             {
@@ -1009,43 +1009,29 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task InstallAvailableUpdateAsync()
+    private void OpenTorrServerUpdateGuide()
     {
-        if (availableRelease is null || busy)
+        if (availableRelease is null)
             return;
         var answer = MessageBox.Show(
             this,
-            $"Установить TorrServer {availableRelease.Version}?\n\nСервер будет кратковременно остановлен.",
+            $"Доступна версия TorrServer {availableRelease.Version}.\n\n" +
+            "Автоматическая установка отключена: текущий бинарник содержит локальные изменения GST. " +
+            "Откройте исходники, примените patch и пересоберите TorrServer по инструкции проекта.\n\n" +
+            "Открыть исходники TorrServer?",
             "Обновление TorrServer",
             MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
+            MessageBoxIcon.Information);
         if (answer != DialogResult.Yes)
             return;
-        if (!await torrServerOperationLock.WaitAsync(0))
-            return;
-
-        SetBusy(true, "Обновление…");
-        var progress = new Progress<string>(message => updateText.Text = message);
         try
         {
-            var keepRunning = torrServerDesiredRunning;
-            await updateService.InstallUpdateAsync(availableRelease, progress, lifetime.Token);
-            if (!keepRunning)
-                await controller.StopAsync(lifetime.Token);
-            availableRelease = null;
-            updateButton.Enabled = false;
-            MessageBox.Show(this, "TorrServer успешно обновлён.", "Обновление", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Process.Start(new ProcessStartInfo(UpdateService.SourceRepositoryUrl) { UseShellExecute = true });
         }
         catch (Exception exception)
         {
             AppLog.Write(exception);
-            MessageBox.Show(this, $"Обновление не установлено.\n\n{exception.Message}", "Обновление", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            SetBusy(false, null);
-            torrServerOperationLock.Release();
-            await RefreshStatusAsync();
+            MessageBox.Show(this, exception.Message, "Исходники TorrServer", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

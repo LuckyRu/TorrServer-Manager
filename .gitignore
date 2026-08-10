@@ -6,3 +6,6 @@ publish/
 node_modules/
 Plugins/TorrentModPlugin.bundle.js
 vendor/
+.tools/
+artifacts/
+.build/

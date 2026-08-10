@@ -38,6 +38,8 @@ ADR/system-design/reference там, где одно объясняет друг�
 
 - **Только начинаешь?** → [`tutorials/first-plugin-tweak.md`](tutorials/first-plugin-tweak.md)
 - **Нужно выпустить изменение?** → [`how-to/release-a-change.md`](how-to/release-a-change.md)
+- **Нужно пересобрать TorrServer с расширенным GST-пайплайном?** →
+  [`how-to/rebuild-patched-torrserver.md`](how-to/rebuild-patched-torrserver.md)
 - **Правишь JS-плагин и не хочешь пересобирать .exe?** →
   [`how-to/iterate-on-a-plugin-without-rebuilding.md`](how-to/iterate-on-a-plugin-without-rebuilding.md)
 - **Нужно проверить, как на самом деле ведёт себя Lampa?** →

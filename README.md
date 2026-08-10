@@ -15,7 +15,7 @@ Lampa на WebOS сама по себе — только плеер-оболоч
 - supervisor проверяет процессы и HTTP API раз в 5 секунд: исчезнувший процесс запускается сразу,
   зависший API перезапускается после трёх неудачных проверок, а повторные ошибки получают
   экспоненциальную паузу до 5 минут. Ручная остановка отключает восстановление до следующего запуска;
-- обновляет TorrServer и Jackett с проверкой SHA-256 и откатом, если новая версия не стартует;
+- проверяет новые версии TorrServer и сообщает, когда нужна пересборка локального GST-бинарника;
 - скачивает и кеширует Lampa-плагины локально и раздаёт их телевизору по LAN
   (Plugin Hub, порт 8095) — телевизору не нужен выход в интернет за каждым плагином;
 - сам создаёт нужные правила файервола для LAN-доступа (см. ниже), чтобы после
@@ -34,8 +34,8 @@ Lampa на WebOS сама по себе — только плеер-оболоч
 - **TorrServer.exe** должен быть один раз вручную положен в
   `%LocalAppData%\Programs\TorrServer\TorrServer.exe` — сам менеджер устанавливает
   TorrServer только когда бинарник уже на месте, а сам его с нуля не скачивает
-  (`ServerController.StartAsync` иначе бросает `FileNotFoundException`). Дальнейшие
-  обновления менеджер делает уже сам.
+  (`ServerController.StartAsync` иначе бросает `FileNotFoundException`). Обновления
+  патченного бинарника собираются из исходников.
 - **Jackett** нужно один раз положить (portable-версия, без установки службы) в
   `%ProgramData%\Jackett\App\JackettConsole.exe` — дальше менеджер запускает его
   как обычный дочерний процесс (`-z --DataFolder … -p 9117 --NoUpdates`), точно так
@@ -98,7 +98,18 @@ Lampa на WebOS сама по себе — только плеер-оболоч
 
 ## Сборка и разработка
 
-См. [CLAUDE.md](CLAUDE.md) — команды `dotnet build` / `dotnet publish`,
+Полная сборка clean clone — одна команда:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
+```
+
+Она получает зафиксированный commit TorrServer, применяет GST patch, собирает `TorrServer.exe`,
+а затем публикует `TorrServerManager.exe` вместе со встроенным Torrent Mod Plugin в `publish\`.
+Требуются Windows, Git, .NET 10 SDK и Node.js; Go 1.25.7 скрипт найдёт на PATH или скачает в
+игнорируемый `.tools\`.
+
+Для отдельных изменений Manager см. [CLAUDE.md](CLAUDE.md) — команды `dotnet build` / `dotnet publish`,
 архитектура компонентов (`ServerController`, `JackettController`, `UpdateService`,
 `PluginHub`, встроенный `TorrentModPlugin.js`).
 
