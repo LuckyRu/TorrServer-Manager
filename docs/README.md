@@ -74,5 +74,8 @@ ADR/system-design/reference там, где одно объясняет друг�
   самом TorrServer; история исследования) → [`system-design/torrent-mod-audio-tracks-backlog.md`](system-design/torrent-mod-audio-tracks-backlog.md)
 - **MVP: предпочтительная аудиодорожка в сериалах** (probe-preflight, выбор студии для каждой
   серии и контролируемый GST-перезапуск с сохранением позиции) → [`system-design/torrent-mod-audio-track-mvp.md`](system-design/torrent-mod-audio-track-mvp.md)
+- **Бэклог: capability-aware GST/HLS playback** (remux по реальным возможностям браузера,
+  fallback на транскодирование только после decode error) →
+  [`system-design/torrent-mod-playback-capability-fallback-backlog.md`](system-design/torrent-mod-playback-capability-fallback-backlog.md)
 - **Все зафиксированные архитектурные решения** → [`adr/`](adr/) (см. `adr/README.md` за списком, включая
   [ADR-0006](adr/0006-native-player-fallback-not-ffprobe-gate.md) — исторический, заменён актуализацией ADR-0003)
