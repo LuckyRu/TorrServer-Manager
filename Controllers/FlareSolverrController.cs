@@ -27,7 +27,7 @@ internal sealed class FlareSolverrController : IDisposable
 
     public FlareSolverrController()
     {
-        githubClient.DefaultRequestHeaders.UserAgent.ParseAdd("TorrServerManager/1.21.0");
+        githubClient.DefaultRequestHeaders.UserAgent.ParseAdd("TorrServerManager/1.22.0");
         githubClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         githubClient.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
     }

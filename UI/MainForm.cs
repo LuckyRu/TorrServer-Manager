@@ -35,9 +35,15 @@ internal sealed class MainForm : Form
     private readonly NotifyIcon trayIcon = new();
     private readonly System.Windows.Forms.Timer statusTimer = new() { Interval = 2500 };
     private readonly System.Threading.Timer flareSolverrUpdateTimer;
+    private readonly System.Threading.Timer supervisorTimer;
     private readonly SemaphoreSlim refreshLock = new(1, 1);
-    private readonly SemaphoreSlim flareSolverrUpdateLock = new(1, 1);
+    private readonly SemaphoreSlim supervisorLock = new(1, 1);
+    private readonly SemaphoreSlim torrServerOperationLock = new(1, 1);
+    private readonly SemaphoreSlim jackettStackOperationLock = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
+    private readonly ProcessRecoveryTracker torrServerRecovery = new("TorrServer");
+    private readonly ProcessRecoveryTracker jackettRecovery = new("Jackett");
+    private readonly ProcessRecoveryTracker flareSolverrRecovery = new("FlareSolverr");
 
     private readonly Label statusDot = new();
     private readonly Label statusText = new();
@@ -86,6 +92,9 @@ internal sealed class MainForm : Form
     private bool jackettBusy;
     private bool flareSolverrBusy;
     private bool lampaAppBusy;
+    private volatile bool torrServerDesiredRunning = true;
+    private volatile bool jackettDesiredRunning = true;
+    private volatile bool flareSolverrDesiredRunning = true;
     private Icon? currentIcon;
     private int? currentIconColor;
 
@@ -94,6 +103,11 @@ internal sealed class MainForm : Form
         updateService = new UpdateService(controller);
         flareSolverrUpdateTimer = new System.Threading.Timer(
             _ => _ = CheckFlareSolverrUpdateInBackgroundAsync(),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
+        supervisorTimer = new System.Threading.Timer(
+            _ => _ = SuperviseProcessesAsync(),
             null,
             Timeout.InfiniteTimeSpan,
             Timeout.InfiniteTimeSpan);
@@ -355,9 +369,9 @@ internal sealed class MainForm : Form
         updatePanel.Controls.AddRange([updateTitle, updateText, updateButtonRow]);
         Controls.Add(updatePanel);
 
-        startButton.Click += async (_, _) => await RunOperationAsync("Запуск…", controller.StartAsync);
-        stopButton.Click += async (_, _) => await RunOperationAsync("Остановка…", controller.StopAsync);
-        restartButton.Click += async (_, _) => await RunOperationAsync("Перезапуск…", controller.RestartAsync);
+        startButton.Click += async (_, _) => await RunOperationAsync("Запуск…", StartTorrServerAsync);
+        stopButton.Click += async (_, _) => await RunOperationAsync("Остановка…", StopTorrServerAsync);
+        restartButton.Click += async (_, _) => await RunOperationAsync("Перезапуск…", RestartTorrServerAsync);
         openButton.Click += (_, _) => OpenWebInterface(useLanAddress: false);
         checkButton.Click += async (_, _) => await CheckForUpdatesAsync(showUpToDateMessage: true);
         updateButton.Click += async (_, _) => await InstallAvailableUpdateAsync();
@@ -366,9 +380,9 @@ internal sealed class MainForm : Form
         jackettRestartButton.Click += async (_, _) => await RunJackettOperationAsync("Перезапуск…", RestartJackettStackAsync);
         jackettOpenButton.Click += (_, _) => OpenJackett();
         jackettUpdateButton.Click += async (_, _) => await CheckAndUpdateJackettAsync();
-        flareSolverrStartButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Запуск…", flareSolverrController.StartAsync);
-        flareSolverrStopButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Остановка…", flareSolverrController.StopAsync);
-        flareSolverrRestartButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Перезапуск…", flareSolverrController.RestartAsync);
+        flareSolverrStartButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Запуск…", StartFlareSolverrAsync);
+        flareSolverrStopButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Остановка…", StopFlareSolverrAsync);
+        flareSolverrRestartButton.Click += async (_, _) => await RunFlareSolverrOperationAsync("Перезапуск…", RestartFlareSolverrAsync);
 
         ConfigureTrayIcon();
         statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -398,7 +412,7 @@ internal sealed class MainForm : Form
             {
                 await ffprobeService.EnsureInstalledAsync(lifetime.Token);
                 await gStreamerService.EnsureInstalledAsync(lifetime.Token);
-                await controller.StartAsync(lifetime.Token);
+                await StartTorrServerAsync(lifetime.Token);
                 await gStreamerService.ConfigureAsync(lifetime.Token);
             }
             catch (Exception exception)
@@ -415,6 +429,7 @@ internal sealed class MainForm : Form
             }
 
             flareSolverrUpdateTimer.Change(TimeSpan.FromSeconds(10), TimeSpan.FromHours(6));
+            supervisorTimer.Change(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
             await RefreshStatusAsync();
             statusTimer.Start();
@@ -457,9 +472,9 @@ internal sealed class MainForm : Form
             new ToolStripSeparator(),
             jackettUpdateItem
         ]);
-        trayStartItem.Click += async (_, _) => await RunOperationAsync("Запуск…", controller.StartAsync);
-        trayStopItem.Click += async (_, _) => await RunOperationAsync("Остановка…", controller.StopAsync);
-        trayRestartItem.Click += async (_, _) => await RunOperationAsync("Перезапуск…", controller.RestartAsync);
+        trayStartItem.Click += async (_, _) => await RunOperationAsync("Запуск…", StartTorrServerAsync);
+        trayStopItem.Click += async (_, _) => await RunOperationAsync("Остановка…", StopTorrServerAsync);
+        trayRestartItem.Click += async (_, _) => await RunOperationAsync("Перезапуск…", RestartTorrServerAsync);
         var checkItem = new ToolStripMenuItem("Проверить обновления", null, async (_, _) => await CheckForUpdatesAsync(showUpToDateMessage: true));
         var exitItem = new ToolStripMenuItem("Выход", null, (_, _) => ExitApplication());
         menu.Items.AddRange([
@@ -486,7 +501,7 @@ internal sealed class MainForm : Form
 
     private async Task RunOperationAsync(string activity, Func<CancellationToken, Task> operation)
     {
-        if (busy)
+        if (busy || !await torrServerOperationLock.WaitAsync(0))
             return;
         SetBusy(true, activity);
         try
@@ -501,13 +516,35 @@ internal sealed class MainForm : Form
         finally
         {
             SetBusy(false, null);
+            torrServerOperationLock.Release();
             await RefreshStatusAsync();
         }
     }
 
+    private async Task StartTorrServerAsync(CancellationToken cancellationToken)
+    {
+        torrServerDesiredRunning = true;
+        torrServerRecovery.Reset();
+        await controller.StartAsync(cancellationToken);
+    }
+
+    private async Task StopTorrServerAsync(CancellationToken cancellationToken)
+    {
+        torrServerDesiredRunning = false;
+        torrServerRecovery.Reset();
+        await controller.StopAsync(cancellationToken);
+    }
+
+    private async Task RestartTorrServerAsync(CancellationToken cancellationToken)
+    {
+        torrServerDesiredRunning = true;
+        torrServerRecovery.Reset();
+        await controller.RestartAsync(cancellationToken);
+    }
+
     private async Task RunJackettOperationAsync(string activity, Func<CancellationToken, Task> operation)
     {
-        if (jackettBusy)
+        if (jackettBusy || !await jackettStackOperationLock.WaitAsync(0))
             return;
         SetJackettBusy(true, activity);
         try
@@ -526,12 +563,17 @@ internal sealed class MainForm : Form
         finally
         {
             SetJackettBusy(false, null);
+            jackettStackOperationLock.Release();
             await RefreshStatusAsync();
         }
     }
 
     private async Task StartJackettStackAsync(CancellationToken cancellationToken)
     {
+        flareSolverrDesiredRunning = true;
+        jackettDesiredRunning = true;
+        flareSolverrRecovery.Reset();
+        jackettRecovery.Reset();
         await flareSolverrController.StartAsync(cancellationToken);
         jackettController.ConfigureFlareSolverr(flareSolverrController.LocalUrl);
         await jackettController.StartAsync(cancellationToken);
@@ -539,22 +581,31 @@ internal sealed class MainForm : Form
 
     private async Task StopJackettStackAsync(CancellationToken cancellationToken)
     {
+        jackettDesiredRunning = false;
+        flareSolverrDesiredRunning = false;
+        jackettRecovery.Reset();
+        flareSolverrRecovery.Reset();
         await jackettController.StopAsync(cancellationToken);
         await flareSolverrController.StopAsync(cancellationToken);
     }
 
     private async Task RestartJackettStackAsync(CancellationToken cancellationToken)
     {
-        await StopJackettStackAsync(cancellationToken);
+        jackettDesiredRunning = true;
+        flareSolverrDesiredRunning = true;
+        jackettRecovery.Reset();
+        flareSolverrRecovery.Reset();
+        await jackettController.StopAsync(cancellationToken);
+        await flareSolverrController.StopAsync(cancellationToken);
         await Task.Delay(400, cancellationToken);
-        await StartJackettStackAsync(cancellationToken);
+        await flareSolverrController.StartAsync(cancellationToken);
+        jackettController.ConfigureFlareSolverr(flareSolverrController.LocalUrl);
+        await jackettController.StartAsync(cancellationToken);
     }
 
     private async Task RunFlareSolverrOperationAsync(string activity, Func<CancellationToken, Task> operation)
     {
-        if (flareSolverrBusy)
-            return;
-        if (!await flareSolverrUpdateLock.WaitAsync(0))
+        if (flareSolverrBusy || !await jackettStackOperationLock.WaitAsync(0))
             return;
         SetFlareSolverrBusy(true, activity);
         try
@@ -573,14 +624,35 @@ internal sealed class MainForm : Form
         finally
         {
             SetFlareSolverrBusy(false, null);
-            flareSolverrUpdateLock.Release();
+            jackettStackOperationLock.Release();
             await RefreshStatusAsync();
         }
     }
 
+    private async Task StartFlareSolverrAsync(CancellationToken cancellationToken)
+    {
+        flareSolverrDesiredRunning = true;
+        flareSolverrRecovery.Reset();
+        await flareSolverrController.StartAsync(cancellationToken);
+    }
+
+    private async Task StopFlareSolverrAsync(CancellationToken cancellationToken)
+    {
+        flareSolverrDesiredRunning = false;
+        flareSolverrRecovery.Reset();
+        await flareSolverrController.StopAsync(cancellationToken);
+    }
+
+    private async Task RestartFlareSolverrAsync(CancellationToken cancellationToken)
+    {
+        flareSolverrDesiredRunning = true;
+        flareSolverrRecovery.Reset();
+        await flareSolverrController.RestartAsync(cancellationToken);
+    }
+
     private async Task CheckFlareSolverrUpdateInBackgroundAsync()
     {
-        if (lifetime.IsCancellationRequested || !await flareSolverrUpdateLock.WaitAsync(0))
+        if (lifetime.IsCancellationRequested || !await jackettStackOperationLock.WaitAsync(0))
             return;
 
         try
@@ -596,7 +668,10 @@ internal sealed class MainForm : Form
                 return;
 
             AppLog.Write($"FlareSolverr update available: {status.Version} -> {release.Version}. Installing in background.");
+            var keepRunning = flareSolverrDesiredRunning;
             await flareSolverrController.InstallUpdateAsync(release, cancellationToken: lifetime.Token);
+            if (!keepRunning)
+                await flareSolverrController.StopAsync(lifetime.Token);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception exception)
@@ -605,13 +680,141 @@ internal sealed class MainForm : Form
         }
         finally
         {
-            flareSolverrUpdateLock.Release();
+            jackettStackOperationLock.Release();
+        }
+    }
+
+    private async Task SuperviseProcessesAsync()
+    {
+        if (lifetime.IsCancellationRequested || !await supervisorLock.WaitAsync(0))
+            return;
+
+        try
+        {
+            await SuperviseFlareSolverrAsync(lifetime.Token);
+            await SuperviseJackettAsync(lifetime.Token);
+            await SuperviseTorrServerAsync(lifetime.Token);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            AppLog.Write($"Supervisor cycle failed: {exception}");
+        }
+        finally
+        {
+            supervisorLock.Release();
+        }
+    }
+
+    private async Task SuperviseTorrServerAsync(CancellationToken cancellationToken)
+    {
+        if (!torrServerDesiredRunning)
+        {
+            torrServerRecovery.Reset();
+            return;
+        }
+        if (!await torrServerOperationLock.WaitAsync(0, cancellationToken))
+            return;
+
+        try
+        {
+            var status = await controller.GetStatusAsync(cancellationToken);
+            if (!torrServerRecovery.Observe(status.IsRunning, status.ProcessRunning) ||
+                !torrServerRecovery.CanAttempt(DateTimeOffset.UtcNow))
+                return;
+
+            AppLog.Write($"Supervisor attempting to recover TorrServer ({(status.ProcessRunning ? "restart" : "start")}).");
+            if (status.ProcessRunning)
+                await controller.RestartAsync(cancellationToken);
+            else
+                await controller.StartAsync(cancellationToken);
+            torrServerRecovery.MarkAttemptSucceeded();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            torrServerRecovery.MarkAttemptFailed(exception);
+        }
+        finally
+        {
+            torrServerOperationLock.Release();
+        }
+    }
+
+    private async Task SuperviseJackettAsync(CancellationToken cancellationToken)
+    {
+        if (!jackettDesiredRunning)
+        {
+            jackettRecovery.Reset();
+            return;
+        }
+        if (!await jackettStackOperationLock.WaitAsync(0, cancellationToken))
+            return;
+
+        try
+        {
+            var status = await jackettController.GetStatusAsync(cancellationToken);
+            if (!jackettRecovery.Observe(status.IsRunning, status.ProcessRunning) ||
+                !jackettRecovery.CanAttempt(DateTimeOffset.UtcNow))
+                return;
+
+            AppLog.Write($"Supervisor attempting to recover Jackett ({(status.ProcessRunning ? "restart" : "start")}).");
+            jackettController.ConfigureFlareSolverr(flareSolverrController.LocalUrl);
+            if (status.ProcessRunning)
+                await jackettController.RestartAsync(cancellationToken);
+            else
+                await jackettController.StartAsync(cancellationToken);
+            jackettRecovery.MarkAttemptSucceeded();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            jackettRecovery.MarkAttemptFailed(exception);
+        }
+        finally
+        {
+            jackettStackOperationLock.Release();
+        }
+    }
+
+    private async Task SuperviseFlareSolverrAsync(CancellationToken cancellationToken)
+    {
+        if (!flareSolverrDesiredRunning)
+        {
+            flareSolverrRecovery.Reset();
+            return;
+        }
+        if (!await jackettStackOperationLock.WaitAsync(0, cancellationToken))
+            return;
+
+        try
+        {
+            var status = await flareSolverrController.GetStatusAsync(cancellationToken);
+            if (!flareSolverrRecovery.Observe(status.IsRunning, status.ProcessRunning) ||
+                !flareSolverrRecovery.CanAttempt(DateTimeOffset.UtcNow))
+                return;
+
+            AppLog.Write($"Supervisor attempting to recover FlareSolverr ({(status.ProcessRunning ? "restart" : "start")}).");
+            if (status.ProcessRunning)
+                await flareSolverrController.RestartAsync(cancellationToken);
+            else
+                await flareSolverrController.StartAsync(cancellationToken);
+            flareSolverrRecovery.MarkAttemptSucceeded();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            flareSolverrRecovery.MarkAttemptFailed(exception);
+        }
+        finally
+        {
+            jackettStackOperationLock.Release();
         }
     }
 
     private async Task CheckAndUpdateJackettAsync()
     {
-        if (jackettBusy)
+        if (jackettBusy || !await jackettStackOperationLock.WaitAsync(0))
             return;
         SetJackettBusy(true, "Проверка обновления…");
         try
@@ -635,7 +838,10 @@ internal sealed class MainForm : Form
 
             jackettStatusText.Text = "Обновление…";
             var progress = new Progress<string>(message => jackettDetails.Text = message);
+            var keepRunning = jackettDesiredRunning;
             await jackettController.InstallUpdateAsync(release, progress, lifetime.Token);
+            if (!keepRunning)
+                await jackettController.StopAsync(lifetime.Token);
             var updated = await jackettController.GetStatusAsync(lifetime.Token);
             MessageBox.Show(this, $"Jackett обновлён до {updated.Version}.", "Jackett", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -647,6 +853,7 @@ internal sealed class MainForm : Form
         finally
         {
             SetJackettBusy(false, null);
+            jackettStackOperationLock.Release();
             await RefreshStatusAsync();
         }
     }
@@ -685,7 +892,9 @@ internal sealed class MainForm : Form
             {
                 statusDot.ForeColor = Red;
                 statusText.Text = "Остановлен";
-                statusDetails.Text = "Процесс TorrServer не найден";
+                statusDetails.Text = torrServerDesiredRunning
+                    ? "Процесс не найден · автоматическое восстановление"
+                    : "Остановлен вручную · автозапуск выключен";
                 SetTrayIcon(Red);
             }
 
@@ -716,7 +925,9 @@ internal sealed class MainForm : Form
             {
                 jackettDot.ForeColor = Red;
                 jackettStatusText.Text = "Остановлен";
-                jackettDetails.Text = $"Настроено источников: {jackettStatus.ConfiguredIndexers}";
+                jackettDetails.Text = jackettDesiredRunning
+                    ? "Автоматическое восстановление"
+                    : "Остановлен вручную · автозапуск выключен";
             }
             else
             {
@@ -740,7 +951,9 @@ internal sealed class MainForm : Form
                 : flareSolverrStatus.ProcessRunning ? "Запускается" : flareSolverrStatus.IsInstalled ? "Остановлен" : "Не установлен";
             flareSolverrDetails.Text = flareSolverrStatus.IsRunning
                 ? $"API: {flareSolverrController.LocalUrl} · PID {flareSolverrStatus.ProcessId}"
-                : flareSolverrStatus.IsInstalled ? "Локальный API недоступен" : "Положите flaresolverr.exe в ProgramData\\FlareSolverr";
+                : flareSolverrStatus.IsInstalled
+                    ? flareSolverrDesiredRunning ? "API недоступен · автоматическое восстановление" : "Остановлен вручную · автозапуск выключен"
+                    : "Положите flaresolverr.exe в ProgramData\\FlareSolverr";
             flareSolverrVersionValue.Text = flareSolverrStatus.Version;
             flareSolverrStartButton.Enabled = !flareSolverrBusy && flareSolverrStatus.IsInstalled && !flareSolverrStatus.ProcessRunning;
             flareSolverrStopButton.Enabled = !flareSolverrBusy && flareSolverrStatus.ProcessRunning;
@@ -808,12 +1021,17 @@ internal sealed class MainForm : Form
             MessageBoxIcon.Question);
         if (answer != DialogResult.Yes)
             return;
+        if (!await torrServerOperationLock.WaitAsync(0))
+            return;
 
         SetBusy(true, "Обновление…");
         var progress = new Progress<string>(message => updateText.Text = message);
         try
         {
+            var keepRunning = torrServerDesiredRunning;
             await updateService.InstallUpdateAsync(availableRelease, progress, lifetime.Token);
+            if (!keepRunning)
+                await controller.StopAsync(lifetime.Token);
             availableRelease = null;
             updateButton.Enabled = false;
             MessageBox.Show(this, "TorrServer успешно обновлён.", "Обновление", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -826,6 +1044,7 @@ internal sealed class MainForm : Form
         finally
         {
             SetBusy(false, null);
+            torrServerOperationLock.Release();
             await RefreshStatusAsync();
         }
     }
@@ -993,8 +1212,9 @@ internal sealed class MainForm : Form
         }
 
         statusTimer.Stop();
-        flareSolverrUpdateTimer.Dispose();
         lifetime.Cancel();
+        flareSolverrUpdateTimer.Dispose();
+        supervisorTimer.Dispose();
         trayIcon.Visible = false;
         trayIcon.Dispose();
         currentIcon?.Dispose();
@@ -1006,7 +1226,9 @@ internal sealed class MainForm : Form
         ffprobeService.Dispose();
         gStreamerService.Dispose();
         refreshLock.Dispose();
-        flareSolverrUpdateLock.Dispose();
+        supervisorLock.Dispose();
+        torrServerOperationLock.Dispose();
+        jackettStackOperationLock.Dispose();
         lifetime.Dispose();
     }
 
