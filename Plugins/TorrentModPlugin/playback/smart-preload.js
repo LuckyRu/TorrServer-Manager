@@ -7,6 +7,17 @@
     import { normalizeAudioTracks, preferenceFromTrack, resolvePreferredTrack } from './audio-tracks.js';
     import { log, warn } from '../shared/core/log.js';
     import { createLifecycle } from '../shared/core/lifecycle.js';
+    import {
+        sourceBitrateBps,
+        probeDurationSeconds,
+        browserBufferSeconds,
+        expectedSourcePiece,
+        torrentBuffer,
+        smoothDownloadBps,
+        assessPlaybackHealth,
+        playbackHealthLabel,
+        playbackHealthDotCount
+    } from './playback-health.js';
 
     var currentSession = null;
     var sessionSeq = 0;
@@ -271,6 +282,7 @@
                     if (!session.alive || !fileScope.isAlive()) return;
                     var tracks = normalizeAudioTracks(probe);
                     if (!tracks.length) { fail('В файле не найдены аудиодорожки'); return; }
+                    session.probeInfo[id] = probe;
                     session.probes[id] = tracks;
                     done(tracks);
                 }).fail(function (xhr, status, error) {
@@ -583,6 +595,7 @@
                 activateFileScope(session, file);
                 session.activeFile = file;
                 session.activeAudioIndex = transport.audioIndex;
+                startPlaybackHealth(session, file);
                 startNextEpisodePreload(session);
             };
         } else {
@@ -604,6 +617,7 @@
                     activateFileScope(session, file);
                     session.activeFile = file;
                     session.activeAudioIndex = transport.audioIndex;
+                    startPlaybackHealth(session, file);
                     startNextEpisodePreload(session);
                 };
                 continuePlayback();
@@ -637,6 +651,103 @@
             };
             session.scope.track(detachPlayerLifecycle.bind(null, session));
         } catch (e) {}
+    }
+
+    function startPlaybackHealth(session, file) {
+        if (session.healthCleanup) session.healthCleanup();
+        if (!session.alive || !file) return;
+        var fileScope = activateFileScope(session, file);
+        var shell;
+        try { shell = Lampa.Player.render(); } catch (e) { return; }
+        if (!shell || !shell.find) return;
+
+        var indicator = $('<div class="torrent-mod-playback-health torrent-mod-playback-health--unknown"><span></span><span></span><span></span><span></span><span></span></div>');
+        var nativePieces = shell.find('.value--pieces');
+        nativePieces.after(indicator);
+        shell.addClass('torrent-mod-health-active');
+
+        var request = null;
+        var cache = null;
+        var smoothSpeed = null;
+        var sampledAt = 0;
+        var stopped = false;
+        var interval = null;
+        var untrackCleanup = null;
+
+        function renderHealth() {
+            if (stopped || !session.alive || !fileScope.isAlive()) return;
+            var video = null;
+            try { video = Lampa.PlayerVideo.video(); } catch (e) {}
+            var browserSeconds = browserBufferSeconds(video);
+            var probe = session.probeInfo[String(file.id)] || {};
+            var duration = probeDurationSeconds(probe);
+            var expected = expectedSourcePiece(cache, session.allFiles, file, video && video.currentTime, duration, browserSeconds);
+            var source = torrentBuffer(cache, expected);
+            var bitrate = sourceBitrateBps(probe, file);
+            var sourceSeconds = bitrate ? source.bytes * 8 / bitrate : 0;
+            var health = assessPlaybackHealth({
+                browserSeconds: browserSeconds,
+                sourceSeconds: sourceSeconds,
+                sourceBitrateBps: bitrate,
+                downloadBps: smoothSpeed,
+                readyState: video && video.readyState,
+                paused: video && video.paused,
+                hasHeartbeat: !!cache
+            });
+            indicator.removeClass('torrent-mod-playback-health--unknown torrent-mod-playback-health--good torrent-mod-playback-health--warning torrent-mod-playback-health--critical');
+            indicator.addClass('torrent-mod-playback-health--' + health.state);
+            var label = playbackHealthLabel(health);
+            var filled = playbackHealthDotCount(health);
+            try { indicator.attr('title', label).attr('aria-label', label); } catch (e) {}
+            for (var i = 1; i < 5; i++) indicator.find('span').eq(i).toggleClass('active', i < filled);
+        }
+
+        function poll() {
+            renderHealth();
+            if (request || stopped) return;
+            var base = torrServerBase();
+            if (!base || !session.hash) return;
+            request = $.ajax({
+                url: base + '/gst/' + encodeURIComponent(session.hash) + '/heartbeat',
+                method: 'GET',
+                dataType: 'json',
+                timeout: 2500
+            }).done(function (data) {
+                if (stopped || !fileScope.isAlive()) return;
+                cache = data || {};
+                var torrent = cache.Torrent || cache.torrent || {};
+                var rawSpeed = Number(torrent.download_speed || torrent.DownloadSpeed || 0) * 8;
+                var now = Date.now();
+                smoothSpeed = smoothDownloadBps(smoothSpeed, rawSpeed, sampledAt ? (now - sampledAt) / 1000 : 2);
+                sampledAt = now;
+                renderHealth();
+            }).always(function () { request = null; });
+        }
+
+        function cleanup() {
+            if (stopped) return;
+            stopped = true;
+            if (request && request.abort) {
+                try { request.abort(); } catch (e) {}
+            }
+            request = null;
+            if (interval) clearInterval(interval);
+            interval = null;
+            try { indicator.remove(); } catch (e) {}
+            try { shell.removeClass('torrent-mod-health-active'); } catch (e) {}
+            if (session.healthCleanup === cleanup) session.healthCleanup = null;
+            if (untrackCleanup) {
+                var untrack = untrackCleanup;
+                untrackCleanup = null;
+                untrack();
+            }
+        }
+
+        session.healthCleanup = cleanup;
+        untrackCleanup = fileScope.track(cleanup);
+        interval = setInterval(poll, 2000);
+        if (interval && interval.unref) interval.unref();
+        poll();
     }
 
     function switchAudioTrack(session, file, audioIndex) {
@@ -737,6 +848,7 @@
             return;
         }
         session.phase = 'started';
+        startPlaybackHealth(session, file);
         try { Lampa.Player.callback(function () { Lampa.Controller.toggle(backController); }); } catch (e) {}
         try { startNextEpisodePreload(session); } catch (e) {}
         // Not on audio-switch or the playlist's own destroy->play transition — only when the player itself actually goes away.
@@ -817,6 +929,7 @@
             activeFile: null,
             activeAudioIndex: null,
             probes: {},
+            probeInfo: {},
             transports: {},
             missingPreferenceByFile: {},
             audioPreference: null,
@@ -828,6 +941,7 @@
             filesTimer: null,
             filesDeadline: null,
             nextEpisodeCleanup: null,
+            healthCleanup: null,
             dispose: function () {
                 scope.dispose(function () {
                     session.filesTimer = null;

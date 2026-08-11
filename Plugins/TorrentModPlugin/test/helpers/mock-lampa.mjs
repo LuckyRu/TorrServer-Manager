@@ -68,6 +68,8 @@ export function setupMockLampa() {
     // Minimal jQuery: only what non-UI modules touch (smart-preload calls $('body') etc.).
     function jqueryNode() { return {
         find: () => globalThis.$(),
+        after: () => globalThis.$(),
+        attr: () => globalThis.$(),
         on: () => globalThis.$(),
         append: () => globalThis.$(),
         remove: () => globalThis.$(),
@@ -123,16 +125,20 @@ export function setupMockLampa() {
     globalThis.$.ajax = (opts) => {
         const req = {
             done(fn) { this._done = fn; return this; },
-            fail(fn) { this._fail = fn; return this; }
+            fail(fn) { this._fail = fn; return this; },
+            always(fn) { this._always = fn; return this; },
+            abort() { this._aborted = true; if (this._always) this._always(); }
         };
         const isProbe = opts.url && opts.url.includes('/gst/') && opts.url.includes('/probe');
         setTimeout(() => {
+            if (req._aborted) return;
             if (isProbe && probeFailuresRemaining > 0) {
                 probeFailuresRemaining--;
                 if (req._fail) req._fail({ responseText: 'probe failed' }, 'error', 'mock probe failure');
+                if (req._always) req._always();
                 return;
             }
-            if (!req._done) return;
+            if (!req._done) { if (req._always) req._always(); return; }
             let body = {};
             try { body = typeof opts.data === 'string' ? JSON.parse(opts.data) : (opts.data || {}); } catch {}
             if (opts.url && opts.url.includes('/gst/echo')) req._done('ok');
@@ -147,6 +153,7 @@ export function setupMockLampa() {
             else if (body.action === 'add' || body.action === 'get') req._done({ hash: 'mock-torrent-hash', file_stats: [] });
             else if (body.action === 'list') req._done([]);
             else req._done({});
+            if (req._always) req._always();
         }, isProbe ? probeDelay : 0);
         return req;
     };
