@@ -1,0 +1,98 @@
+From e784ace878a1396123cc4f06302f55acaa71ff99 Mon Sep 17 00:00:00 2001
+From: TorrServerManager <noreply@torrservermanager.local>
+Date: Tue, 11 Aug 2026 23:11:12 +0300
+Subject: [PATCH 1/9] gstreamer: add owned SegmentLease so callers can write
+ outside the task lock
+
+Segment.Payloads alias the mp4BoxReader arena, which gets recycled on the next
+seek/dispose, so a Segment is only valid while the task lock is held. A lease
+takes a copy while the lock still guards the arena, decoupling segment bytes
+from pipeline lifetime so a caller can write them out after releasing the lock.
+---
+ server/gstreamer/segment.go | 66 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 65 insertions(+), 1 deletion(-)
+
+diff --git a/server/gstreamer/segment.go b/server/gstreamer/segment.go
+index 14a44af..ab7f98a 100644
+--- a/server/gstreamer/segment.go
++++ b/server/gstreamer/segment.go
+@@ -2,7 +2,10 @@
+ 
+ package gstreamer
+ 
+-import "io"
++import (
++	"io"
++	"sync"
++)
+ 
+ type Segment struct {
+ 	Header       []byte
+@@ -13,6 +16,67 @@ type Segment struct {
+ 	EndSeconds   float64
+ }
+ 
++// Buffers above this size are dropped instead of returned to the pool so that one
++// oversized segment does not pin memory for the lifetime of the process.
++const maxPooledSegmentBytes = 8 << 20
++
++// SegmentLease is an owned, contiguous copy of a Segment.
++//
++// Segment.Payloads alias the mp4BoxReader arena, which ReleaseSegment recycles, so a
++// Segment is only valid while the task lock is held. A lease decouples the two: the
++// copy is taken under the lock, the write to the network happens without it.
++type SegmentLease struct {
++	buf []byte
++}
++
++var segmentLeasePool = sync.Pool{New: func() any { return new(SegmentLease) }}
++
++// leaseSegment must be called while the task lock still guards seg.
++func leaseSegment(seg Segment) *SegmentLease {
++	total := seg.Len()
++
++	lease, _ := segmentLeasePool.Get().(*SegmentLease)
++	if lease == nil {
++		lease = new(SegmentLease)
++	}
++	if cap(lease.buf) < total {
++		lease.buf = make([]byte, total)
++	}
++	lease.buf = lease.buf[:total]
++
++	offset := copy(lease.buf, seg.Header)
++	for _, payload := range seg.Payloads {
++		offset += copy(lease.buf[offset:], payload)
++	}
++	return lease
++}
++
++func (l *SegmentLease) Bytes() []byte {
++	if l == nil {
++		return nil
++	}
++	return l.buf
++}
++
++func (l *SegmentLease) Len() int {
++	if l == nil {
++		return 0
++	}
++	return len(l.buf)
++}
++
++func (l *SegmentLease) Release() {
++	if l == nil {
++		return
++	}
++	if cap(l.buf) > maxPooledSegmentBytes {
++		l.buf = nil
++	} else {
++		l.buf = l.buf[:0]
++	}
++	segmentLeasePool.Put(l)
++}
++
+ func (s Segment) Len() int {
+ 	total := len(s.Header)
+ 	for _, payload := range s.Payloads {

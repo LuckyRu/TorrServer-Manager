@@ -10,7 +10,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $buildRoot = Join-Path $repoRoot '.build'
-$patchPath = Join-Path $repoRoot 'patches\torrserver-gstreamer-container-support.patch'
+# Один плоский патч (git apply) + одна именованная серия format-patch (git am),
+# применяемая поверх него, в этом порядке.
+$containerSupportPatch = Join-Path $repoRoot 'patches\torrserver-gstreamer-container-support.patch'
+$robustnessPatchDir = Join-Path $repoRoot 'patches\torrserver-gstreamer-robustness'
 $torrServerLockPath = Join-Path $repoRoot 'config\torrserver-release.lock'
 $torrServerRepository = 'YouROK/TorrServer'
 $githubApiHeaders = @{ 'User-Agent' = 'TorrServerManager-build' }
@@ -136,8 +139,12 @@ function Resolve-TorrServerTag {
     return $resolvedTag
 }
 
-if (-not (Test-Path -LiteralPath $patchPath)) {
-    throw "Не найден patch TorrServer: $patchPath"
+if (-not (Test-Path -LiteralPath $containerSupportPatch)) {
+    throw "Не найден patch TorrServer: $containerSupportPatch"
+}
+$robustnessPatches = @(Get-ChildItem -LiteralPath $robustnessPatchDir -Filter '*.patch' | Sort-Object Name)
+if ($robustnessPatches.Count -eq 0) {
+    throw "В $robustnessPatchDir не найдено ни одного *.patch файла."
 }
 
 $TorrServerTag = Resolve-TorrServerTag -RequestedTag $TorrServerTag
@@ -162,8 +169,36 @@ $goRoot = Join-Path $repoRoot ".tools\go-$goVersion\go"
 $goExe = Join-Path $goRoot 'bin\go.exe'
 $go = Get-GoExecutable
 
-Invoke-Native -FilePath 'git.exe' -Arguments @('apply', '--check', $patchPath) -WorkingDirectory $sourceRoot
-Invoke-Native -FilePath 'git.exe' -Arguments @('apply', $patchPath) -WorkingDirectory $sourceRoot
+# git init даёт репозиторий для git am (нужен коммит-объект на каждый патч серии);
+# git apply работает и без него, но так оба шага живут в одном контексте.
+Invoke-Native -FilePath 'git.exe' -Arguments @('init', '-q', '.') -WorkingDirectory $sourceRoot
+
+Invoke-Native -FilePath 'git.exe' -Arguments @('apply', '--check', $containerSupportPatch) -WorkingDirectory $sourceRoot
+Invoke-Native -FilePath 'git.exe' -Arguments @('apply', $containerSupportPatch) -WorkingDirectory $sourceRoot
+
+# git am применяет каждый патч поверх текущего индекса, а не поверх файлов на диске —
+# без коммита индекс после git init пуст, и am не увидит файлы, которые apply уже изменил.
+Invoke-Native -FilePath 'git.exe' -Arguments @('add', '-A') -WorkingDirectory $sourceRoot
+Invoke-Native -FilePath 'git.exe' -Arguments @(
+    '-c', 'user.name=TorrServerManager build',
+    '-c', 'user.email=noreply@torrservermanager.local',
+    'commit', '-q', '-m', 'import: TorrServer + container-support patch'
+) -WorkingDirectory $sourceRoot
+
+# git am сохраняет автора/дату из заголовков патча, но для коммита-«применителя»
+# всё равно нужен committer; задаём его через окружение процесса, не через git config,
+# чтобы не трогать ничью конфигурацию и не зависеть от identity текущей машины.
+$env:GIT_AUTHOR_NAME = 'TorrServerManager build'
+$env:GIT_AUTHOR_EMAIL = 'noreply@torrservermanager.local'
+$env:GIT_COMMITTER_NAME = $env:GIT_AUTHOR_NAME
+$env:GIT_COMMITTER_EMAIL = $env:GIT_AUTHOR_EMAIL
+try {
+    foreach ($patch in $robustnessPatches) {
+        Invoke-Native -FilePath 'git.exe' -Arguments @('am', $patch.FullName) -WorkingDirectory $sourceRoot
+    }
+} finally {
+    Remove-Item Env:\GIT_AUTHOR_NAME, Env:\GIT_AUTHOR_EMAIL, Env:\GIT_COMMITTER_NAME, Env:\GIT_COMMITTER_EMAIL -ErrorAction SilentlyContinue
+}
 Invoke-Native -FilePath $go -Arguments @('fmt', './gstreamer') -WorkingDirectory $serverModule
 if (-not $SkipTests) {
     Invoke-Native -FilePath $go -Arguments @('test', '-tags=gst', './gstreamer') -WorkingDirectory $serverModule

@@ -51,6 +51,10 @@ ADR/system-design/reference там, где одно объясняет друг�
   `data.ffprobe` трек-пикер, плейлист/переключение серий, события `PlayerVideo`/`Panel`) →
   [`reference/lampa-player-api.md`](reference/lampa-player-api.md)
 - **Порты, пути, эндпоинты** → [`reference/ports-paths-and-endpoints.md`](reference/ports-paths-and-endpoints.md)
+- **GStreamer: устойчивость к хаотичному плееру** (аудит с разбором кода — зависание на записи под
+  локом задачи, вытеснение задач при смене серии, неотменяемые перемотки; реализованные правки и
+  инварианты, которые нельзя сломать при разборе конфликтов патчей) →
+  [`system-design/gstreamer-pipeline-robustness.md`](system-design/gstreamer-pipeline-robustness.md)
 - **Формула оценки раздач Torrent Mod** (гейт, скоринг, сегодняшний фикс шумного поиска по названию) →
   [`reference/torrent-mod-scoring-model.md`](reference/torrent-mod-scoring-model.md)
 - **Справочник по граблям JS/API Torrent Mod** (кириллица в регэкспах, `Component.create`,
@@ -67,6 +71,9 @@ ADR/system-design/reference там, где одно объясняет друг�
 - **Доменная архитектура Torrent Mod** (Store/State/Interactors, `shared/core/` примитивы надёжности,
   селекторы, урок о границе View/Domain) →
   [`system-design/torrent-mod-domain-architecture.md`](system-design/torrent-mod-domain-architecture.md)
+- **Пошаговая оптимизация рендера Torrent Mod** (живой baseline на 211 раздачах, memoized projections,
+  rAF batching, keyed DOM и виртуальный picker) →
+  [`system-design/torrent-mod-render-performance.md`](system-design/torrent-mod-render-performance.md)
 - **Параллельный поиск по трекерам** (протокол start/poll/cancel, lifecycle scope, именованный
   виджет трекеров, история про то, где на самом деле проходит граница View и Domain) →
   [`system-design/torrent-mod-parallel-search.md`](system-design/torrent-mod-parallel-search.md)

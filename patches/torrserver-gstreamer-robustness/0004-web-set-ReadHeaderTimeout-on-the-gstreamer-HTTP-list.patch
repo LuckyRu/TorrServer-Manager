@@ -1,0 +1,43 @@
+From 90bae04aac5a383f2f61200fc8287fd20f4b7e8c Mon Sep 17 00:00:00 2001
+From: TorrServerManager <noreply@torrservermanager.local>
+Date: Tue, 11 Aug 2026 23:11:13 +0300
+Subject: [PATCH 4/9] web: set ReadHeaderTimeout on the gstreamer HTTP listener
+
+route.Run(addr) started the listener with no header read timeout. Switch to
+an explicit http.Server so a slow-loris style client can't hold a connection
+open indefinitely before sending a complete request line.
+---
+ server/web/server.go | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/server/web/server.go b/server/web/server.go
+index f449331..ea82090 100644
+--- a/server/web/server.go
++++ b/server/web/server.go
+@@ -2,8 +2,10 @@ package web
+ 
+ import (
+ 	"net"
++	"net/http"
+ 	"os"
+ 	"sort"
++	"time"
+ 
+ 	gstreamer "server/gstreamer/bridge"
+ 	"server/netbind"
+@@ -142,7 +144,14 @@ func Start() {
+ 			addr := netbind.Addr(ip, settings.Port)
+ 			go func(addr string) {
+ 				log.TLogln("Start http server at", addr)
+-				waitChan <- route.Run(addr)
++				// ReadHeaderTimeout only; a WriteTimeout would cut off /stream downloads.
++				// Per-response deadlines are set by the handlers that need them.
++				srv := &http.Server{
++					Addr:              addr,
++					Handler:           route,
++					ReadHeaderTimeout: 15 * time.Second,
++				}
++				waitChan <- srv.ListenAndServe()
+ 			}(addr)
+ 		}
+ 	}()
