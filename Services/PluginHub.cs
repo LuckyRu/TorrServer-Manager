@@ -231,6 +231,13 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" && path.Equals("/favicon.ico", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.Headers["Cache-Control"] = "public, max-age=604800, immutable";
+                await WriteLampaAppFileAsync(context.Response, "icons/favicon.ico");
+                return;
+            }
+
             if (context.Request.HttpMethod == "GET" && path.Equals("/health", StringComparison.OrdinalIgnoreCase))
             {
                 var plugins = BuildPluginViews(Snapshot());

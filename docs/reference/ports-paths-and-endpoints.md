@@ -39,6 +39,7 @@
 | `POST` | `/api/plugins/refresh` | Форс-рефреш кэша плагинов (нужен `-d ""` в curl) | loopback |
 | `GET` | `/api/torrent-search?query=` | Агрегированный поиск по всем индексаторам Jackett для Torrent Mod | LAN || `GET` | `/lampa.js` | Bootstrap loader — читает `/api/config`, инжектит включённые плагины | LAN |
 | `GET` | `/plugins/{cacheKey}.js` | Закэшированный плагин (по SHA-256-based ключу) | LAN |
+| `GET` | `/favicon.ico` | Иконка хостимого Lampa-приложения для WebOS/WebView | LAN |
 | `GET`/etc | `/app/*` | Статика самого Lampa web-app (`yumata/lampa` дистрибутив) | LAN |
 | `GET` | `/jackett/*` | Reverse proxy к loopback Jackett, путь+query один в один | LAN |
 
