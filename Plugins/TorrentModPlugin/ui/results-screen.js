@@ -8,6 +8,7 @@
     import { pickerNavigationWindow, adjacentPickerId, replacementPickerId } from './picker-navigation.js';
     import { reconcileKeyedChildren } from './keyed-dom.js';
     import { createPerfMetrics } from '../shared/core/perf-metrics.js';
+    import { resolveContentRightIntent, resolvePickerRightIntent } from './navigation-intents.js';
 
     export function createResultsView(options) {
         var object = options.object;
@@ -41,6 +42,7 @@
         var pickerOrder = [];
         var pickerTarget = null;
         var pickerFocusId = null;
+        var filterAfterPickerClose = false;
 
         var picker = $('<div class="torrent-mod-picker" style="display:none"></div>');
         var pickerScroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
@@ -254,9 +256,11 @@
                         back: requestClosePicker,
                         right: function () {
                             if (viewDestroyed) return;
-                            requestClosePicker();
-                            var filterChip = toolbar.find('.filter--filter');
-                            if (filterChip.length) filterChip.trigger('hover:enter');
+                            var intent = resolvePickerRightIntent({
+                                filterAvailable: toolbar.find('.filter--filter').length > 0
+                            });
+                            if (intent === 'filter-after-close') requestFilterAfterPickerClose();
+                            else requestClosePicker();
                         },
                         up: function () { movePicker('up'); },
                         down: function () { movePicker('down'); }
@@ -296,11 +300,28 @@
             if (node && node[0] && node[0].offsetParent) {
                 try { Lampa.Controller.collectionFocus(node[0], scroll.render(true)); } catch (e2) {}
             }
+            if (filterAfterPickerClose) {
+                filterAfterPickerClose = false;
+                viewScope.setTimeout(function () { triggerFilterChip(); }, 0);
+            }
         }
 
         function requestClosePicker() {
             if (viewDestroyed) return;
             try { domain.selection.closePicker(); } catch (e) {}
+        }
+
+        function triggerFilterChip() {
+            if (viewDestroyed) return false;
+            var filterChip = toolbar.find('.filter--filter');
+            if (!filterChip.length) return false;
+            filterChip.trigger('hover:enter');
+            return true;
+        }
+
+        function requestFilterAfterPickerClose() {
+            filterAfterPickerClose = true;
+            requestClosePicker();
         }
 
         var initialSeason = object.season || 0;
@@ -477,16 +498,18 @@
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
                 right: function () {
                     var focused = grid.find('.torrent-mod-episode.focus')[0];
-                    if (focused) {
+                    var intent = resolveContentRightIntent({
+                        episodeFocused: !!focused,
+                        candidateFocused: !!grid.find('.torrent-mod-candidate.focus')[0],
+                        filterAvailable: toolbar.find('.filter--filter').length > 0
+                    });
+                    if (intent === 'picker') {
                         var number = parseInt($(focused).attr('data-episode'), 10);
                         domain.selection.setActiveEpisode(number);
                         domain.selection.openPicker();
                         return;
                     }
-                    if (grid.find('.torrent-mod-candidate.focus')[0]) {
-                        var filterChip = toolbar.find('.filter--filter');
-                        if (filterChip.length) { filterChip.trigger('hover:enter'); return; }
-                    }
+                    if (intent === 'filter') { triggerFilterChip(); return; }
                     Navigator.move('right');
                 },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('menu'); },

@@ -7,6 +7,7 @@ import { debug, debugEnabled, diagnosticsSnapshot } from '../shared/core/log.js'
 import { createRenderScheduler } from '../ui/render-scheduler.js';
 import { reconcileKeyedChildren } from '../ui/keyed-dom.js';
 import { createPerfMetrics } from '../shared/core/perf-metrics.js';
+import { resolveContentRightIntent, resolvePickerRightIntent } from '../ui/navigation-intents.js';
 
 const runner = createRunner();
 
@@ -142,6 +143,24 @@ runner.test('performance diagnostics собирает bounded summary без в�
         console.log = previousLog;
         if (previousWindow === undefined) delete globalThis.window;
         else globalThis.window = previousWindow;
+    }
+});
+
+runner.test('series right navigation сохраняет маршруты picker и filter', () => {
+    if (resolveContentRightIntent({ episodeFocused: true, candidateFocused: false, filterAvailable: true }) !== 'picker') {
+        throw new Error('right на серии должен открывать picker');
+    }
+    if (resolveContentRightIntent({ episodeFocused: false, candidateFocused: true, filterAvailable: true }) !== 'filter') {
+        throw new Error('right на списке кандидатов должен открывать фильтр');
+    }
+    if (resolveContentRightIntent({ episodeFocused: false, candidateFocused: true, filterAvailable: false }) !== 'move-right') {
+        throw new Error('при отсутствии filter-chip нельзя перехватывать right');
+    }
+    if (resolvePickerRightIntent({ filterAvailable: true }) !== 'filter-after-close') {
+        throw new Error('right из picker должен сначала закрыть overlay и открыть фильтр');
+    }
+    if (resolvePickerRightIntent({ filterAvailable: false }) !== 'close') {
+        throw new Error('picker без filter-chip должен только закрываться');
     }
 });
 
