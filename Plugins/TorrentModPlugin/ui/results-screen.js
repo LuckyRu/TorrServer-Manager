@@ -5,7 +5,9 @@
     import { selectStatusText, selectSearchProgress } from '../domain/results-selectors.js';
     import { createResultsProjectionCache } from '../domain/results-projections.js';
     import { createRenderScheduler } from './render-scheduler.js';
-    import { pickerNavigationWindow, adjacentPickerId } from './picker-navigation.js';
+    import { pickerNavigationWindow, adjacentPickerId, replacementPickerId } from './picker-navigation.js';
+    import { reconcileKeyedChildren } from './keyed-dom.js';
+    import { createPerfMetrics } from '../shared/core/perf-metrics.js';
 
     export function createResultsView(options) {
         var object = options.object;
@@ -27,6 +29,9 @@
         var projections = createResultsProjectionCache(object, movie, hasSeasons, function (season) {
             return domain.selection.getSeasonDefault(season);
         });
+        var viewScope = domain.scope.child();
+        var pickerScope = null;
+        var pickerRowsScope = null;
         var scheduler;
         var lastFilterSignature = '';
         var lastStatusSignature = '';
@@ -43,23 +48,37 @@
         pickerScroll.append(pickerBody);
         picker.append(pickerScroll.render());
         var viewDestroyed = false;
+        var perf = createPerfMetrics(viewScope, {
+            title: movie && (movie.title || movie.name) || '',
+            media: hasSeasons ? 'series' : 'movie'
+        });
+        perf.observe(grid[0]);
+        perf.observe(pickerBody[0]);
+        perf.searchState(domain.store.get().poolStatus);
         var lastFocusedNode = null;
         var lastEpisodeGridSeason = null;
 
         var PICKER_NAVIGATION_RADIUS = 36;
 
-        function pickerNodeView(item, selected) {
-            return {
-                title: item.title || '',
-                badge: candidateBadgeText(item),
-                details: candidateSubtitleText(item),
-                selected: selected
-            };
+        function createPickerScopes() {
+            if (pickerScope && pickerScope.isAlive()) return;
+            pickerScope = viewScope.child();
+            pickerRowsScope = pickerScope.child();
+        }
+
+        function resetPickerRowsScope() {
+            if (pickerRowsScope) pickerRowsScope.dispose();
+            pickerRowsScope = pickerScope && pickerScope.isAlive() ? pickerScope.child() : null;
+        }
+
+        function bindScoped(scope, node, event, handler) {
+            node.on(event, handler);
+            if (scope) scope.track(function () { node.off(event, handler); });
         }
 
         function updatePickerNode(node, view) {
             var signature = [view.title, view.badge, view.details, view.selected ? '1' : '0'].join('|');
-            if (node.attr('data-view-signature') === signature) return;
+            if (node.attr('data-view-signature') === signature) return false;
             node.attr('data-view-signature', signature);
             node.find('.torrent-mod-picker-item__title').text(view.title);
             node.find('.torrent-mod-picker-item__badge').text(view.badge);
@@ -68,6 +87,7 @@
             var mark = node.find('.torrent-mod-picker-item__mark');
             if (view.selected && !mark.length) node.append('<div class="torrent-mod-picker-item__mark">Выбрано</div>');
             else if (!view.selected && mark.length) mark.remove();
+            return true;
         }
 
         function pickerNavigationNodes(focusId) {
@@ -122,6 +142,7 @@
         }
 
         function resetPickerRows() {
+            resetPickerRowsScope();
             pickerBody.empty();
             pickerRows = {};
             pickerItems = {};
@@ -138,8 +159,8 @@
                 } else if (st.status === 'error') {
                     pickerBody.append($('<div class="torrent-mod-picker__empty">Не удалось получить раздачи</div>'));
                     var retryRow = $('<div class="torrent-mod-picker-item selector"><div class="torrent-mod-picker-item__title">Повторить</div></div>');
-                    retryRow.on('hover:focus', function (e) { pickerScroll.update($(e.target), true); });
-                    retryRow.on('hover:enter', function () {
+                    bindScoped(pickerRowsScope, retryRow, 'hover:focus', function (e) { pickerScroll.update($(e.target), true); });
+                    bindScoped(pickerRowsScope, retryRow, 'hover:enter', function () {
                         if (!viewDestroyed) domain.episodes.retrySeasonLoad(domain.store.get().season);
                     });
                     pickerBody.append(retryRow);
@@ -158,32 +179,38 @@
             var nextOrder = [];
             var desiredNodes = [];
             var structureChanged = false;
+            var createdCount = 0;
+            var updatedCount = 0;
+            var removedCount = 0;
             pickerTarget = st.target;
 
-            st.items.forEach(function (item) {
-                var id = candidateIdentity(item);
-                var selected = !!(st.selectedId && id === st.selectedId);
+            var rows = Array.isArray(st.rows) ? st.rows : [];
+            rows.forEach(function (view) {
+                var id = view.id;
+                var item = view.item;
                 var node = pickerRows[id];
                 active[id] = true;
                 nextOrder.push(id);
                 pickerItems[id] = item;
                 if (!node) {
                     structureChanged = true;
-                    node = torrentRow(item, selected).attr('data-picker-id', id);
-                    node.on('hover:focus', function () { pickerFocusId = id; });
-                    node.on('hover:enter', function () {
+                    createdCount++;
+                    node = torrentRow(pickerRowsScope).attr('data-picker-id', id);
+                    bindScoped(pickerRowsScope, node, 'hover:focus', function () { pickerFocusId = id; });
+                    bindScoped(pickerRowsScope, node, 'hover:enter', function () {
                         var current = pickerItems[id];
                         if (current) domain.selection.playPickerCandidate(current, pickerTarget);
                     });
                     pickerRows[id] = node;
                 }
-                updatePickerNode(node, pickerNodeView(item, selected));
+                if (updatePickerNode(node, view)) updatedCount++;
                 desiredNodes.push(node[0]);
             });
 
             Object.keys(pickerRows).forEach(function (id) {
                 if (active[id]) return;
                 structureChanged = true;
+                removedCount++;
                 pickerRows[id].remove();
                 delete pickerRows[id];
                 delete pickerItems[id];
@@ -191,27 +218,23 @@
             if (pickerOrder.length !== nextOrder.length || pickerOrder.some(function (id, index) { return id !== nextOrder[index]; })) {
                 structureChanged = true;
             }
+            var previousOrder = pickerOrder;
             pickerOrder = nextOrder;
             if (structureChanged) {
-                var cursor = pickerBody[0].firstChild;
-                desiredNodes.forEach(function (node) {
-                    if (node === cursor) {
-                        cursor = cursor.nextSibling;
-                        return;
-                    }
-                    pickerBody[0].insertBefore(node, cursor);
-                });
+                perf.count('pickerStructuralMutations', reconcileKeyedChildren(pickerBody[0], desiredNodes));
             }
-            pickerFocusId = previousFocus && active[previousFocus]
-                ? previousFocus
-                : (st.selectedId && active[st.selectedId] ? st.selectedId : pickerOrder[0]);
+            perf.count('pickerRowsCreated', createdCount);
+            perf.count('pickerRowsUpdated', updatedCount);
+            perf.count('pickerRowsRemoved', removedCount);
+            pickerFocusId = replacementPickerId(previousOrder, pickerOrder, previousFocus, st.selectedId);
             return { structureChanged: structureChanged, focusPosition: focusPosition };
         }
 
         function openPickerPanel() {
             if (viewDestroyed) return;
+            createPickerScopes();
             var state = domain.store.get();
-            var st = projections.pickerData(state);
+            var st = arguments.length ? arguments[0] : projections.pickerData(state);
             var wasOpen = picker.hasClass('torrent-mod-picker--open');
             picker.show().addClass('torrent-mod-picker--open');
             var renderResult = renderPickerState(st);
@@ -248,22 +271,24 @@
             } catch (e) {}
         }
 
-        function torrentRow(item, selected) {
+        function torrentRow(scope) {
             var el = $(
-                '<div class="torrent-mod-picker-item selector' + (selected ? ' torrent-mod-picker-item--selected' : '') + '">' +
-                '<div class="torrent-mod-picker-item__title">' + escapeHtml(item.title) + '</div>' +
-                '<div class="torrent-mod-picker-item__badge">' + escapeHtml(candidateBadgeText(item)) + '</div>' +
-                '<div class="torrent-mod-picker-item__details">' + escapeHtml(candidateSubtitleText(item)) + '</div>' +
-                (selected ? '<div class="torrent-mod-picker-item__mark">Выбрано</div>' : '') +
+                '<div class="torrent-mod-picker-item selector">' +
+                '<div class="torrent-mod-picker-item__title"></div>' +
+                '<div class="torrent-mod-picker-item__badge"></div>' +
+                '<div class="torrent-mod-picker-item__details"></div>' +
                 '</div>'
             );
-            el.on('hover:focus', function (e) { pickerScroll.update($(e.target), true); });
+            bindScoped(scope, el, 'hover:focus', function (e) { pickerScroll.update($(e.target), true); });
             return el;
         }
 
         function hidePickerDom() {
             picker.removeClass('torrent-mod-picker--open');
             picker.hide();
+            if (pickerScope) pickerScope.dispose();
+            pickerScope = null;
+            pickerRowsScope = null;
             resetPickerRows();
             try { Lampa.Controller.toggle('content'); } catch (e) {}
             var activeEpisode = domain.store.get().activeEpisode;
@@ -361,6 +386,7 @@
             candidateRowItems = {};
             candidateBackNode = null;
             var firstNumber = null;
+            var createdCount = 0;
             (Array.isArray(episodes) ? episodes : []).forEach(function (episode) {
                 if (!episode) return;
                 var number = parseInt(episode.episode_number, 10);
@@ -377,7 +403,9 @@
                 node.on('hover:focus', function () { domain.selection.setActiveEpisode(number); });
                 grid.append(node);
                 episodeRows[number] = node;
+                createdCount++;
             });
+            perf.count('episodeRowsCreated', createdCount);
             refreshGrid();
             if (!hasSeasons || firstNumber == null) return;
 
@@ -468,6 +496,7 @@
         }
 
         function updateEpisodeBadges(badgeMap) {
+            var updatedCount = 0;
             Object.keys(episodeRows).forEach(function (key) {
                 var entry = badgeMap[key];
                 var el = episodeRows[key].find('.torrent-mod-row__badge');
@@ -475,10 +504,12 @@
                 var signature = [(entry && entry.text) || '', !!(entry && entry.loading), !!(entry && entry.canPick)].join('|');
                 if (episodeRows[key].attr('data-badge-signature') === signature) return;
                 episodeRows[key].attr('data-badge-signature', signature);
+                updatedCount++;
                 if (entry && entry.loading) el.html('<span class="torrent-mod-row__badge--shimmer"></span>');
                 else el.text((entry && entry.text) || '');
                 action.toggleClass('torrent-mod-row__action--visible', !!(entry && entry.canPick));
             });
+            perf.count('episodeRowsUpdated', updatedCount);
         }
 
         function syncFilterChips(data) {
@@ -515,17 +546,17 @@
         function scheduleTrackerHide(id, delayMs) {
             var entry = trackerNodes[id];
             if (!entry || entry.hideTimer) return;
-            entry.hideTimer = domain.scope.setTimeout(function () {
+            entry.hideTimer = viewScope.setTimeout(function () {
                 var current = trackerNodes[id];
                 if (!current) return;
                 current.node.addClass('torrent-mod__tracker--leave');
-                try { Lampa.Layer.update(); } catch (e) {}
-                domain.scope.setTimeout(function () {
+                scheduler.invalidate('layer');
+                viewScope.setTimeout(function () {
                     var stillThere = trackerNodes[id];
                     if (!stillThere) return;
                     stillThere.node.remove();
                     delete trackerNodes[id];
-                    try { Lampa.Layer.update(); } catch (e) {}
+                    scheduler.invalidate('layer');
                 }, TRACKER_LEAVE_ANIMATION_MS);
             }, Math.max(0, delayMs));
         }
@@ -544,7 +575,7 @@
                     }
                     trackers.append(node);
                     entry = trackerNodes[indexer.id] = { node: node, hideTimer: null };
-                    domain.scope.setTimeout(function () { node.removeClass('torrent-mod__tracker--enter'); }, 0);
+                    viewScope.setTimeout(function () { node.removeClass('torrent-mod__tracker--enter'); }, 0);
                 } else if (indexer.status !== 'pending') {
                     entry.node
                         .removeClass('torrent-mod__tracker--pending torrent-mod__tracker--ok torrent-mod__tracker--error')
@@ -568,7 +599,7 @@
             if (statusTickTimer && statusTickStage === stage) return; // already ticking at the right cadence
             if (statusTickTimer) clearInterval(statusTickTimer);
             statusTickStage = stage;
-            statusTickTimer = domain.scope.setInterval(function () {
+            statusTickTimer = viewScope.setInterval(function () {
                 if (viewDestroyed) return;
                 var state = domain.store.get();
                 setStatus(selectStatusText(state), selectSearchProgress(state).stage === 'loading');
@@ -583,6 +614,9 @@
             episodeRows = {};
             var items = Array.isArray(candidates) ? candidates : [];
             var desired = [];
+            var createdCount = 0;
+            var updatedCount = 0;
+            var removedCount = 0;
             if (canReturnToEpisodeList) {
                 if (!candidateBackNode) {
                     candidateBackNode = row('← К списку серий', '');
@@ -599,6 +633,7 @@
                 activeIds[id] = true;
                 var node = candidateRows[id];
                 if (!node) {
+                    createdCount++;
                     node = row(item.title, candidateSubtitleText(item));
                     node.addClass('torrent-mod-candidate');
                     node.on('hover:enter', function () {
@@ -609,20 +644,30 @@
                 }
                 candidateRowItems[id] = { item: item, target: target };
                 node.attr('data-candidate-id', id);
-                node.find('.torrent-mod-row__title').text(item.title || '');
-                node.find('.torrent-mod-row__subtitle').text(candidateSubtitleText(item));
-                node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
+                var title = item.title || '';
+                var subtitle = candidateSubtitleText(item);
+                var badge = candidateBadgeText(item);
+                var signature = [title, subtitle, badge].join('|');
+                if (node.attr('data-view-signature') !== signature) {
+                    updatedCount++;
+                    node.attr('data-view-signature', signature);
+                    node.find('.torrent-mod-row__title').text(title);
+                    node.find('.torrent-mod-row__subtitle').text(subtitle);
+                    node.find('.torrent-mod-row__badge').text(badge);
+                }
                 desired.push(node[0]);
             });
             Object.keys(candidateRows).forEach(function (id) {
                 if (activeIds[id]) return;
+                removedCount++;
                 candidateRows[id].remove();
                 delete candidateRows[id];
                 delete candidateRowItems[id];
             });
-            var fragment = document.createDocumentFragment();
-            desired.forEach(function (node) { fragment.appendChild(node); });
-            grid[0].appendChild(fragment);
+            perf.count('candidateStructuralMutations', reconcileKeyedChildren(grid[0], desired));
+            perf.count('candidateRowsCreated', createdCount);
+            perf.count('candidateRowsUpdated', updatedCount);
+            perf.count('candidateRowsRemoved', removedCount);
             lastFocusedNode = (focusedCandidateId && candidateRows[focusedCandidateId]) || null;
             refreshGrid();
             if (!initialFocusDone) {
@@ -649,55 +694,91 @@
         function flushScheduledRender(reasons) {
             if (viewDestroyed) return;
             var state = domain.store.get();
-            if (reasons.content) renderContent([state.stage, state.episodesCache, state.candidates, state.message]);
-            if (reasons.badges) updateEpisodeBadges(projections.episodeBadges(state));
-            if (reasons.filters) syncFilterChips(projections.filterChipData(state));
+            if (reasons.content) perf.measure('dom-commit:content', function () {
+                renderContent([state.stage, state.episodesCache, state.candidates, state.message]);
+            });
+            if (reasons.badges) {
+                var badges = perf.measure('episode-projection', function () { return projections.episodeBadges(state); });
+                perf.measure('dom-commit:episodeBadges', function () { updateEpisodeBadges(badges); });
+            }
+            if (reasons.filters) {
+                var filterData = perf.measure('filter-projection', function () { return projections.filterChipData(state); });
+                perf.measure('dom-commit:filters', function () { syncFilterChips(filterData); });
+            }
             if (reasons.status) {
                 var progress = selectSearchProgress(state);
-                setStatus(selectStatusText(state), progress.stage === 'loading');
+                perf.measure('dom-commit:status', function () {
+                    setStatus(selectStatusText(state), progress.stage === 'loading');
+                });
                 ensureStatusTicking(progress.stage);
             }
-            if (reasons.trackers) renderTrackers(projections.poolIndexers(state));
-            if (reasons.picker) {
-                if (state.picker && state.picker.open) openPickerPanel();
-                else if (picker.hasClass('torrent-mod-picker--open')) hidePickerDom();
+            if (reasons.trackers) {
+                var indexers = perf.measure('tracker-projection', function () { return projections.poolIndexers(state); });
+                perf.measure('dom-commit:trackers', function () { renderTrackers(indexers); });
             }
-            try { Lampa.Layer.update(); } catch (e) {}
+            if (reasons.picker) {
+                var pickerData = state.picker && state.picker.open
+                    ? perf.measure('picker-projection', function () { return projections.pickerData(state); })
+                    : null;
+                perf.measure('dom-commit:picker', function () {
+                    if (pickerData) openPickerPanel(pickerData);
+                    else if (picker.hasClass('torrent-mod-picker--open')) hidePickerDom();
+                });
+            }
+            perf.measure('layer-update', function () {
+                try { Lampa.Layer.update(); } catch (e) {}
+            });
+            perf.count('layerUpdates');
+            perf.poolRendered();
+            if (perf.enabled) {
+                perf.gauge('mountedEpisodeRows', grid.find('.torrent-mod-episode').length);
+                perf.gauge('mountedPickerRows', pickerBody.find('.torrent-mod-picker-item').length);
+                perf.gauge('torrentModElements', explorer.render(true).querySelectorAll('*').length + picker[0].querySelectorAll('*').length);
+            }
+            perf.searchState(state.poolStatus);
         }
 
-        scheduler = createRenderScheduler(domain.scope, flushScheduledRender);
+        scheduler = createRenderScheduler(viewScope, flushScheduledRender);
 
-        domain.scope.subscribeSelector(domain.store,
-            function (state) { return [state.stage, state.episodesCache, state.candidates, state.message]; },
+        viewScope.subscribeSelector(domain.store,
+            function (state) { return [state.stage, state.episodesRevision, state.candidates, state.message]; },
             function () { scheduler.invalidate('content'); },
             sameTuple
         );
-        domain.scope.subscribeSelector(domain.store,
+        viewScope.subscribeSelector(domain.store,
+            function (state) { return state.poolRevision; },
+            function (revision) { perf.poolPatched(revision); }
+        );
+        viewScope.subscribeSelector(domain.store,
             function (state) {
-                return [state.pool, state.episodesCache, state.poolStatus, state.seasonLoads, state.season, state.filters, state.stage, state.seasonEpisodeCount, state.avgRuntimeMinutes];
+                return [state.poolRevision, state.episodesRevision, state.poolStatus, state.seasonLoads,
+                    state.season, state.filtersRevision, state.seasonEpisodeCount, state.avgRuntimeMinutes,
+                    state.defaultsRevision];
             },
             function () { scheduler.invalidate('badges'); },
             sameTuple
         );
-        domain.scope.subscribeSelector(domain.store,
-            function (state) { return [state.season, state.pool, state.filters, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
+        viewScope.subscribeSelector(domain.store,
+            function (state) { return [state.season, state.poolRevision, state.filtersRevision, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
             function () { scheduler.invalidate('filters'); },
             sameTuple
         );
-        domain.scope.subscribeSelector(domain.store,
+        viewScope.subscribeSelector(domain.store,
             function (state) {
                 return [state.statusText, state.poolStatus, state.poolStartedAt, state.poolAutoRetryAt, state.poolAttempt, state.season, state.seasonLoads];
             },
             function () { scheduler.invalidate('status'); },
             sameTuple
         );
-        domain.scope.subscribeSelector(domain.store,
+        viewScope.subscribeSelector(domain.store,
             function (state) { return [state.poolIndexers, state.poolAllIndexers]; },
             function () { scheduler.invalidate('trackers'); },
             sameTuple
         );
-        domain.scope.subscribeSelector(domain.store,
-            function (state) { return [state.picker, state.pool, state.poolStatus, state.seasonLoads, state.season, state.filters, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
+        viewScope.subscribeSelector(domain.store,
+            function (state) { return [state.picker, state.poolRevision, state.poolStatus, state.seasonLoads,
+                state.season, state.filtersRevision, state.seasonEpisodeCount, state.avgRuntimeMinutes,
+                state.defaultsRevision]; },
             function () { scheduler.invalidate('picker'); },
             sameTuple
         );
@@ -725,6 +806,7 @@
             },
             destroy: function () {
                 viewDestroyed = true;
+                viewScope.dispose();
                 try { picker.remove(); } catch (e) {}
                 try { pickerScroll.destroy(); } catch (e) {}
                 try { scroll.destroy(); } catch (e) {}

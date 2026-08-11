@@ -1,9 +1,30 @@
     var PREFIX = 'Torrent Mod';
 
+    export function diagnosticsState() {
+        if (typeof window === 'undefined') return null;
+        var diagnostics = window.TorrentModDiagnostics;
+        if (!diagnostics || typeof diagnostics !== 'object') diagnostics = {};
+        if (!Array.isArray(diagnostics.entries)) diagnostics.entries = [];
+        if (typeof diagnostics.verbose !== 'boolean') diagnostics.verbose = false;
+        if (typeof diagnostics.consoleOutput !== 'boolean') diagnostics.consoleOutput = false;
+        if (!isFinite(diagnostics.maxEntries) || diagnostics.maxEntries < 1) diagnostics.maxEntries = 500;
+        diagnostics.clear = function () { diagnostics.entries.length = 0; };
+        diagnostics.snapshot = function () { return diagnostics.entries.slice(); };
+        window.TorrentModDiagnostics = diagnostics;
+        return diagnostics;
+    }
+
+    function recordDebug(scope, message, data) {
+        var diagnostics = diagnosticsState();
+        if (!diagnostics) return;
+        diagnostics.entries.push({ at: Date.now(), scope: scope, message: message, data: data });
+        var overflow = diagnostics.entries.length - diagnostics.maxEntries;
+        if (overflow > 0) diagnostics.entries.splice(0, overflow);
+    }
+
     export function debugEnabled() {
-        if (typeof window === 'undefined') return false;
-        if (!window.TorrentModDiagnostics) window.TorrentModDiagnostics = { verbose: false };
-        return window.TorrentModDiagnostics.verbose === true;
+        var diagnostics = diagnosticsState();
+        return !!diagnostics && diagnostics.verbose === true;
     }
 
     export function log(scope, message, data) {
@@ -20,5 +41,11 @@
 
     export function debug(scope, message, data) {
         if (!debugEnabled()) return;
-        log(scope, message, data);
+        recordDebug(scope, message, data);
+        if (window.TorrentModDiagnostics.consoleOutput === true) log(scope, message, data);
+    }
+
+    export function diagnosticsSnapshot() {
+        var diagnostics = diagnosticsState();
+        return diagnostics ? diagnostics.snapshot() : [];
     }

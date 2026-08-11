@@ -39,9 +39,12 @@ export function preferRelease(existing, candidate) {
 }
 
 export function mergeReleases(existing, incoming) {
+    var original = Array.isArray(existing) ? existing : [];
     var positions = {};
     var merged = [];
-    (existing || []).concat(incoming || []).forEach(function (item) {
+    var changed = false;
+
+    original.forEach(function (item) {
         var id = releaseIdentity(item);
         if (!id) return;
         if (positions[id] === undefined) {
@@ -50,7 +53,30 @@ export function mergeReleases(existing, incoming) {
             return;
         }
         var position = positions[id];
-        merged[position] = preferRelease(merged[position], item);
+        var preferred = preferRelease(merged[position], item);
+        if (preferred !== merged[position]) merged[position] = preferred;
+        changed = true;
     });
+
+    (incoming || []).forEach(function (item) {
+        var id = releaseIdentity(item);
+        if (!id) return;
+        if (positions[id] === undefined) {
+            positions[id] = merged.length;
+            merged.push(item);
+            changed = true;
+            return;
+        }
+        var position = positions[id];
+        var preferred = preferRelease(merged[position], item);
+        if (preferred !== merged[position]) {
+            merged[position] = preferred;
+            changed = true;
+        }
+    });
+
+    if (!changed && merged.length === original.length && merged.every(function (item, index) { return item === original[index]; })) {
+        return original;
+    }
     return merged;
 }

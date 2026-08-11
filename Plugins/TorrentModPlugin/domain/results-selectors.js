@@ -1,4 +1,5 @@
-    import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeTextForBest, candidateIdentity } from './results-core.js';
+    import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeTextForBest,
+        candidateIdentity, candidateBadgeText, candidateSubtitleText } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
     import { applyStateFilters, createCandidateScoreBase, scoreCandidateFromBase } from '../search/scoring.js';
@@ -38,13 +39,14 @@
         return candidatesForEpisode(state.pool, target, state);
     }
 
-    export function selectEpisodeBadges(object, state, seasonDefault) {
+    export function selectEpisodeBadges(object, state, seasonDefault, metrics) {
         var poolSettling = state.poolStatus === 'loading' || state.poolStatus === 'idle';
         var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
         var poolFailed = state.poolStatus === 'error';
         var seasonFailed = !!(state.seasonLoads && state.seasonLoads[state.season] === 'error');
         var baseTarget = buildEpisodeTarget(object, state, 0);
         var entries = applyStateFilters(state.pool, state, baseTarget).map(function (item) {
+            if (metrics) metrics.baseScores = (metrics.baseScores || 0) + 1;
             return { item: item, base: createCandidateScoreBase(item, baseTarget) };
         });
         var savedId = seasonDefault && seasonDefault.id;
@@ -58,6 +60,7 @@
             var bestScore = null;
             var savedItem = null;
             entries.forEach(function (entry) {
+                if (metrics) metrics.episodeScores = (metrics.episodeScores || 0) + 1;
                 var score = scoreCandidateFromBase(entry.item, target, entry.base);
                 if (!score.passes) return;
                 count++;
@@ -145,7 +148,23 @@
         var items = selectCandidatesForEpisode(object, state, episode);
         var selectedId = seasonDefault ? seasonDefault.id : null;
         if (items.length) {
-            return { status: 'ready', items: items, target: buildEpisodeTarget(object, state, episode), selectedId: selectedId };
+            return {
+                status: 'ready',
+                items: items,
+                rows: items.map(function (item) {
+                    var id = candidateIdentity(item);
+                    return {
+                        id: id,
+                        item: item,
+                        title: item.title || '',
+                        badge: candidateBadgeText(item),
+                        details: candidateSubtitleText(item),
+                        selected: !!(selectedId && id === selectedId)
+                    };
+                }),
+                target: buildEpisodeTarget(object, state, episode),
+                selectedId: selectedId
+            };
         }
         var poolSettling = state.poolStatus === 'loading' || state.poolStatus === 'idle';
         var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');

@@ -141,7 +141,8 @@
                 all[movie.id] = all[movie.id] || {};
                 all[movie.id][season] = { id: candidateIdentity(item), title: item.title, size: item.size, savedAt: Date.now() };
                 Lampa.Storage.set(DEFAULT_KEY, all);
-            } catch (e) {}
+                return true;
+            } catch (e) { return false; }
         }
 
         // Read-only accessor so the view can show the picker cursor and episode badges without results-core.js/results-selectors.js touching Lampa.Storage directly.
@@ -313,8 +314,11 @@
             log('selection', 'playPickerCandidate: ' + item.title + ' (эпизод ' + target.episode + ', сезон ' + target.season + ')');
             pendingSelection = null;
             pendingClick = null;
-            saveSeasonDefault(object.movie, target.season, item);
-            store.patch({ picker: { open: false, episode: 0 } });
+            var saved = saveSeasonDefault(object.movie, target.season, item);
+            store.patch({
+                picker: { open: false, episode: 0 },
+                defaultsRevision: store.get().defaultsRevision + (saved ? 1 : 0)
+            });
             startDownload(item, target);
         }
 
@@ -328,7 +332,9 @@
             moviePresentation = null;
             pendingSelection = null;
             pendingClick = null;
-            saveSeasonDefault(object.movie, target.season || 0, item);
+            if (saveSeasonDefault(object.movie, target.season || 0, item)) {
+                store.patch({ defaultsRevision: store.get().defaultsRevision + 1 });
+            }
             startDownload(item, target);
         }
 

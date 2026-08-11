@@ -15,7 +15,13 @@
         var scope = createLifecycle();
         function isDestroyed() { return !scope.isAlive(); }
 
-        var store = createStore(createInitialResultsState(object));
+        var store = createStore(createInitialResultsState(object), {
+            revisions: {
+                pool: 'poolRevision',
+                episodesCache: 'episodesRevision',
+                filters: 'filtersRevision'
+            }
+        });
         applyPersistedPreferences(store, movie); // one initial patch, before anyone subscribes
 
         var episodes = createEpisodesInteractor({ store: store, object: object, movie: movie, hasSeasons: hasSeasons, isDestroyed: isDestroyed, scope: scope });

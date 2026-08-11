@@ -2,16 +2,23 @@ export function createRenderScheduler(scope, render) {
     var pending = {};
     var scheduled = false;
     var untrackFrame = null;
+    var cancelFrame = null;
 
-    function flush() {
+    function clearFrame(cancel) {
+        if (cancel && cancelFrame) cancelFrame();
+        cancelFrame = null;
         if (untrackFrame) {
             untrackFrame();
             untrackFrame = null;
         }
+    }
+
+    function flush() {
+        clearFrame(false);
         scheduled = false;
         var reasons = pending;
         pending = {};
-        render(reasons);
+        if (scope.isAlive()) render(reasons);
     }
 
     function schedule(reason) {
@@ -21,15 +28,20 @@ export function createRenderScheduler(scope, render) {
 
         if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
             var frame = window.requestAnimationFrame(flush);
-            untrackFrame = scope.track(function () { window.cancelAnimationFrame(frame); });
+            cancelFrame = function () { window.cancelAnimationFrame(frame); };
+            untrackFrame = scope.track(cancelFrame);
         } else {
-            scope.setTimeout(flush, 0);
+            scope.setTimeout(flush, 16);
         }
     }
 
     return {
         invalidate: schedule,
-        flushNow: flush,
+        flushNow: function () {
+            if (!scheduled) return;
+            clearFrame(true);
+            flush();
+        },
         hasPending: function () { return scheduled; }
     };
 }

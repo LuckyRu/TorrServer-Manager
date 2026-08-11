@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
-import { pickerNavigationWindow, adjacentPickerId } from '../ui/picker-navigation.js';
+import { pickerNavigationWindow, adjacentPickerId, replacementPickerId } from '../ui/picker-navigation.js';
 
 const appData = process.env.LOCALAPPDATA || '';
 const navigatorPath = process.env.LAMPA_NAVIGATOR_PATH || join(appData, 'TorrServer', 'lampa-app', 'vender', 'navigator', 'navigator.js');
@@ -46,5 +46,11 @@ for (let expected = ids.length - 2; expected >= 0; expected--) {
     else focusWindow(adjacentPickerId(ids, focusedId, 'up'));
     if (focusedId !== ids[expected]) throw new Error('up: ожидался ' + ids[expected] + ', получен ' + focusedId);
 }
+
+const withoutFocused = ids.filter((id) => id !== 'item-50');
+const replacement = replacementPickerId(ids, withoutFocused, 'item-50');
+if (replacement !== 'item-51') throw new Error('Lampa removal contract выбрал ' + replacement);
+focusWindow(replacement);
+if (focusedId !== 'item-51') throw new Error('Lampa Navigator не восстановил ближайшего соседа');
 
 console.log('Lampa navigation: 198 переходов через bounded collection passed');

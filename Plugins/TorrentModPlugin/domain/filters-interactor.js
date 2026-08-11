@@ -51,7 +51,9 @@
         var movie = options.movie;
 
         function patchFilters(partial) {
-            store.patch({ filters: Object.assign({}, store.get().filters, partial) });
+            var current = store.get().filters;
+            var changed = Object.keys(partial).some(function (key) { return current[key] !== partial[key]; });
+            if (changed) store.patch({ filters: Object.assign({}, current, partial) });
         }
 
         function resetFilters() {

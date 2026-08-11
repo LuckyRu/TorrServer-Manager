@@ -28,6 +28,12 @@
 
         Lampa.SettingsApi.addParam({
             component: 'torrent_mod',
+            param: { name: 'torrent_mod_perf_diagnostics', type: 'trigger', default: false },
+            field: { name: 'Диагностика производительности', description: 'Замеры проекций, DOM-коммитов и долгих задач; включать только на время профилирования' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'torrent_mod',
             param: { name: 'torrent_mod_preload_next', type: 'trigger', default: true },
             field: { name: 'Предзагрузка следующей серии', description: 'Пока серия играет, заранее качать начало следующей из пака — без паузы на буферизацию при переключении' }
         });

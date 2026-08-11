@@ -8,6 +8,10 @@
 
             seasonGeneration: 0,      // guards TMDB season-list fetches (season-scoped)
             poolGeneration: 0,        // guards whole-work pool fetches (pool/requery)
+            poolRevision: 0,
+            episodesRevision: 0,
+            filtersRevision: 0,
+            defaultsRevision: 0,
 
             poolStartedAt: null,
             poolAttempt: 1,

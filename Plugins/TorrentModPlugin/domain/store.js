@@ -1,6 +1,7 @@
-    export function createStore(initialState) {
+    export function createStore(initialState, options) {
         var state = initialState;
         var listeners = [];
+        var revisions = options && options.revisions ? options.revisions : {};
 
         function get() {
             return state;
@@ -28,7 +29,14 @@
 
         function patch(partial) {
             var previous = state;
-            state = Object.assign({}, state, partial);
+            var next = partial;
+            Object.keys(revisions).forEach(function (field) {
+                if (!Object.prototype.hasOwnProperty.call(partial, field) || partial[field] === previous[field]) return;
+                if (next === partial) next = Object.assign({}, partial);
+                var revisionField = revisions[field];
+                next[revisionField] = (Number(previous[revisionField]) || 0) + 1;
+            });
+            state = Object.assign({}, state, next);
             listeners.slice().forEach(function (listener) { listener(state, previous); });
             return state;
         }

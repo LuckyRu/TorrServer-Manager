@@ -27,7 +27,7 @@ import { pickBestFile } from '../playback/file-selection.js';
 import { createSeriesResultsViewModel } from '../domain/series-results-viewmodel.js';
 import { createMovieResultsViewModel } from '../domain/movie-results-viewmodel.js';
 import { createResultsProjectionCache } from '../domain/results-projections.js';
-import { pickerNavigationWindow, adjacentPickerId } from '../ui/picker-navigation.js';
+import { pickerNavigationWindow, adjacentPickerId, replacementPickerId } from '../ui/picker-navigation.js';
 
 const runner = createRunner();
 
@@ -221,6 +221,12 @@ runner.test('mergeReleases: дубль с новым path схлопываетс
     if (merged.length !== 1) throw new Error('дубликат релиза не схлопнулся: ' + merged.length);
     if (merged[0].seeders !== 70) throw new Error('не сохранена запись с лучшей доступностью');
 });
+
+runner.test('mergeReleases сохраняет ссылку пула при бессодержательном ответе', () => {
+    const pool = [single, seasonPack];
+    if (mergeReleases(pool, []) !== pool) throw new Error('пустой merge создал новый массив');
+    if (mergeReleases(pool, [single]) !== pool) throw new Error('неизменившийся дубль создал новый массив');
+});
 runner.test('badgeText предпочитает сохранённый дефолт top-ranked кандидату', () => {
     const c = candidatesForEpisode(state.pool, target, state);
     if (badgeText(c).indexOf(String(c[0].seeders)) < 0) throw new Error('без saved ожидал top-ranked: ' + badgeText(c));
@@ -325,6 +331,10 @@ runner.test('selectSearchProgress/selectStatusText: стадия retrying с ч�
     if (overdue.stage !== 'error') throw new Error('просроченный poolAutoRetryAt не должен давать stage=retrying: ' + JSON.stringify(overdue));
 });
 runner.test('selectPickerData: empty и error различаются, error несёт retrySeason', () => {
+    const ready = selectPickerData({ movie: tvMovie }, Object.assign({}, state, { picker: { open: true, episode: 7 } }), null);
+    if (ready.status !== 'ready' || ready.rows.length !== ready.items.length || !ready.rows[0].id || !ready.rows[0].badge) {
+        throw new Error('ready picker не подготовил row projection: ' + JSON.stringify(ready));
+    }
     const emptyState = Object.assign({}, state, { pool: [], poolStatus: 'ready', picker: { open: true, episode: 99 } });
     const empty = selectPickerData({ movie: tvMovie }, emptyState, null);
     if (empty.status !== 'empty') throw new Error('genuinely empty должен давать status=empty: ' + JSON.stringify(empty));
@@ -606,6 +616,14 @@ runner.test('evaluateCandidatePool возвращает счётчики и за
     if (voiceFiltered.stateFilteredTitles[0] !== seasonPack.title) throw new Error(JSON.stringify(voiceFiltered));
 });
 
+runner.test('evaluateCandidatePool не записывает score в объекты исходного пула', () => {
+    const input = Object.assign({}, single);
+    const evaluation = evaluateCandidatePool([input], target, state);
+    if (Object.prototype.hasOwnProperty.call(input, '_score')) throw new Error('исходный item мутирован');
+    if (!evaluation.items[0] || !evaluation.items[0]._score) throw new Error('scored view не содержит score');
+    if (evaluation.items[0] === input) throw new Error('scored view совпал с объектом пула');
+});
+
 // ---------- metadata / season-picker ----------
 runner.test('episodeCounts/getSeasonMeta/initialSeason', () => {
     const counts = episodeCounts(tvMovie);
@@ -729,6 +747,43 @@ runner.test('results projections кэшируются по ссылкам сос
     if (cache.episodeBadges(changed) === second) throw new Error('изменение фильтра не сбросило кэш бейджей');
 });
 
+runner.test('render benchmark: 250 раздач × 24 серии считают base один раз на revision', () => {
+    const episodes = Array.from({ length: 24 }, (_, index) => ({ episode_number: index + 1, runtime: 22 }));
+    const release = parseSeriesRelease('Футурама / Futurama S02E01-E24 1080p WEB-DL');
+    const pool = Array.from({ length: 250 }, (_, index) => ({
+        title: 'Футурама / Futurama S02E01-E24 1080p WEB-DL [' + index + ']',
+        tracker: 'stress-' + index,
+        size: 20_000_000_000 + index,
+        seeders: 20 + (index % 50),
+        peers: index % 10,
+        magnet: 'magnet:?xt=urn:btih:' + String(index).padStart(40, '0'),
+        link: '',
+        release
+    }));
+    const stressState = Object.assign({}, state, {
+        pool,
+        episodesCache: episodes,
+        season: 2,
+        seasonEpisodeCount: 24,
+        avgRuntimeMinutes: 22,
+        poolRevision: 0,
+        episodesRevision: 0,
+        filtersRevision: 0,
+        defaultsRevision: 0
+    });
+    const metrics = {};
+    selectEpisodeBadges({ movie: tvMovie }, stressState, null, metrics);
+    if (metrics.baseScores !== 250 || metrics.episodeScores !== 6000) throw new Error(JSON.stringify(metrics));
+
+    const cache = createResultsProjectionCache({ movie: tvMovie }, tvMovie, true, () => null);
+    for (let revision = 0; revision < 9; revision++) {
+        const versioned = Object.assign({}, stressState, { poolRevision: revision, statusText: 'tick-' + revision });
+        cache.episodeBadges(versioned);
+        cache.episodeBadges(Object.assign({}, versioned, { statusText: 'unrelated-' + revision }));
+    }
+    if (cache.stats().episodeBadges !== 9) throw new Error(JSON.stringify(cache.stats()));
+});
+
 runner.test('picker navigation ограничивает коллекцию Lampa и проходит границы окна', () => {
     const ids = Array.from({ length: 100 }, (_, index) => 'item-' + index);
     const windowIds = pickerNavigationWindow(ids, 'item-50', 36);
@@ -739,6 +794,10 @@ runner.test('picker navigation ограничивает коллекцию Lampa
     if (adjacentPickerId(ids, 'item-50', 'down') !== 'item-51') throw new Error('down перескочил строку');
     if (adjacentPickerId(ids, 'item-0', 'up') !== null) throw new Error('up вышел за начало');
     if (adjacentPickerId(ids, 'item-99', 'down') !== null) throw new Error('down вышел за конец');
+    const withoutFocused = ids.filter((id) => id !== 'item-50');
+    if (replacementPickerId(ids, withoutFocused, 'item-50') !== 'item-51') throw new Error('не выбран ближайший сосед удалённого фокуса');
+    const reordered = ids.slice().reverse();
+    if (replacementPickerId(ids, reordered, 'item-50') !== 'item-50') throw new Error('reorder потерял focused identity');
 });
 
 await runner.run();

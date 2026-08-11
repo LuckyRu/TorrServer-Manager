@@ -337,9 +337,9 @@
         var filtered = applyStateFiltersDetailed(pool, state, target);
         var rejectedByGate = [];
         var scoredItems = filtered.items.map(function (item) {
-            item._score = scoreCandidate(item, target);
-            if (!item._score.passes) rejectedByGate.push(item);
-            return item;
+            var scored = Object.assign({}, item, { _score: scoreCandidate(item, target) });
+            if (!scored._score.passes) rejectedByGate.push(scored);
+            return scored;
         });
         var candidates = scoredItems.filter(function (item) { return item._score.passes; });
         candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
