@@ -1,7 +1,7 @@
     import { parseSignals } from '../shared/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
-    import { isPlayableFile, pickBestFile as pickBestPlayableFile } from './file-selection.js';
+    import { isPlayableFile, pickBestFile as pickBestPlayableFile, parseSeriesFileLayout } from './file-selection.js';
     import { buildMoviePlayerData } from './movie-player.js';
     import { buildSeriesPlayerData } from './series-player.js';
     import { normalizeAudioTracks, preferenceFromTrack, resolvePreferredTrack } from './audio-tracks.js';
@@ -527,7 +527,12 @@
         log('playback', 'pickBestFile: выбран файл "' + session.bestFile.path + '"', {
             mode: session.mode,
             torrent: session.item.title,
-            size: session.bestFile.length || session.bestFile.size || 0
+            size: session.bestFile.length || session.bestFile.size || 0,
+            target: session.mode === MODE_SERIES ? {
+                season: session.target.season,
+                episode: session.target.episode
+            } : null,
+            pathLayout: session.mode === MODE_SERIES ? parseSeriesFileLayout(session.bestFile) : null
         });
         updatePreparation(session, 'probing', 'Анализ аудиодорожек…');
         // Silent nudge: ask TorrServer to start filling this file's cache while GST probes it.

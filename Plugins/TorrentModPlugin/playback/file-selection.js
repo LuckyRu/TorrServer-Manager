@@ -1,9 +1,10 @@
 import { isPlayableFile } from './file-selection-common.js';
 import { pickMovieFile } from './movie-file-selection.js';
-import { pickSeriesFile } from './series-file-selection.js';
+import { pickSeriesFile, parseSeriesFileLayout } from './series-file-selection.js';
 import { MODE_MOVIE } from '../shared/state.js';
 
 export { isPlayableFile };
+export { parseSeriesFileLayout };
 
 export function pickBestFile(files, target, parseSignals) {
     var playable = (files || []).filter(isPlayableFile);

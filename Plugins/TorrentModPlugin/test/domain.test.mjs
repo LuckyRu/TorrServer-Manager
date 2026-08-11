@@ -1,6 +1,6 @@
 import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
-import { parseRelease } from '../search/release-parsing.js';
+import { parseRelease, parseSignals } from '../search/release-parsing.js';
 import { baseTitles, defaultSearchName, buildQueries, isAnimeTarget, buildAnimeQueries } from '../search/query-building.js';
 import { buildMovieQueries } from '../search/movie-query-building.js';
 import { buildSeriesQueries } from '../search/series-query-building.js';
@@ -721,6 +721,25 @@ runner.test('выбор файла: сериал сохраняет episode-awar
         episodeFrom: path.indexOf('E08') >= 0 ? 8 : 7, episodeTo: path.indexOf('E08') >= 0 ? 8 : 7
     }));
     if (!chosen || chosen.id !== 2) throw new Error('сериал потерял выбор по эпизоду: ' + JSON.stringify(chosen));
+});
+
+runner.test('выбор файла: сезонный каталог и порядковый номер задают серию', () => {
+    const files = [
+        { id: 1, path: 'The Big Bang Theory/Season_07/01. Недостаток Хофстедтера.mkv', length: 1_000_000_000 },
+        { id: 6, path: 'The Big Bang Theory/Season_07/06. Недостаточность близости.mkv', length: 1_000_000_000 },
+        { id: 106, path: 'The Big Bang Theory/Season_06/06. Отрывок Купера.mkv', length: 1_000_000_000 }
+    ];
+    const chosen = pickBestFile(files, { mode: 'series', season: 7, episode: 6 }, parseSignals);
+    if (!chosen || chosen.id !== 6) throw new Error('не распознан layout Season_07/06: ' + JSON.stringify(chosen));
+});
+
+runner.test('выбор файла: абсолютная нумерация не перебивает целевой сезон', () => {
+    const files = [
+        { id: 145, path: 'Show/Season_07/145. Episode.mkv', length: 1_000_000_000 },
+        { id: 806, path: 'Show/Season_08/06. Episode.mkv', length: 1_000_000_000 }
+    ];
+    const chosen = pickBestFile(files, { mode: 'series', season: 7, episode: 6 }, parseSignals);
+    if (!chosen || chosen.id !== 145) throw new Error('номер серии из чужого сезона перебил сезон: ' + JSON.stringify(chosen));
 });
 
 runner.test('createSeriesResultsViewModel/createMovieResultsViewModel forward domain.scope', () => {
