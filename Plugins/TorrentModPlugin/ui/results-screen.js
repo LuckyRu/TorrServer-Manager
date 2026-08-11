@@ -201,7 +201,7 @@
                     bindScoped(pickerRowsScope, node, 'hover:focus', function () { pickerFocusId = id; });
                     bindScoped(pickerRowsScope, node, 'hover:enter', function () {
                         var current = pickerItems[id];
-                        if (current) domain.selection.playPickerCandidate(current, pickerTarget);
+                        if (current) domain.selection.playPickerCandidate(current, pickerTarget, { deferUntilPickerClosed: true });
                     });
                     pickerRows[id] = node;
                 }

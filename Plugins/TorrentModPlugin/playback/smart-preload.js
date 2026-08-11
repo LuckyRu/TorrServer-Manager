@@ -62,7 +62,7 @@
                 toggle: function () {},
                 back: function () {
                     if (!session.alive || currentSession !== session) return;
-                    log('playback', 'preflight отменён пользователем, session #' + session.id);
+                    log('playback', 'preflight отменён через Controller.back, session #' + session.id);
                     session.cancelled = true;
                     session.dispose();
                 },

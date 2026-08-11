@@ -310,7 +310,7 @@
             store.patch({ picker: { open: true, episode: episode } });
         }
 
-        function playPickerCandidate(item, target) {
+        function playPickerCandidate(item, target, options) {
             log('selection', 'playPickerCandidate: ' + item.title + ' (эпизод ' + target.episode + ', сезон ' + target.season + ')');
             pendingSelection = null;
             pendingClick = null;
@@ -319,7 +319,13 @@
                 picker: { open: false, episode: 0 },
                 defaultsRevision: store.get().defaultsRevision + (saved ? 1 : 0)
             });
-            startDownload(item, target);
+            if (options && options.deferUntilPickerClosed) {
+                scope.setTimeout(function () {
+                    if (scope.isAlive()) startDownload(item, target);
+                }, 50);
+            } else {
+                startDownload(item, target);
+            }
         }
 
         function closePicker() {

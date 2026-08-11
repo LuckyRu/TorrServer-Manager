@@ -441,9 +441,13 @@ runner.test('панель: openPicker строит кандидатов, playPic
     if (picker.items.length !== 2) throw new Error('ожидал 2 кандидата в панели, получил ' + picker.items.length);
 
     const chosen = picker.items[1]; // второй — выберем его вручную
-    domain.selection.playPickerCandidate(chosen, picker.target);
+    globalThis.__resetPlaybackMock();
+    domain.selection.playPickerCandidate(chosen, picker.target, { deferUntilPickerClosed: true });
     state = domain.store.get();
     if (state.picker.open) throw new Error('панель не закрылась после выбора');
+    if (globalThis.__isPreparationShellMounted()) throw new Error('запуск начался до закрытия picker');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (!globalThis.__playerPlays.length) throw new Error('запуск не начался после закрытия picker');
 
     const saved = Lampa.Storage.get('torrent_mod_default_torrent');
     const seasonDefault = saved && saved[tvMovie.id] && saved[tvMovie.id][2];
