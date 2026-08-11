@@ -14,7 +14,7 @@
             poolAutoRetryAt: null,
 
             // Data
-            episodesCache: null,      // TMDB season episodes (scoped to state.season)
+            episodesCache: [],        // TMDB season episodes (scoped to state.season)
             pool: [],
             poolIndexers: [],
             poolAllIndexers: [],

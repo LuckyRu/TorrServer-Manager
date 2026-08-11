@@ -1,13 +1,25 @@
     import { buildQueries as buildQueriesForTarget } from './query-building.js';
-    import { compact, unique } from '../shared/utils.js';
+    import { compact } from '../shared/utils.js';
+    import { mergeReleases } from '../shared/release-identity.js';
     import { startParallelSearch } from './parallel-search.js';
-    import { passesSearchTitleGate } from './scoring.js';
-    import { log } from '../shared/core/log.js';
+    import { buildSearchPlan } from './indexer-search-strategies.js';
+    import { evaluateMediaTypeGate, evaluateSearchTitleGate } from './search-gates.js';
+    import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
+
+    function deferWork(work, scope) {
+        return new Promise(function (resolve, reject) {
+            var run = function () {
+                try { resolve(work()); }
+                catch (error) { reject(error); }
+            };
+            if (scope && scope.setTimeout) scope.setTimeout(run, 0);
+            else setTimeout(run, 0);
+        });
+    }
 
     function mapTorrent(raw, parseReleaseForMode) {
         if (!raw) {
-            log('search', 'metadata-parse: пустая запись раздачи', { accepted: false });
-            return null;
+            return { item: null, title: 'Без названия', passes: false, reason: 'empty-record', details: {} };
         }
         var magnet = raw.MagnetUri || raw.Magnet || '';
         var link = raw.Link || raw.downloadUrl || '';
@@ -37,43 +49,104 @@
             link: link,
             release: release
         };
-        log('search', 'metadata-parse: раздача', {
-            accepted: Boolean(magnet || link) && !parseError,
+        var rejectedReason = !magnet && !link ? 'missing-download-link' : (parseError ? 'metadata-parse-error' : '');
+        if (parseError) warn('search', 'Не удалось разобрать метаданные раздачи "' + title + '": ' + parseError);
+        if (debugEnabled()) {
+            debug('search', 'metadata-parse', {
+                parsed: !rejectedReason, rejectedReason: rejectedReason, title: title, tracker: item.tracker,
+                hasMagnet: Boolean(magnet), hasLink: Boolean(link), size: item.size,
+                seeders: item.seeders, leechers: item.leechers, publishedAt: item.publishedAt,
+                metadata: release, parseError: parseError
+            });
+        }
+        return {
+            item: rejectedReason ? null : item,
             title: title,
-            tracker: item.tracker,
-            hasMagnet: Boolean(magnet),
-            hasLink: Boolean(link),
-            size: item.size,
-            seeders: item.seeders,
-            leechers: item.leechers,
-            publishedAt: item.publishedAt,
-            metadata: release,
-            parseError: parseError
-        });
-        if (!magnet && !link) return null;
-        if (parseError) return null;
-        return item;
+            passes: !rejectedReason,
+            reason: rejectedReason,
+            details: parseError ? { parseError: parseError } : {}
+        };
     }
 
-    function filterSearchNoise(items, target, source, query) {
-        var rejected = [];
-        var accepted = items.filter(function (item) {
-            if (passesSearchTitleGate(item, target)) return true;
-            rejected.push(item);
-            return false;
+    function reasonCounts(decisions) {
+        var counts = {};
+        decisions.forEach(function (decision) {
+            if (decision.passes) return;
+            var reason = decision.reason || 'unknown';
+            counts[reason] = (counts[reason] || 0) + 1;
         });
-        log('search', 'title-gate: фильтрация явного шума', {
+        return counts;
+    }
+
+    function summarizeGate(stage, decisions) {
+        var rejectedTitles = [];
+        var rejected = 0;
+        decisions.forEach(function (decision) {
+            if (decision.passes) return;
+            rejected++;
+            if (rejectedTitles.length < 100) rejectedTitles.push(decision.title);
+        });
+        return {
+            stage: stage,
+            input: decisions.length,
+            accepted: decisions.length - rejected,
+            filtered: rejected,
+            reasonCounts: reasonCounts(decisions),
+            rejectedTitles: rejectedTitles
+        };
+    }
+
+    function applyGate(items, evaluator, stage, target) {
+        var decisions = items.map(function (item) {
+            var decision = evaluator(item, target);
+            return {
+                item: item,
+                title: item.title,
+                passes: decision.passes,
+                reason: decision.reason,
+                details: decision.details
+            };
+        });
+        var summary = summarizeGate(stage, decisions);
+        return {
+            items: decisions.filter(function (decision) { return decision.passes; }).map(function (decision) { return decision.item; }),
+            summary: summary
+        };
+    }
+
+    function runSearchGates(rawResults, target, parseReleaseForMode, source, query) {
+        var parsedDecisions = rawResults.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); });
+        var parseSummary = summarizeGate('parse', parsedDecisions);
+        var parsed = parsedDecisions.filter(function (decision) { return decision.passes; }).map(function (decision) { return decision.item; });
+        var media = applyGate(parsed, evaluateMediaTypeGate, 'media-type', target);
+        var title = applyGate(media.items, evaluateSearchTitleGate, 'title', target);
+        var stages = [parseSummary, media.summary, title.summary];
+        var filtered = rawResults.length - title.items.length;
+        var summary = {
             query: query || target.englishTitle || target.movie.title || target.movie.name || '',
             source: source,
-            input: items.length,
-            accepted: accepted.length,
-            filtered: rejected.length,
-            rejectedTitles: rejected.map(function (item) { return item.title; })
-        });
-        return accepted;
+            input: rawResults.length,
+            accepted: title.items.length,
+            filtered: filtered,
+            reasonCounts: stages.reduce(function (all, stage) {
+                Object.keys(stage.reasonCounts).forEach(function (reason) {
+                    all[reason] = (all[reason] || 0) + stage.reasonCounts[reason];
+                });
+                return all;
+            }, {}),
+            rejectedTitles: stages.reduce(function (all, stage) {
+                return all.concat(stage.rejectedTitles);
+            }, []).slice(0, 100),
+            stages: stages.map(function (stage) {
+                return { stage: stage.stage, input: stage.input, accepted: stage.accepted, filtered: stage.filtered, reasonCounts: stage.reasonCounts };
+            })
+        };
+        if (filtered) log('search', 'Фильтрация ' + source + ': принято ' + title.items.length + ' из ' + rawResults.length, summary);
+        else debug('search', 'Фильтрация ' + source + ': без отсева', summary);
+        return title.items;
     }
 
-    function searchOneQuery(text) {
+    function searchOneQuery(text, options) {
         return new Promise(function (resolve) {
             var rawResults = [];
             var indexers = [];
@@ -84,7 +157,7 @@
                 if (entry.ok) (entry.results || []).forEach(function (raw) { rawResults.push(raw); });
             }, function (failed) {
                 resolve({ rawResults: rawResults, indexers: indexers, failed: failed || !anyOk });
-            });
+            }, undefined, undefined, options);
         });
     }
 
@@ -92,7 +165,8 @@
         var queries = (buildQueriesForMode || buildQueriesForTarget)(target);
         if (!queries.length) return Promise.resolve({ results: [], indexers: [], failed: true });
 
-        return Promise.all(queries.map(searchOneQuery)).then(function (responses) {
+        var plans = buildSearchPlan(target, queries);
+        return Promise.all(plans.map(function (plan) { return searchOneQuery(plan.query, plan); })).then(function (responses) {
             var ok = responses.filter(function (response) { return !response.failed; });
             if (!ok.length) return { results: [], indexers: [], failed: true };
 
@@ -103,32 +177,88 @@
                 indexers = indexers.concat(response.indexers);
             });
 
-            var mapped = allRaw.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean);
-            mapped = filterSearchNoise(mapped, target, 'searchTorrentMod', queries.join(' | '));
-            var results = unique(mapped, function (item) {
-                return compact(item.magnet || item.link || (item.title + '|' + item.size));
+            return deferWork(function () {
+                var mapped = runSearchGates(allRaw, target, parseReleaseForMode, 'searchTorrentMod', queries.join(' | '));
+                return { results: mergeReleases([], mapped), indexers: indexers, failed: false };
             });
-
-            return { results: results, indexers: indexers, failed: false };
         });
     }
 
     export function searchTorrentModProgressive(target, parseReleaseForMode, buildQueriesForMode, onIndexerResult, onDone, scope, onIndexerList) {
-        var query = ((buildQueriesForMode || buildQueriesForTarget)(target))[0];
-        if (!query) { onDone(true); return { cancel: function () {} }; }
+        var queries = (buildQueriesForMode || buildQueriesForTarget)(target);
+        if (!queries.length) { onDone(true); return { cancel: function () {} }; }
 
-        var seen = {};
-        return startParallelSearch(query, function (entry) {
-            var mapped = entry.ok
-                ? (entry.results || []).map(function (raw) { return mapTorrent(raw, parseReleaseForMode); }).filter(Boolean)
-                : [];
-            mapped = filterSearchNoise(mapped, target, entry.name, query);
-            var deduped = mapped.filter(function (item) {
-                var id = compact(item.magnet || item.link || (item.title + '|' + item.size));
-                if (!id || seen[id]) return false;
-                seen[id] = true;
-                return true;
+        var planned = buildSearchPlan(target, queries);
+        var handles = [];
+        var completedQueries = 0;
+        var anyOk = false;
+        var indexerState = {};
+        var configuredIndexers = {};
+        var pendingMappings = 0;
+        var completionSent = false;
+
+        function completeWhenReady() {
+            if (completionSent || completedQueries < planned.length || pendingMappings > 0) return;
+            completionSent = true;
+            onDone(!anyOk);
+        }
+
+        function stateFor(entry) {
+            if (!indexerState[entry.id]) {
+                indexerState[entry.id] = { items: [], ok: false, error: null, elapsedMs: 0, name: entry.name };
+            }
+            return indexerState[entry.id];
+        }
+
+        function mergeItems(state, items) {
+            state.items = mergeReleases(state.items, items);
+        }
+
+        function reportIndexerList(indexerList) {
+            (indexerList || []).forEach(function (entry) {
+                configuredIndexers[entry.id] = { id: entry.id, name: entry.name };
             });
-            onIndexerResult({ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, items: deduped });
-        }, onDone, scope, onIndexerList);
+            if (onIndexerList) onIndexerList(Object.keys(configuredIndexers).map(function (id) { return configuredIndexers[id]; }));
+        }
+
+        planned.forEach(function (plan) {
+            handles.push(startParallelSearch(plan.query, function (entry) {
+                var state = stateFor(entry);
+                pendingMappings++;
+                deferWork(function () {
+                    return entry.ok
+                        ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query)
+                        : [];
+                }, scope).then(function (mapped) {
+                    state.ok = state.ok || entry.ok;
+                    state.error = state.ok ? null : entry.error;
+                    state.elapsedMs += Number(entry.elapsedMs) || 0;
+                    anyOk = anyOk || entry.ok;
+                    mergeItems(state, mapped);
+                    onIndexerResult({
+                        id: entry.id, name: state.name, ok: state.ok, error: state.error,
+                        elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
+                    });
+                }, function (error) {
+                    state.error = String(error && error.message || error);
+                    warn('search', 'Ошибка обработки ответа ' + entry.name + ': ' + state.error);
+                    onIndexerResult({
+                        id: entry.id, name: state.name, ok: state.ok, error: state.error,
+                        elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
+                    });
+                }).then(function () {
+                    pendingMappings--;
+                    completeWhenReady();
+                }, function (error) {
+                    pendingMappings--;
+                    warn('search', 'Ошибка доставки результата ' + entry.name + ': ' + String(error && error.message || error));
+                    completeWhenReady();
+                });
+            }, function (failed) {
+                completedQueries++;
+                completeWhenReady();
+            }, scope, reportIndexerList, plan));
+        });
+
+        return { cancel: function () { handles.forEach(function (handle) { handle.cancel(); }); } };
     }

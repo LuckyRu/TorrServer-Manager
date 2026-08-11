@@ -260,7 +260,9 @@ internal sealed class PluginHub : IDisposable
                 var query = context.Request.QueryString["query"]?.Trim() ?? "";
                 if (query.Length is < 2 or > 200)
                     throw new InvalidDataException("Поисковый запрос должен содержать от 2 до 200 символов.");
-                await WriteTorrentSearchStartAsync(context.Response, query);
+                var indexerIds = ParseIndexerIds(context.Request.QueryString["indexers"]);
+                var excludedIndexerIds = ParseIndexerIds(context.Request.QueryString["exclude"]);
+                await WriteTorrentSearchStartAsync(context.Response, query, indexerIds, excludedIndexerIds);
                 return;
             }
 
@@ -411,12 +413,16 @@ internal sealed class PluginHub : IDisposable
     private readonly ConcurrentDictionary<string, SearchJob> searchJobs = new();
     private static readonly TimeSpan SearchJobTtl = TimeSpan.FromMinutes(3);
 
+    // Do not retain a completed snapshot: indexers can be added or removed from Jackett's UI.
+    // Coalesce only requests that are already in flight for the same search burst.
     private readonly object indexerListLock = new();
-    private List<(string Id, string Name)>? cachedIndexerList;
-    private DateTimeOffset cachedIndexerListAtUtc;
-    private static readonly TimeSpan IndexerListCacheTtl = TimeSpan.FromMinutes(5);
+    private Task<List<(string Id, string Name)>>? indexerListFetch;
 
-    private async Task WriteTorrentSearchStartAsync(HttpListenerResponse response, string query)
+    private async Task WriteTorrentSearchStartAsync(
+        HttpListenerResponse response,
+        string query,
+        HashSet<string>? indexerIds = null,
+        HashSet<string>? excludedIndexerIds = null)
     {
         CleanupStaleSearchJobs();
 
@@ -447,7 +453,12 @@ internal sealed class PluginHub : IDisposable
             return;
         }
 
-        if (indexers.Count == 0)
+        if (indexerIds is { Count: > 0 })
+            indexers = indexers.Where(indexer => indexerIds.Contains(indexer.Id)).ToList();
+        if (excludedIndexerIds is { Count: > 0 })
+            indexers = indexers.Where(indexer => !excludedIndexerIds.Contains(indexer.Id)).ToList();
+
+        if (indexers.Count == 0 && indexerIds is null && excludedIndexerIds is null)
         {
             await WriteErrorAsync(response, HttpStatusCode.BadGateway, "В Jackett не настроено ни одного трекера.");
             return;
@@ -478,6 +489,16 @@ internal sealed class PluginHub : IDisposable
 
         // Full indexer id/name list up front lets the client show a named pending spinner per tracker.
         await WriteJsonAsync(response, new { jobId, totalIndexers = indexers.Count, indexers = indexers.Select(indexer => new { id = indexer.Id, name = indexer.Name }) });
+    }
+
+    private static HashSet<string>? ParseIndexerIds(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var ids = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(id => id.ToLowerInvariant())
+            .Where(id => id.Length is >= 2 and <= 64)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return ids.Count == 0 ? null : ids;
     }
 
     private async Task WriteTorrentSearchPollAsync(HttpListenerResponse response, string jobId)
@@ -527,14 +548,36 @@ internal sealed class PluginHub : IDisposable
         }
     }
 
-    private async Task<List<(string Id, string Name)>> GetConfiguredIndexersAsync(string apiKey)
+    private Task<List<(string Id, string Name)>> GetConfiguredIndexersAsync(string apiKey)
     {
+        Task<List<(string Id, string Name)>> fetch;
         lock (indexerListLock)
         {
-            if (cachedIndexerList is not null && DateTimeOffset.UtcNow - cachedIndexerListAtUtc < IndexerListCacheTtl)
-                return cachedIndexerList;
+            indexerListFetch ??= LoadConfiguredIndexersAsync(apiKey);
+            fetch = indexerListFetch;
         }
 
+        return AwaitConfiguredIndexerFetchAsync(fetch);
+    }
+
+    private async Task<List<(string Id, string Name)>> AwaitConfiguredIndexerFetchAsync(
+        Task<List<(string Id, string Name)>> fetch)
+    {
+        try
+        {
+            return await fetch;
+        }
+        finally
+        {
+            lock (indexerListLock)
+            {
+                if (ReferenceEquals(indexerListFetch, fetch)) indexerListFetch = null;
+            }
+        }
+    }
+
+    private async Task<List<(string Id, string Name)>> LoadConfiguredIndexersAsync(string apiKey)
+    {
         var url = $"http://127.0.0.1:{AppPaths.JackettPort}/api/v2.0/indexers/all/results/torznab/api" +
             $"?apikey={Uri.EscapeDataString(apiKey)}&t=indexers&configured=true";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -549,11 +592,6 @@ internal sealed class PluginHub : IDisposable
             .Where(entry => entry.Id.Length > 0)
             .ToList();
 
-        lock (indexerListLock)
-        {
-            cachedIndexerList = list;
-            cachedIndexerListAtUtc = DateTimeOffset.UtcNow;
-        }
         return list;
     }
 

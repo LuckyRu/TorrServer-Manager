@@ -83,10 +83,13 @@ View-специфичное DOM/jQuery-состояние (панель пике
 `indexers/all/results` Jackett, один round-trip, ограниченный самым медленным индексатором) на
 протокол из трёх эндпоинтов:
 
-- **`GET /api/torrent-search/start?query=...`** → `{jobId, totalIndexers}`. Забирает и кэширует
+- **`GET /api/torrent-search/start?query=...&indexers=id1,id2&exclude=id3,id4`** → `{jobId, totalIndexers}`.
+  Получает актуальный
   список сконфигурированных индексаторов через Torznab-капабилити Jackett
-  (`t=indexers&configured=true`, TTL 5 минут), затем запускает по одному `SearchOneIndexerAsync`
-  на индексатор через `Task.Run`.
+  (`t=indexers&configured=true`), затем запускает по одному `SearchOneIndexerAsync` на индексатор
+  через `Task.Run`. Завершённый список не кэшируется: изменения индексаторов, сделанные в UI
+  Jackett, видны уже в следующем поиске. Одновременные запросы делят только текущий in-flight
+  запрос к Jackett и не используют устаревший снимок.
 - **`GET /api/torrent-search/poll?jobId=...`** → `{done, indexers:[{id,name,ok,error,elapsedMs,
   results}]}`. Всегда отдаёт **полный накопленный** на текущий момент набор — polling
   stateless на клиенте, курсор "с прошлого опроса" не нужен.
@@ -156,6 +159,11 @@ indexers, failed}` для Promise-based `searchTorrentMod`; новый `searchTo
 правки кода — переехать на новый прогрессивный вариант понадобилось только `loadAllTorrents` (той
 единственной точке вызова, которой реально нужны прогрессивные, по-трекерно обновления, а не
 просто более быстрый одиночный Promise).
+
+Ленивая дозагрузка конкретного сезона выполняется ровно один раз на попытку: пустой ответ
+помечает сезон как `ready`, ошибка — как `error`, без фонового повтора через таймер. Повтор
+сезонного запроса запускается только явным `retrySeasonLoad(season)` из UI; автоматические
+повторы остаются только у initial whole-work поиска.
 
 ### Структурное следствие: `state.pool` больше не бывает `null`
 

@@ -66,7 +66,8 @@
                 [/\bweb-?dl\s*rip\b/i, 'WEBRip'],
                 [/\bweb-?dl\b/i, 'WEB-DL'],
                 [/\bwebrip\b/i, 'WEBRip'],
-                [/\bhdtv\b/i, 'HDTV'],
+                [/\bhdtv(?:rip)?\b/i, 'HDTV'],
+                [/\bsdtv(?:rip)?\b/i, 'SDTV'],
                 [/\bdvdrip\b/i, 'DVDRip'],
                 [/\bhdrip\b/i, 'HDRip'],
                 [/\bcamrip\b|\bts\b/i, 'CAM']

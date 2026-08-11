@@ -5,7 +5,7 @@
     var POLL_INTERVAL_MS = 600;
 
     // onIndexerResult fires once per indexer in completion order; onDone fires once when all have reported; onIndexerList (optional) fires once, synchronously, with the full configured-indexer list.
-    export function startParallelSearch(query, onIndexerResult, onDone, scope, onIndexerList) {
+    export function startParallelSearch(query, onIndexerResult, onDone, scope, onIndexerList, options) {
         var cancelled = false;
         var jobId = null;
         var untrackTimer = null;
@@ -48,11 +48,19 @@
             });
         }
 
-        request(hubBase + '/api/torrent-search/start?query=' + encodeURIComponent(query), 15000).then(function (data) {
+        var startUrl = hubBase + '/api/torrent-search/start?query=' + encodeURIComponent(query);
+        if (options && Array.isArray(options.indexerIds) && options.indexerIds.length) {
+            startUrl += '&indexers=' + encodeURIComponent(options.indexerIds.join(','));
+        }
+        if (options && Array.isArray(options.excludeIndexerIds) && options.excludeIndexerIds.length) {
+            startUrl += '&exclude=' + encodeURIComponent(options.excludeIndexerIds.join(','));
+        }
+        request(startUrl, 15000).then(function (data) {
             if (cancelled) return;
             if (!data || !data.jobId) { cancelled = true; onDone(true); return; }
             jobId = data.jobId;
-            log('search', 'startParallelSearch: "' + query + '", jobId=' + jobId + ', трекеров=' + data.totalIndexers);
+            var route = options && options.indexerIds ? ' [anime-trackers]' : (options && options.excludeIndexerIds ? ' [general-trackers]' : '');
+            log('search', 'startParallelSearch: "' + query + '"' + route + ', jobId=' + jobId + ', трекеров=' + data.totalIndexers);
             if (onIndexerList) onIndexerList(data.indexers || []);
             poll();
         });

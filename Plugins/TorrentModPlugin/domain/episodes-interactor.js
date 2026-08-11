@@ -1,8 +1,8 @@
     import { fetchSeason, fetchEnglishTitle, episodeCounts } from '../metadata/tmdb.js';
     import { searchMovieTorrents, searchMovieTorrentsProgressive } from '../search/movie-search.js';
     import { searchSeriesTorrents, searchSeriesTorrentsProgressive } from '../search/series-search.js';
-    import { evaluateCandidatePool } from '../search/scoring.js';
-    import { compact, notify } from '../shared/utils.js';
+    import { notify } from '../shared/utils.js';
+    import { mergeReleases } from '../shared/release-identity.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
     import { log, warn } from '../shared/core/log.js';
@@ -28,46 +28,6 @@
 
         var poolRetryTimerId = null;
         var poolSearchHandle = null; // {cancel} from the currently in-flight progressive search, if any
-        var seasonAutoRetryTimers = {}; // season -> timer id
-
-        function logPoolFiltering(state, englishTitle) {
-            var episodeNumbers = hasSeasons
-                ? (state.episodesCache || []).map(function (episode) { return parseInt(episode.episode_number, 10) || 0; }).filter(Boolean)
-                : [0];
-            if (!episodeNumbers.length) episodeNumbers = [0];
-
-            var episodes = episodeNumbers.map(function (episode) {
-                var target = {
-                    movie: object.movie,
-                    mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
-                    season: hasSeasons ? state.season : 0,
-                    episode: episode,
-                    seasonEpisodeCount: state.seasonEpisodeCount,
-                    avgRuntimeMinutes: state.avgRuntimeMinutes,
-                    episodes: state.episodesCache || [],
-                    englishTitle: englishTitle
-                };
-                var evaluation = evaluateCandidatePool(state.pool, target, state);
-                return {
-                    episode: episode,
-                    input: evaluation.inputCount,
-                    afterStateFilters: evaluation.afterStateFilters,
-                    stateFiltered: evaluation.stateFilteredCount,
-                    matchGateFiltered: evaluation.gateFilteredCount,
-                    filtered: evaluation.filteredCount,
-                    candidates: evaluation.items.length,
-                    rejectedTitles: evaluation.rejectedTitles
-                };
-            });
-
-            log('search', 'loadAllTorrents: диагностика фильтрации пула', {
-                mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
-                season: hasSeasons ? state.season : 0,
-                input: state.pool.length,
-                poolTitles: state.pool.map(function (item) { return item.title; }),
-                episodes: episodes
-            });
-        }
 
         scope.track(function () { if (poolSearchHandle) poolSearchHandle.cancel(); });
 
@@ -159,10 +119,9 @@
                 log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" ' +
                     (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, +' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
                 var merged = mergePools(current.pool, entry.items);
-                store.patch({
-                    pool: merged,
-                    poolIndexers: current.poolIndexers.concat([{ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, reportedAt: Date.now() }])
-                });
+                var indexers = current.poolIndexers.filter(function (indexer) { return indexer.id !== entry.id; });
+                indexers.push({ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, reportedAt: Date.now() });
+                store.patch({ pool: merged, poolIndexers: indexers });
             }, function (startFailed) {
                 poolSearchHandle = null;
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
@@ -187,7 +146,6 @@
                     store.patch({ poolStatus: 'error', poolAutoRetryAt: null });
                 } else {
                     log('episodes', 'loadAllTorrents успех, раздач в пуле=' + current.pool.length);
-                    logPoolFiltering(current, current.englishTitle || englishTitle);
                     store.patch({ poolStatus: 'ready', poolAutoRetryAt: null });
                 }
                 if (typeof onLoaded === 'function') onLoaded();
@@ -209,7 +167,7 @@
             store.patch({
                 season: season,
                 seasonGeneration: state.seasonGeneration + 1,
-                episodesCache: null,
+                episodesCache: [],
                 seasonEpisodeCount: 0,
                 avgRuntimeMinutes: 0,
                 episodesStatus: 'idle'
@@ -217,9 +175,6 @@
             loadEpisodes();
             return true;
         }
-
-        var SEASON_RETRY_DELAYS_MS = [2500];
-        var seasonAttempts = {};
 
         function ensureSeasonLoaded(season) {
             var state = store.get();
@@ -232,7 +187,6 @@
             loads[season] = 'loading';
             store.patch({ seasonLoads: loads });
             log('episodes', 'ensureSeasonLoaded: дозагрузка сезона ' + season + ' (в общем пуле для него пусто)');
-            delete seasonAttempts[season]; // fresh start, including for a manual retrySeasonLoad
             runSeasonSearch(season, generation);
         }
 
@@ -241,32 +195,16 @@
             searchSeriesTorrents(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
                     log('episodes', 'ensureSeasonLoaded(' + season + ') отброшен как устаревший');
-                    delete seasonAttempts[season];
                     return;
                 }
                 if (response.failed) {
-                    var attempt = seasonAttempts[season] || 1;
-                    if (attempt - 1 < SEASON_RETRY_DELAYS_MS.length) {
-                        var delayMs = SEASON_RETRY_DELAYS_MS[attempt - 1];
-                        seasonAttempts[season] = attempt + 1;
-                        warn('episodes', 'ensureSeasonLoaded(' + season + ') не удался, авто-повтор через ' + delayMs + 'мс');
-                        if (seasonAutoRetryTimers[season] !== undefined) clearTimeout(seasonAutoRetryTimers[season]);
-                        // scope.setTimeout cancels itself automatically if the screen closes first.
-                        seasonAutoRetryTimers[season] = scope.setTimeout(function () {
-                            delete seasonAutoRetryTimers[season];
-                            runSeasonSearch(season, generation);
-                        }, delayMs);
-                        return;
-                    }
-                    delete seasonAttempts[season];
-                    warn('episodes', 'ensureSeasonLoaded(' + season + ') авто-повторы исчерпаны');
+                    warn('episodes', 'ensureSeasonLoaded(' + season + ') не удался, повтор только вручную');
                     var current = store.get();
                     var loadsFailed = Object.assign({}, current.seasonLoads || {});
                     loadsFailed[season] = 'error';
                     store.patch({ seasonLoads: loadsFailed });
                     return;
                 }
-                delete seasonAttempts[season];
                 var current = store.get();
                 var merged = mergePools(current.pool, response.results);
                 var loadsReady = Object.assign({}, current.seasonLoads || {});
@@ -285,17 +223,8 @@
             ensureSeasonLoaded(season);
         }
 
-        // Same identity as search-backend's dedup (magnet → link → title+size); pool only grows.
         function mergePools(existing, incoming) {
-            var seen = {};
-            var out = [];
-            existing.concat(incoming).forEach(function (item) {
-                var id = compact(item.magnet || item.link || (item.title + '|' + item.size));
-                if (!id || seen[id]) return;
-                seen[id] = true;
-                out.push(item);
-            });
-            return out;
+            return mergeReleases(existing, incoming);
         }
 
         // The "К списку серий" back action — reuses the already-loaded episodesCache, no refetch.

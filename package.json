@@ -1,13 +1,14 @@
 {
   "name": "torrservermanager-plugins",
   "private": true,
+  "type": "module",
   "version": "1.0.0",
   "description": "Build tooling for the Lampa plugins embedded in TorrServerManager (see Plugins/). No runtime Node.js dependency — this only produces the .js file(s) the .NET build embeds as resources.",
   "scripts": {
     "build:plugin": "esbuild Plugins/TorrentModPlugin/index.js --bundle --format=iife --charset=utf8 --outfile=Plugins/TorrentModPlugin.bundle.js",
     "dev:plugin": "node scripts/watch-plugin.mjs",
     "install:plugin-dev": "node scripts/build-plugin-dev.mjs",
-    "test:plugin": "node Plugins/TorrentModPlugin/test/core.test.mjs && node Plugins/TorrentModPlugin/test/parsing.test.mjs && node Plugins/TorrentModPlugin/test/audio-tracks.test.mjs && node Plugins/TorrentModPlugin/test/playback-audio.test.mjs && node Plugins/TorrentModPlugin/test/domain.test.mjs && node Plugins/TorrentModPlugin/test/smoke.test.mjs",
+    "test:plugin": "node Plugins/TorrentModPlugin/test/core.test.mjs && node Plugins/TorrentModPlugin/test/parsing.test.mjs && node Plugins/TorrentModPlugin/test/audio-tracks.test.mjs && node Plugins/TorrentModPlugin/test/playback-audio.test.mjs && node Plugins/TorrentModPlugin/test/domain.test.mjs && node Plugins/TorrentModPlugin/test/lampa-navigation.test.mjs && node Plugins/TorrentModPlugin/test/smoke.test.mjs",
     "test:e2e": "node Plugins/TorrentModPlugin/test/e2e.test.mjs"
   },
   "devDependencies": {

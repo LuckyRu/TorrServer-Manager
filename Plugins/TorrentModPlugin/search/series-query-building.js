@@ -1,7 +1,8 @@
 // ---------- series query building ----------
-import { buildQueries } from './query-building.js';
+import { buildQueries, buildAnimeQueries, isAnimeTarget } from './query-building.js';
 import { MODE_SERIES } from '../shared/state.js';
 
 export function buildSeriesQueries(target) {
-    return buildQueries(Object.assign({}, target, { mode: MODE_SERIES, includeYear: false }));
+    var normalized = Object.assign({}, target, { mode: MODE_SERIES, includeYear: false });
+    return isAnimeTarget(normalized) ? buildAnimeQueries(normalized) : buildQueries(normalized);
 }

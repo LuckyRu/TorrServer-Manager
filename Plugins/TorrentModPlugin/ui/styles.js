@@ -14,6 +14,9 @@
             '.torrent-mod-row__title{padding-left:2.1em;font-size:1.1em}',
             '.torrent-mod-row__subtitle{padding-left:3.4em;font-size:.7em;margin-top:.7em}',
             '.torrent-mod-row__badge{padding-left:3.4em;font-size:.7em;margin-top:.3em}',
+            '.torrent-mod-row__action{display:none;position:absolute;right:.75em;top:50%;transform:translateY(-50%);font-size:1.7em;line-height:1;color:rgba(255,255,255,.45)}',
+            '.torrent-mod-row__action--visible{display:block}',
+            '.torrent-mod-row.focus .torrent-mod-row__action--visible{color:rgba(255,255,255,.9)}',
             '.view--torrent-mod svg{margin-right:.7em}',
             // Side picker panel (right-arrow on an episode row): slide-in overlay on the right edge.
             '.torrent-mod-picker{position:fixed;z-index:9000;top:0;right:0;bottom:0;width:min(34em,45vw);background:#141a26;border-left:1px solid rgba(255,255,255,.12);transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column;padding-top:1em}',

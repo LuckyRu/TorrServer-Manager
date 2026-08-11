@@ -5,7 +5,7 @@
     import { isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';
     import { selectCandidatesForEpisode } from './results-selectors.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
-    import { log } from '../shared/core/log.js';
+    import { log, debug, debugEnabled } from '../shared/core/log.js';
 
     var DEFAULT_KEY = 'torrent_mod_default_torrent';
     var LAST_EPISODE_KEY = 'torrent_mod_last_episode';
@@ -32,7 +32,8 @@
         var moviePresentation = null;
 
         function logCandidateEvaluation(label, target, evaluation) {
-            log('search', label + ': фильтрация результатов', {
+            if (!debugEnabled()) return;
+            debug('search', label + ': фильтрация результатов', {
                 query: target.englishTitle || target.movie.title || target.movie.name || '',
                 season: target.season,
                 episode: target.episode,
@@ -120,7 +121,7 @@
             var state = store.get();
             store.patch({
                 stage: 'candidates',
-                candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: hasSeasons && !!state.episodesCache }
+                candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: hasSeasons && Array.isArray(state.episodesCache) && state.episodesCache.length > 0 }
             });
         }
 
@@ -200,7 +201,7 @@
                 return;
             }
             if (candidates.length) {
-                log('selection', 'movie pool: показываю ' + candidates.length + ' кандидатов, poolStatus=' + state.poolStatus);
+                debug('selection', 'movie pool: показываю ' + candidates.length + ' кандидатов, poolStatus=' + state.poolStatus);
                 store.patch({ stage: 'candidates', candidates: { items: candidates.slice(0, 15), target: target, canReturnToEpisodeList: false } });
                 return;
             }
@@ -318,7 +319,7 @@
         }
 
         function closePicker() {
-            log('selection', 'closePicker()');
+            debug('selection', 'closePicker()');
             store.patch({ picker: { open: false, episode: 0 } });
         }
 

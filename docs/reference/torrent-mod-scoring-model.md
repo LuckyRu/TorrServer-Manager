@@ -2,8 +2,21 @@
 
 Формулы и пороги. За обоснованием и историей — в
 [`system-design/torrent-mod-search-pipeline.md`](../system-design/torrent-mod-search-pipeline.md).
-Источник истины — `scoreCandidate()`/`passesMatchGate()`/`estimatePayload()` в
-`Plugins/TorrentModPlugin/search/scoring.js`.
+Источник истины — входные решения в `Plugins/TorrentModPlugin/search/search-gates.js` и
+`scoreCandidate()`/`passesMatchGate()`/`estimatePayload()` в `search/scoring.js`.
+
+## Входные гейты — до попадания в `state.pool`
+
+Порядок: `parse → media-type → title`.
+
+- parse: `empty-record`, `missing-download-link`, `metadata-parse-error`;
+- media-type: `ebook-or-document`, `game-distribution`, `audio-only`, `extras-or-bonus`,
+  `missing-video-signal`;
+- title: `title-mismatch`, `conflicting-title`.
+
+Для каждого этапа логируются `input`, `accepted`, `filtered`, `reasonCounts`, `rejectedTitles` и
+`rejected: [{title, reason, details}]`. `metadata-parse.parsed` сообщает только результат parse-gate и
+не означает принятия раздачи всем pipeline.
 
 ## Гейт (`passesMatchGate`) — кандидат либо проходит целиком, либо не участвует
 
@@ -14,21 +27,26 @@
 - задана целевая серия (`target.episode`), релиз явно называет диапазон серий
   (`release.explicitEpisode`), и `target.episode` вне `[episodeFrom, episodeTo]`
 
-## `titleSimilarity()` — сегментация + строгое сопоставление по числу слов
+## `titleSimilarity()` — сегментация + строгое сопоставление токенов
 
 ```
-extractTitleSegments(rawTitle):
-  split rawTitle по '/'          // конвенция "Локализованное / Оригинальное (режиссёр) [год]"
-  каждый сегмент обрезается по первому '(' или '['   // метаданные всегда начинаются здесь
+extractSearchTitleSegments(rawTitle):
+  декодировать &#39;/&apos;/&quot;/&amp;
+  split rawTitle по '/' и '|'
+  каждый сегмент обрезать по первому '('/'[' или техническому тегу Sxx/Eyy/1080p/WEB-DL/...
 ```
 
 Для каждого сегмента × каждого названия из `baseTitles(movie, englishTitle)`:
 
 - точное совпадение после `compact()` → `similarity = 1.0`
-- иначе засчитывается, только если **число слов сегмента === числу слов эталона** (это и
+- иначе рассматривается, только если **число слов сегмента === числу слов эталона** (это и
   отсеивает субстроковые совпадения вроде «The Boys in the Boat» / «To All the Boys» против
-  2-словного «The Boys» — по числу слов они не равны, хотя подстрока совпадает), **и** пересекается
-  непустая доля токенов длиной > 2 вне `STOPWORDS`
+  2-словного «The Boys» — по числу слов они не равны, хотя подстрока совпадает)
+- для цели с несколькими значимыми токенами должны совпасть минимум два; поэтому одного `Game`
+  недостаточно, чтобы `Darwin's Game` прошло как `Game of Thrones`
+- для цели с одним значимым словом и стоп-словами дополнительно должно совпасть не менее 75% всех
+  токенов; `Bad Boys` не становится `The Boys`
+- осмысленный несовпавший сегмент перед каноническим совпадением даёт `conflicting-title`
 - **никакого fallback на "мешок слов"**, если число слов не совпало — намеренно, тот же принцип,
   что и у гейта («принять ложноотрицательные, но не ложноположительные»)
 

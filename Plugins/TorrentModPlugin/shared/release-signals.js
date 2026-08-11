@@ -33,6 +33,17 @@
             return result;
         }
 
+        // Anime often labels cours/seasons as TV-1, ТВ-1, TV-2, ТВ-2.
+        // A bare [TV] is only a release type and must not create a season signal.
+        match = source.match(/(?:^|[\s(\[])(?:TV|ТВ)\s*[-–—]?\s*(\d{1,2})(?!\d)/i);
+        if (match) {
+            var tvSeason = parseInt(match[1], 10);
+            if (tvSeason > 0 && tvSeason <= 50) {
+                result.seasons = [tvSeason];
+                result.explicitSeason = true;
+            }
+        }
+
         match = source.match(/(?:сезон(?:ы|а|ов)?|seasons?)\s*[:№]?\s*(\d{1,2})(?!\d)(?:\s*[-–]\s*(\d{1,2})(?!\d))?/i) ||
             source.match(/(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s*(?:сезон(?:ы|а|ов)?|seasons?)/i) ||
             source.match(/\bS(\d{1,2})(?:\s*[-–]\s*S?(\d{1,2}))?\b/i);

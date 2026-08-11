@@ -2,6 +2,7 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { evaluateCandidatePool, payloadBucket, estimatePayloadForState } from '../search/scoring.js';
     import { filtersOf } from './filter-state.js';
+    import { releaseIdentity } from '../shared/release-identity.js';
 
     export function createInitialState(object) {
         return {
@@ -146,12 +147,17 @@
     export function badgeText(matches, saved) {
         if (!matches.length) return 'раздачи не найдены';
         var best = findSavedDefault(matches, saved) || matches[0];
+        return badgeTextForBest(best, matches.length);
+    }
+
+    export function badgeTextForBest(best, count) {
+        if (!best) return 'раздачи не найдены';
         var bits = [];
         if (best.release.resolution) bits.push(best.release.resolution);
         if (best.release.translators && best.release.translators.length) bits.push(best.release.translators.join(', '));
         else if (best.release.voiceType) bits.push(best.release.voiceType);
         bits.push(best.seeders + ' сид.');
-        if (matches.length > 1) bits.push('+' + (matches.length - 1));
+        if (count > 1) bits.push('+' + (count - 1));
         return bits.join(' · ');
     }
 
@@ -197,7 +203,7 @@
     }
 
     export function candidateIdentity(item) {
-        return compact(item.magnet || (item.title + '|' + item.size));
+        return releaseIdentity(item);
     }
 
     export function findSavedDefault(candidates, savedDefault) {

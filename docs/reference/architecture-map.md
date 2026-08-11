@@ -60,7 +60,7 @@
 | Файл | Роль |
 |---|---|
 | `BuiltInPlugins.cs` | Массив `BuiltInPluginDefinition` (id/url/name/category/embedded resource); `Read()` сначала проверяет dev-override директорию (см. [`how-to/iterate-on-a-plugin-without-rebuilding.md`](../how-to/iterate-on-a-plugin-without-rebuilding.md)). |
-| `TorrentModPlugin.js` | Единственный встроенный плагин сейчас. Поиск+просмотр торрентов, свой экран. Глубокий разбор — [`system-design/torrent-mod-search-pipeline.md`](../system-design/torrent-mod-search-pipeline.md) и [`system-design/lampa-navigation-contract.md`](../system-design/lampa-navigation-contract.md). |
+| `TorrentModPlugin.js` | Единственный встроенный плагин сейчас. Поиск+просмотр торрентов, свой экран. Глубокий разбор — [`system-design/torrent-mod-search-pipeline.md`](../system-design/torrent-mod-search-pipeline.md), [`system-design/lampa-navigation-contract.md`](../system-design/lampa-navigation-contract.md) и [план оптимизации рендера](../system-design/torrent-mod-render-performance.md). |
 
 `SmartTsPlugin.js` — предшественник, убран (см. [ADR-0001](../adr/0001-torrent-mod-own-screen.md) и
 запись в `BuiltInPlugins.cs`/`CLAUDE.md` про удаление).

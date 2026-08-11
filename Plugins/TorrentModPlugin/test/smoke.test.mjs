@@ -5,6 +5,7 @@ import { createResultsDomain } from '../domain/results-domain.js';
 import { selectPickerData, selectPoolIndexers } from '../domain/results-selectors.js';
 import { parseSeriesRelease } from '../search/series-release-parsing.js';
 import { parseMovieRelease } from '../search/movie-release-parsing.js';
+import { candidateIdentity } from '../domain/results-core.js';
 
 const runner = createRunner();
 
@@ -76,7 +77,7 @@ runner.test('сериал: start → пул → смена сезона → фи
     const searchCallsBefore = globalThis.__requestLog.filter((u) => u.includes('torrent-search')).length;
     domain.episodes.setSeason(3);
     const switchingSeason = domain.store.get();
-    if (switchingSeason.seasonEpisodeCount !== 0 || switchingSeason.avgRuntimeMinutes !== 0 || switchingSeason.episodesCache !== null) {
+    if (switchingSeason.seasonEpisodeCount !== 0 || switchingSeason.avgRuntimeMinutes !== 0 || !Array.isArray(switchingSeason.episodesCache) || switchingSeason.episodesCache.length !== 0) {
         throw new Error('при смене сезона остались метаданные предыдущего сезона: ' + JSON.stringify({
             count: switchingSeason.seasonEpisodeCount,
             runtime: switchingSeason.avgRuntimeMinutes,
@@ -195,6 +196,52 @@ runner.test('фильм: вход → список торрентов (без а
 
 });
 
+runner.test('anime-профиль запускает alias-запросы, а обычный сериал остаётся одноимённым', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    const animeMovie = {
+        id: 999, name: 'Клинок, рассекающий демонов', original_name: '鬼滅の刃',
+        title: 'Клинок, рассекающий демонов', original_title: '鬼滅の刃',
+        original_language: 'ja', genre_ids: [16], origin_country: ['JP'],
+        seasons: [{ season_number: 1, episode_count: 12 }]
+    };
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 24 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/tv/') && !url.includes('/season/'), {
+        name: 'Demon Slayer'
+    });
+    globalThis.__mockReguest((url) => url.includes('/api/torrent-search'), {
+        results: [{
+            Title: '鬼滅の刃 / E01-E12 Demon Slayer S01 1080p WEB-DL',
+            Tracker: 'AniDUB', Size: 2500000000, Seeders: 12, Peers: 3,
+            MagnetUri: 'magnet:?xt=urn:btih:anime-alias'
+        }],
+        indexers: []
+    });
+
+    const domain = createResultsDomain({ object: { movie: animeMovie, season: 1 }, movie: animeMovie, hasSeasons: true });
+    domain.start();
+    await flushMicrotasks();
+    const starts = globalThis.__requestLog
+        .filter((url) => url.includes('/api/torrent-search/start'))
+        .map((url) => decodeURIComponent(url.split('query=')[1] || ''));
+    if (starts.length !== 4) throw new Error('anime profile должен запустить три targeted alias-запроса и один общий: ' + JSON.stringify(starts));
+    if (!starts.some((query) => query.indexOf('鬼滅の刃') >= 0) || !starts.some((query) => query.indexOf('Demon Slayer') >= 0)) {
+        throw new Error('anime alias-запросы не попали в Jackett: ' + JSON.stringify(starts));
+    }
+    const startUrls = globalThis.__requestLog.filter((url) => url.includes('/api/torrent-search/start'));
+    if (!startUrls.some((url) => url.includes('indexers=anidub%2Canilibria'))) {
+        throw new Error('anime alias-запросы не маршрутизированы в AniDUB/Anilibria: ' + JSON.stringify(startUrls));
+    }
+    if (!startUrls.some((url) => url.includes('exclude=anidub%2Canilibria'))) {
+        throw new Error('общий anime-запрос не исключает специализированные индексаторы: ' + JSON.stringify(startUrls));
+    }
+    if (domain.store.get().pool.length !== 1) throw new Error('anime alias-кандидат не попал в общий пул');
+    domain.destroy();
+});
+
 runner.test('фильм: список появляется и растёт до завершения всех трекеров', async () => {
     globalThis.__clearReguest();
     globalThis.__clearStorage();
@@ -239,7 +286,10 @@ runner.test('фильм: вход с сохранённым дефолтом —
         indexers: []
     });
     // заранее сохраняем дефолт фильма (сезон 0)
-    Lampa.Storage.set('torrent_mod_default_torrent', { [movie.id]: { 0: { id: 'magnet xt urn btih eeee', title: 'x', size: 1 } } });
+    Lampa.Storage.set('torrent_mod_default_torrent', { [movie.id]: { 0: {
+        id: candidateIdentity({ title: 'Дюна: Часть вторая / Dune: Part Two (2024) 1080p WEB-DL', tracker: 'RuTracker', size: 2500000000 }),
+        title: 'x', size: 1
+    } } });
 
     const domain = createResultsDomain({ object: { movie: movie, season: 0 }, movie: movie, hasSeasons: false });
     domain.start();
@@ -472,11 +522,11 @@ runner.test('destroy() мид-флайт: поздний ответ после d
     const stateAfter = domain.store.get();
     if (stateAfter.episodesStatus !== 'loading') throw new Error('поздний TMDB-ответ изменил стор после destroy(): episodesStatus=' + stateAfter.episodesStatus);
     if (stateAfter.poolStatus !== 'loading') throw new Error('поздний torrent-search-ответ изменил стор после destroy(): poolStatus=' + stateAfter.poolStatus);
-    if (stateAfter.episodesCache !== null) throw new Error('episodesCache не должен был заполниться после destroy()');
+    if (!Array.isArray(stateAfter.episodesCache) || stateAfter.episodesCache.length !== 0) throw new Error('episodesCache не должен был заполниться после destroy()');
     if (stateAfter.pool.length !== 0) throw new Error('pool не должен был заполниться после destroy()');
 });
 
-runner.test('крах после провала поиска: открытие панели после ошибки пула не уходит в бесконечную рекурсию', async () => {
+runner.test('провал сезонной дозагрузки не запускает устаревший авто-повтор', async () => {
     globalThis.__clearReguest();
     globalThis.__clearStorage();
     globalThis.__requestLog = [];
@@ -495,6 +545,7 @@ runner.test('крах после провала поиска: открытие �
     // right-arrow на серии 1 — тот самый пользовательский сценарий, приводивший к краху
     domain.selection.setActiveEpisode(1);
     domain.selection.openPicker();
+    const seasonCalls = globalThis.__requestLog.filter((u) => u.includes('/api/torrent-search')).length;
     await flushMicrotasks();
     await new Promise((r) => setTimeout(r, 2800));
 
@@ -502,6 +553,8 @@ runner.test('крах после провала поиска: открытие �
     if (!state.seasonLoads || state.seasonLoads[2] !== 'error') {
         throw new Error('ожидал seasonLoads[2]=error (без этого — риск рекурсии), получил ' + JSON.stringify(state.seasonLoads));
     }
+    const seasonCallsAfter = globalThis.__requestLog.filter((u) => u.includes('/api/torrent-search')).length;
+    if (seasonCallsAfter !== seasonCalls) throw new Error('пустой сезон запустил повторный запрос: ' + seasonCalls + ' → ' + seasonCallsAfter);
     const picker = pickerData(domain, object);
     if (picker.status !== 'error') throw new Error('ожидал picker.status=error, получил ' + picker.status);
     domain.destroy(); // отменяет любые ещё не сработавшие таймеры пула/сезона перед следующим тестом
@@ -608,7 +661,7 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     }, { results: [], indexers: [] }, 0);
     globalThis.__mockReguest((url) => {
         if (!url.includes('/api/torrent-search')) return false;
-        return torrentSearchCalls === 2 || torrentSearchCalls === 3;
+        return torrentSearchCalls === 2;
     }, null); // unmatched-shaped: passing null data makes mock-Reguest call the fail callback
 
     const object = { movie: tvMovie, season: 2 };
@@ -621,15 +674,11 @@ runner.test('retrySeasonLoad: ручной повтор после провал�
     await new Promise((r) => setTimeout(r, 10));
 
     let picker = pickerData(domain, object);
-    if (picker.status !== 'loading') {
-        throw new Error('ожидал status=loading (сезонный авто-повтор ещё не сработал), получил ' + JSON.stringify(picker));
+    if (picker.status !== 'error') {
+        throw new Error('ожидал status=error после единственного сезонного запроса, получил ' + JSON.stringify(picker));
     }
-
-    await new Promise((r) => setTimeout(r, 2800));
-
-    picker = pickerData(domain, object);
-    if (picker.status !== 'error' || !picker.retrySeason) {
-        throw new Error('ожидал status=error после исчерпания авто-повторов, получил ' + JSON.stringify(picker));
+    if (!picker.retrySeason) {
+        throw new Error('ожидал ручной retry после ошибки сезонного запроса, получил ' + JSON.stringify(picker));
     }
 
     // Свежий успешный мок для РУЧНОЙ повторной попытки.

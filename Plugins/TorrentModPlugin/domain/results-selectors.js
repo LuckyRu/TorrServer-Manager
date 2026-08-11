@@ -1,6 +1,7 @@
-    import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeText } from './results-core.js';
+    import { buildFilterItems, activeFilterLabels, currentSeasonLabel, candidatesForEpisode, badgeTextForBest, candidateIdentity } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
+    import { applyStateFilters, createCandidateScoreBase, scoreCandidateFromBase } from '../search/scoring.js';
 
     export function selectBusy(state) {
         return state.episodesStatus === 'loading' || state.poolStatus === 'loading';
@@ -42,18 +43,39 @@
         var seasonLoading = !!(state.seasonLoads && state.seasonLoads[state.season] === 'loading');
         var poolFailed = state.poolStatus === 'error';
         var seasonFailed = !!(state.seasonLoads && state.seasonLoads[state.season] === 'error');
+        var baseTarget = buildEpisodeTarget(object, state, 0);
+        var entries = applyStateFilters(state.pool, state, baseTarget).map(function (item) {
+            return { item: item, base: createCandidateScoreBase(item, baseTarget) };
+        });
+        var savedId = seasonDefault && seasonDefault.id;
         var map = {};
         (state.episodesCache || []).forEach(function (episode) {
             var number = parseInt(episode.episode_number, 10);
-            var candidates = selectCandidatesForEpisode(object, state, number);
-            if (candidates.length) {
-                map[number] = { text: badgeText(candidates, seasonDefault), loading: false };
+            if (!isFinite(number) || number < 1) return;
+            var target = Object.assign({}, baseTarget, { episode: number });
+            var count = 0;
+            var bestItem = null;
+            var bestScore = null;
+            var savedItem = null;
+            entries.forEach(function (entry) {
+                var score = scoreCandidateFromBase(entry.item, target, entry.base);
+                if (!score.passes) return;
+                count++;
+                if (savedId && candidateIdentity(entry.item) === savedId) savedItem = entry.item;
+                if (!bestScore || score.value > bestScore.value ||
+                    (score.value === bestScore.value && entry.item.seeders > bestItem.seeders)) {
+                    bestItem = entry.item;
+                    bestScore = score;
+                }
+            });
+            if (count) {
+                map[number] = { text: badgeTextForBest(savedItem || bestItem, count), loading: false, canPick: count > 1 };
             } else if (poolSettling || seasonLoading) {
-                map[number] = { text: 'поиск…', loading: true };
+                map[number] = { text: 'поиск…', loading: true, canPick: false };
             } else if (poolFailed || seasonFailed) {
-                map[number] = { text: 'ошибка поиска', loading: false };
+                map[number] = { text: 'ошибка поиска', loading: false, canPick: false };
             } else {
-                map[number] = { text: badgeText(candidates, seasonDefault), loading: false }; // 'раздачи не найдены'
+                map[number] = { text: 'раздачи не найдены', loading: false, canPick: false };
             }
         });
         return map;

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 
 const fixturesDir = path.join(import.meta.dirname, 'fixtures');
 const GROUPS = ['movies-new', 'movies-decade', 'movies-classic', 'series', 'anime'];
+const animeIndexerCorpus = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'anime-indexers.json'), 'utf8'));
 
 let passed = 0;
 let failed = 0;
@@ -32,6 +33,28 @@ for (const group of GROUPS) {
         }
     });
 }
+
+test('живой корпус AniDUB/Anilibria: 30 заголовков без потери anime-форматов', () => {
+    assert.equal(animeIndexerCorpus.length, 30);
+    assert.equal(animeIndexerCorpus.filter((item) => item.source === 'AniDUB').length, 10);
+    assert.equal(animeIndexerCorpus.filter((item) => item.source === 'Anilibria').length, 20);
+
+    const parsed = animeIndexerCorpus.map((item) => ({ item, release: parseRelease(item.title) }));
+    assert.equal(parsed.filter(({ release }) => release.explicitEpisode).length, 25);
+    assert.equal(parsed.filter(({ release }) => release.explicitSeason).length, 7);
+    assert.equal(parsed.filter(({ release }) => release.sourceType === 'HDTV').length, 12);
+    assert.equal(parsed.filter(({ release }) => release.sourceType === 'SDTV').length, 3);
+    assert.equal(parsed.filter(({ release }) => release.videoCodec === 'H.265').length, 4);
+    assert.equal(parsed.filter(({ release }) => release.videoCodec === 'H.264').length, 16);
+
+    const specials = parsed.filter(({ item }) => /E00/.test(item.title));
+    assert.equal(specials.length, 2);
+    assert.ok(specials.every(({ release }) => release.explicitEpisode && release.episodeFrom === 0));
+
+    const seasonTwo = parsed.filter(({ item }) => /Season 2/.test(item.title));
+    assert.equal(seasonTwo.length, 2);
+    assert.ok(seasonTwo.every(({ release }) => release.seasons[0] === 2 && release.explicitSeason));
+});
 
 // ---------- 2. parseSignals: сезоны/эпизоды, золотые кейсы с реальных раздач ----------
 const signalCases = [
@@ -115,6 +138,12 @@ const formatCases = [
     ['Сериал 1-4 серия из 10 (2024) HDTV', { epFrom: 1, epTo: 4 }],
     // E-диапазон без сезона (аниме-паки)
     ['Сериал E01-E11 [WEBRip 1080p][HEVC][1-11]', { epFrom: 1, epTo: 11, explicitSeason: false }],
+    // аниме: ТВ/TV-N — сезонный маркер, голый [TV] им не является
+    ['Аниме (ТВ-2) [TV] [1-5 из 13] 1080p WEB-DL', { seasons: [2], epFrom: 1, epTo: 5, explicitSeason: true }],
+    ['Аниме (TV-1) [TV] [1-12 из 12] 1080p WEB-DL', { seasons: [1], epFrom: 1, epTo: 12, explicitSeason: true }],
+    ['Аниме [TV] [1-12 из 12] 1080p WEB-DL', { seasons: [], epFrom: 1, epTo: 12, explicitSeason: false }],
+    ['Аниме E01-E12 HDTVRip 720p AVC', { sourceType: 'HDTV', videoCodec: 'H.264' }],
+    ['Аниме S01E01-E12 SDTV', { sourceType: 'SDTV' }],
     // WEB-DLRip не должен поглощаться как WEB-DL
     ['Фильм (2024) WEB-DLRip 1080p', { sourceType: 'WEBRip' }],
     // «древнее говно»: контейнеры/кодеки, которые WebOS не играет без транскодинга

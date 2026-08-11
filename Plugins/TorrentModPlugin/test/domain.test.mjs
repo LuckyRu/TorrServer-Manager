@@ -1,12 +1,14 @@
 import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { parseRelease } from '../search/release-parsing.js';
-import { baseTitles, defaultSearchName, buildQueries } from '../search/query-building.js';
+import { baseTitles, defaultSearchName, buildQueries, isAnimeTarget, buildAnimeQueries } from '../search/query-building.js';
 import { buildMovieQueries } from '../search/movie-query-building.js';
 import { buildSeriesQueries } from '../search/series-query-building.js';
+import { buildSearchPlan, ANIME_INDEXER_IDS } from '../search/indexer-search-strategies.js';
 import { parseMovieRelease } from '../search/movie-release-parsing.js';
 import { parseSeriesRelease } from '../search/series-release-parsing.js';
-import { scoreCandidate, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate, estimatePayload } from '../search/scoring.js';
+import { evaluateMediaTypeGate, evaluateSearchTitleGate, extractSearchTitleSegments } from '../search/search-gates.js';
+import { scoreCandidate, createCandidateScoreBase, scoreCandidateFromBase, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate, estimatePayload } from '../search/scoring.js';
 import {
     createInitialState, isSeriesWithSeasons, poolValues, poolTranslators, currentSeasonLabel,
     buildFilterItems, activeFilterLabels, candidatesForEpisode, badgeText, isConfidentMatch,
@@ -19,10 +21,13 @@ import {
 } from '../domain/results-selectors.js';
 import { episodeCounts, getSeasonMeta, fetchEnglishTitle } from '../metadata/tmdb.js';
 import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
+import { mergeReleases } from '../shared/release-identity.js';
 import { initialSeason, buildSeasonItems, openTarget } from '../metadata/season-picker.js';
 import { pickBestFile } from '../playback/file-selection.js';
 import { createSeriesResultsViewModel } from '../domain/series-results-viewmodel.js';
 import { createMovieResultsViewModel } from '../domain/movie-results-viewmodel.js';
+import { createResultsProjectionCache } from '../domain/results-projections.js';
+import { pickerNavigationWindow, adjacentPickerId } from '../ui/picker-navigation.js';
 
 const runner = createRunner();
 
@@ -108,14 +113,37 @@ runner.test('baseTitles возвращает оба названия', () => {
     const t = baseTitles(tvMovie);
     if (t.indexOf('Футурама') < 0 || t.indexOf('Futurama') < 0) throw new Error(JSON.stringify(t));
 });
-runner.test('baseTitles/defaultSearchName с englishTitle: используется вместо native-script original для азиатского тайтла', () => {
-    const asianMovie = { id: 999, name: 'Демон-истребитель', original_name: '鬼滅の刃', title: 'Демон-истребитель', original_title: '鬼滅の刃' };
+runner.test('anime profile сохраняет CJK alias и не меняет обычные сериалы', () => {
+    const asianMovie = {
+        id: 999, name: 'Клинок, рассекающий демонов', original_name: '鬼滅の刃',
+        title: 'Клинок, рассекающий демонов', original_title: '鬼滅の刃',
+        original_language: 'ja', genre_ids: [16], origin_country: ['JP']
+    };
     const withEnglish = baseTitles(asianMovie, 'Demon Slayer');
     if (withEnglish.indexOf('Demon Slayer') < 0) throw new Error('englishTitle отсутствует в baseTitles: ' + JSON.stringify(withEnglish));
-    if (withEnglish.indexOf('鬼滅の刃') >= 0) throw new Error('non-Latin/Cyrillic original_title должен отсеиваться unique() как бесполезный ключ: ' + JSON.stringify(withEnglish));
+    if (withEnglish.indexOf('鬼滅の刃') < 0) throw new Error('CJK original_title не должен теряться: ' + JSON.stringify(withEnglish));
+    if (!isAnimeTarget({ movie: asianMovie, mode: 'series' })) throw new Error('anime profile не определился');
 
     const name = defaultSearchName(asianMovie, 'Demon Slayer');
     if (name !== 'Demon Slayer') throw new Error('defaultSearchName должен предпочесть englishTitle: ' + name);
+
+    const queries = buildAnimeQueries({ movie: asianMovie, englishTitle: 'Demon Slayer', mode: 'series', season: 2, episode: 3 });
+    if (queries.indexOf('鬼滅の刃') < 0 || !queries.some((query) => /TV-2/.test(query)) || !queries.some((query) => /S02E03/.test(query))) {
+        throw new Error('anime query plan не содержит aliases и сезонные маркеры: ' + JSON.stringify(queries));
+    }
+
+    const plan = buildSearchPlan({ movie: asianMovie, englishTitle: 'Demon Slayer', mode: 'series', season: 2 }, queries);
+    const animeRoutes = plan.filter((entry) => entry.indexerIds);
+    const generalRoute = plan.find((entry) => entry.excludeIndexerIds);
+    if (animeRoutes.length !== 3 || animeRoutes.some((entry) => entry.indexerIds.join(',') !== ANIME_INDEXER_IDS.join(','))) {
+        throw new Error('anime-план должен отправить три alias-запроса в AniDUB/Anilibria: ' + JSON.stringify(plan));
+    }
+    if (!generalRoute || generalRoute.excludeIndexerIds.join(',') !== ANIME_INDEXER_IDS.join(',')) {
+        throw new Error('общий anime-запрос должен исключать специализированные индексаторы: ' + JSON.stringify(plan));
+    }
+
+    const western = Object.assign({}, tvMovie, { original_language: 'en', genre_ids: [16], origin_country: ['US'] });
+    if (isAnimeTarget({ movie: western, mode: 'series' })) throw new Error('американская анимация ошибочно попала в anime profile');
 
     const westernWithEnglish = baseTitles(tvMovie, 'Futurama');
     if (westernWithEnglish.length !== 2) throw new Error('дубликат original_title/englishTitle не должен добавлять третий вариант: ' + JSON.stringify(westernWithEnglish));
@@ -175,17 +203,23 @@ runner.test('badgeText/candidateBadgeText/candidateSubtitleText/publishedText н
     if (!candidateSubtitleText(single)) throw new Error('candidateSubtitleText');
     if (!publishedText(single)) throw new Error('publishedText');
 });
-runner.test('candidateIdentity: magnet-less раздача стабильна между поисками, magnet приоритетнее', () => {
-    const first = { title: single.title, size: single.size, magnet: '', link: 'http://jackett/dl?path=AAA111' };
-    const second = { title: single.title, size: single.size, magnet: '', link: 'http://jackett/dl?path=ZZZ999' };
+runner.test('candidateIdentity: одинаковый релиз стабилен при разных Jackett-ссылках', () => {
+    const first = { title: single.title, tracker: single.tracker, size: single.size, magnet: '', link: 'http://jackett/dl?path=AAA111' };
+    const second = { title: single.title, tracker: single.tracker, size: single.size, magnet: '', link: 'http://jackett/dl?path=ZZZ999' };
     if (candidateIdentity(first) !== candidateIdentity(second)) {
         throw new Error('identity разъехалась между поисками из-за разного link: ' + candidateIdentity(first) + ' vs ' + candidateIdentity(second));
     }
-    // Magnet, когда есть, приоритетнее — тоже стабилен и точнее title+size.
-    const withMagnet = { title: single.title, size: single.size, magnet: 'magnet:?xt=urn:btih:abc', link: 'http://jackett/dl?path=AAA111' };
-    if (candidateIdentity(withMagnet) === candidateIdentity(first)) {
-        throw new Error('magnet-кандидат не должен совпадать по identity с magnet-less при том же title+size');
+    const withMagnet = { title: single.title, tracker: single.tracker, size: single.size, magnet: 'magnet:?xt=urn:btih:abc', link: 'http://jackett/dl?path=AAA111' };
+    if (candidateIdentity(withMagnet) !== candidateIdentity(first)) {
+        throw new Error('magnet не должен менять identity уже известного релиза');
     }
+});
+runner.test('mergeReleases: дубль с новым path схлопывается и сохраняет лучшую доступность', () => {
+    const first = { title: single.title, tracker: 'RuTracker', size: single.size, seeders: 13, link: 'path=A' };
+    const second = { title: single.title, tracker: 'RuTracker', size: single.size, seeders: 70, link: 'path=B' };
+    const merged = mergeReleases([first], [second]);
+    if (merged.length !== 1) throw new Error('дубликат релиза не схлопнулся: ' + merged.length);
+    if (merged[0].seeders !== 70) throw new Error('не сохранена запись с лучшей доступностью');
 });
 runner.test('badgeText предпочитает сохранённый дефолт top-ranked кандидату', () => {
     const c = candidatesForEpisode(state.pool, target, state);
@@ -198,6 +232,23 @@ runner.test('selectEpisodeBadges прокидывает seasonDefault в каж�
     const saved = { id: candidateIdentity(single), title: single.title, size: single.size };
     const badges = selectEpisodeBadges({ movie: tvMovie }, state, saved);
     if (badges[7].text.indexOf(String(single.seeders)) < 0) throw new Error('серия 7 должна показывать saved-дефолт: ' + JSON.stringify(badges));
+});
+runner.test('selectEpisodeBadges показывает affordance выбора только при нескольких раздачах', () => {
+    const badges = selectEpisodeBadges({ movie: tvMovie }, state);
+    if (!badges[7].canPick) throw new Error('для серии с двумя кандидатами нужен шеврон выбора');
+    if (badges[1].canPick) throw new Error('для серии с одной раздачей шеврон не нужен');
+});
+runner.test('оптимизированные episode badges совпадают с полным candidate pipeline', () => {
+    const badges = selectEpisodeBadges({ movie: tvMovie }, state);
+    state.episodesCache.forEach((episode) => {
+        const number = episode.episode_number;
+        const candidates = selectCandidatesForEpisode({ movie: tvMovie }, state, number);
+        const expected = badgeText(candidates, null);
+        if (badges[number].text !== expected) {
+            throw new Error('episode ' + number + ': ' + badges[number].text + ' != ' + expected);
+        }
+        if (badges[number].canPick !== (candidates.length > 1)) throw new Error('canPick расходится для episode ' + number);
+    });
 });
 runner.test('selectEpisodeBadges: "поиск…" вместо пустой строки, пока пул/сезон грузятся', () => {
     const loadingByStatus = selectEpisodeBadges({ movie: tvMovie }, Object.assign({}, state, { poolStatus: 'loading', pool: [] }));
@@ -348,6 +399,18 @@ runner.test('scoreCandidate: гейт пропускает правильный 
     const wrong = scoreCandidate(single, { movie: tvMovie, season: 3, episode: 7, seasonEpisodeCount: 22, avgRuntimeMinutes: 22 });
     if (wrong.passes) throw new Error('раздача S02E07 прошла гейт для S03E07');
 });
+runner.test('scoreCandidateFromBase совпадает с полной оценкой для разных эпизодов', () => {
+    const baseTarget = Object.assign({}, target, { episode: 0 });
+    const base = createCandidateScoreBase(single, baseTarget);
+    [1, 7, 8].forEach((episode) => {
+        const episodeTarget = Object.assign({}, target, { episode });
+        const full = scoreCandidate(single, episodeTarget);
+        const reused = scoreCandidateFromBase(single, episodeTarget, base);
+        if (JSON.stringify(full) !== JSON.stringify(reused)) {
+            throw new Error('episode ' + episode + ': ' + JSON.stringify({ full, reused }));
+        }
+    });
+});
 runner.test('scoreCandidate: высокий payload HEVC/HDR не получает симметричный штраф', () => {
     const boysMovie = {
         title: 'Ферма Кларксона', original_title: "Clarkson's Farm",
@@ -436,6 +499,19 @@ runner.test('titleSimilarity (через гейт): отсеивает шум д
     noise.forEach((title) => { if (passesFor(title)) throw new Error('шум прошёл гейт: ' + title); });
     real.forEach((title) => { if (!passesFor(title)) throw new Error('реальное совпадение не прошло гейт: ' + title); });
 });
+runner.test('anime title gate принимает alias после E-префикса и CJK-оригинал', () => {
+    const hellMode = {
+        movie: { title: 'Адский режим', original_name: 'Hell Mode' },
+        englishTitle: 'Hell Mode', mode: MODE_SERIES
+    };
+    const alternative = 'Адский уровень / E01-E06 Hell Mode: Yarikomi Suki no Gamer wa Hai Settei no Isekai de Musou suru [WEBRip 1080p]';
+    const segments = extractSearchTitleSegments(alternative);
+    if (!segments.some((segment) => segment.indexOf('Hell Mode') >= 0)) throw new Error(JSON.stringify(segments));
+    if (!evaluateSearchTitleGate({ title: alternative }, hellMode).passes) throw new Error('альтернативный anime alias был отброшен');
+
+    const chinese = { movie: { title: 'Воин судьбы', original_name: '择天记' }, mode: MODE_SERIES };
+    if (!evaluateSearchTitleGate({ title: '择天记 S01E01 1080p WEB-DL' }, chinese).passes) throw new Error('CJK alias не прошёл title gate');
+});
 runner.test('passesSearchTitleGate отсекает явный шум до доменного пула', () => {
     const item = {
         title: 'The Beach Boys - The Pet Sounds Sessions [Deluxe Edition]',
@@ -443,6 +519,59 @@ runner.test('passesSearchTitleGate отсекает явный шум до до�
     };
     const boys = { movie: { title: 'Пацаны', original_title: 'The Boys' }, englishTitle: '' };
     if (passesSearchTitleGate(item, boys)) throw new Error('явный шум прошёл ранний title-gate');
+});
+runner.test('search gates: корпус Игры престолов отсекает книги, аудио, игры и чужой заголовок', () => {
+    const gotMovie = { title: 'Игра престолов', original_title: 'Game of Thrones' };
+    const gotTarget = { movie: gotMovie, englishTitle: 'Game of Thrones', mode: MODE_SERIES };
+    const cases = [
+        ['Игра престолов / Game of Thrones [S1-8] (2011-2019) BDRip 1080p-LostFilm', true, ''],
+        ['Игра престолов / Game of Thrones S01', true, ''],
+        ['Игра престолов / Game of Thrones (2012) PC | RePack от R.G. Механики', false, 'game-distribution'],
+        ['Джордж Мартин - Песнь Льда и Пламени [01. Игра престолов] (2012) MP3', false, 'audio-only'],
+        ['Брайан Когман / HBO: Игра престолов (2015) PDF', false, 'ebook-or-document'],
+        ['Ramin Djawadi / Игра Престолов 7 (Game Of Thrones 7) (2017) FLAC, lossless', false, 'audio-only'],
+        ['Настоящая война / игра престолов (4 S1-6 серий из 6, DVB)', false, 'conflicting-title'],
+        ['Игра Дарвина / E01-E11 Darwin\'s Game [WEBRip 1080p]', false, 'title-mismatch']
+    ];
+
+    cases.forEach(([title, expectedPass, expectedReason]) => {
+        const item = { title, release: parseSeriesRelease(title) };
+        const media = evaluateMediaTypeGate(item, gotTarget);
+        const titleDecision = media.passes ? evaluateSearchTitleGate(item, gotTarget) : media;
+        if (titleDecision.passes !== expectedPass || titleDecision.reason !== expectedReason) {
+            throw new Error(title + ': ' + JSON.stringify({ media, titleDecision }));
+        }
+    });
+});
+runner.test('anime TV-N: ТВ-1/ТВ-2 мапятся на сезоны и не пересекаются', () => {
+    const tv2Title = 'Адский режим (ТВ-2) | Hell Mode [TV] [1-5 из 13] 1080p WEB-DL';
+    const tv1Title = 'Адский режим (ТВ-1) | Hell Mode [TV] [1-12 из 12] 1080p WEB-DL';
+    const tv2 = parseSeriesRelease(tv2Title);
+    const tv1 = parseSeriesRelease(tv1Title);
+    if (JSON.stringify(tv2.seasons) !== JSON.stringify([2]) || !tv2.explicitSeason) throw new Error(JSON.stringify(tv2));
+    if (JSON.stringify(tv1.seasons) !== JSON.stringify([1]) || !tv1.explicitSeason) throw new Error(JSON.stringify(tv1));
+
+    const target = { movie: { title: 'Адский режим', original_title: 'Hell Mode' }, mode: MODE_SERIES, season: 2, episode: 3, seasonEpisodeCount: 13, avgRuntimeMinutes: 24, englishTitle: 'Hell Mode' };
+    const item = { title: tv2Title, seeders: 8, peers: 0, size: 1000, publishedAt: 0, release: tv2 };
+    const wrong = { title: tv1Title, seeders: 8, peers: 0, size: 1000, publishedAt: 0, release: tv1 };
+    if (!scoreCandidate(item, target).passes) throw new Error('TV-2 должен пройти для сезона 2: ' + JSON.stringify(scoreCandidate(item, target)));
+    if (scoreCandidate(wrong, target).passes) throw new Error('TV-1 не должен пройти для сезона 2');
+});
+runner.test('media-type gate не считает FLAC аудиодорожку аудио-only при сильных видеосигналах', () => {
+    const title = 'Игра престолов / Game of Thrones S01 1080p WEB-DL H.265 FLAC';
+    const item = { title, release: parseSeriesRelease(title) };
+    const decision = evaluateMediaTypeGate(item, {
+        movie: { title: 'Игра престолов', original_title: 'Game of Thrones' },
+        englishTitle: 'Game of Thrones', mode: MODE_SERIES
+    });
+    if (!decision.passes) throw new Error(JSON.stringify(decision));
+});
+runner.test('media-type gate для фильма не требует season/video metadata без явного мусорного формата', () => {
+    const title = 'Дюна / Dune (2024)';
+    const decision = evaluateMediaTypeGate({ title, release: parseMovieRelease(title) }, {
+        movie, englishTitle: 'Dune', mode: MODE_MOVIE
+    });
+    if (!decision.passes) throw new Error(JSON.stringify(decision));
 });
 runner.test('applyStateFilters: пустой фильтр оставляет пул, несуществующий не ломает', () => {
     const f = applyStateFilters(state.pool, Object.assign({}, state, { filters: Object.assign({}, state.filters, { voiceType: 'Дубляж' }) }));
@@ -588,6 +717,28 @@ runner.test('createSeriesResultsViewModel/createMovieResultsViewModel forward do
         throw new Error('createMovieResultsViewModel не прокинул рабочий scope: ' + JSON.stringify(movieVm.scope));
     }
     movieVm.destroy();
+});
+
+runner.test('results projections кэшируются по ссылкам состояния', () => {
+    const cache = createResultsProjectionCache(tvMovie, tvMovie, true, () => null);
+    const first = cache.episodeBadges(state);
+    const unrelated = Object.assign({}, state, { statusText: 'обновился статус' });
+    const second = cache.episodeBadges(unrelated);
+    if (first !== second) throw new Error('изменение нерелевантного поля сбросило кэш бейджей');
+    const changed = Object.assign({}, state, { filters: Object.assign({}, state.filters, { resolution: '1080p' }) });
+    if (cache.episodeBadges(changed) === second) throw new Error('изменение фильтра не сбросило кэш бейджей');
+});
+
+runner.test('picker navigation ограничивает коллекцию Lampa и проходит границы окна', () => {
+    const ids = Array.from({ length: 100 }, (_, index) => 'item-' + index);
+    const windowIds = pickerNavigationWindow(ids, 'item-50', 36);
+    if (windowIds.length !== 73 || windowIds[0] !== 'item-14' || windowIds.at(-1) !== 'item-86') {
+        throw new Error(JSON.stringify(windowIds));
+    }
+    if (adjacentPickerId(ids, 'item-50', 'up') !== 'item-49') throw new Error('up перескочил строку');
+    if (adjacentPickerId(ids, 'item-50', 'down') !== 'item-51') throw new Error('down перескочил строку');
+    if (adjacentPickerId(ids, 'item-0', 'up') !== null) throw new Error('up вышел за начало');
+    if (adjacentPickerId(ids, 'item-99', 'down') !== null) throw new Error('down вышел за конец');
 });
 
 await runner.run();

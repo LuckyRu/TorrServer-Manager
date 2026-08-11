@@ -1,42 +1,5 @@
-    import { baseTitles } from './query-building.js';
-    import { compact } from '../shared/utils.js';
+    import { titleSimilarity, passesSearchTitleGate as passesTitleGate } from './search-gates.js';
     import { filtersOf } from '../domain/filter-state.js';
-
-    // Near-zero-signal words (EN+RU) — a bare word like "the" must never fake title similarity on its own.
-    var STOPWORDS = {};
-    ['the', 'a', 'an', 'of', 'and', 'in', 'on', 'to', 'for', 'is', 'it'].forEach(function (w) { STOPWORDS[w] = true; });
-    ['и', 'в', 'на', 'о', 'из', 'для', 'по', 'с', 'а', 'к', 'у'].forEach(function (w) { STOPWORDS[w] = true; });
-
-    function extractTitleSegments(rawTitle) {
-        return String(rawTitle || '').split('/').map(function (piece) {
-            var bracketIndex = piece.search(/[([]/);
-            if (bracketIndex >= 0) piece = piece.slice(0, bracketIndex);
-            return piece.trim();
-        }).filter(Boolean);
-    }
-
-    function titleSimilarity(title, movie, englishTitle) {
-        var segments = extractTitleSegments(title);
-        var best = 0;
-        baseTitles(movie, englishTitle).forEach(function (name) {
-            var compactName = compact(name);
-            if (!compactName) return;
-            var nameTokens = compactName.split(' ');
-            var significantTokens = nameTokens.filter(function (t) { return t.length > 2 && !STOPWORDS[t]; });
-            segments.forEach(function (segment) {
-                var compactSegment = compact(segment);
-                if (!compactSegment) return;
-                if (compactSegment === compactName) { best = Math.max(best, 1); return; }
-                var segmentTokens = compactSegment.split(' ');
-                // Word count must match exactly — rules out a longer title containing the target as a substring.
-                if (segmentTokens.length !== nameTokens.length) return;
-                if (!significantTokens.length) return;
-                var hits = significantTokens.filter(function (t) { return segmentTokens.indexOf(t) >= 0; }).length;
-                best = Math.max(best, hits / significantTokens.length);
-            });
-        });
-        return best;
-    }
 
     var CONFIDENCE_ORDER = { none: 0, low: 1, medium: 2, high: 3 };
 
@@ -202,7 +165,7 @@
     }
 
     var RESOLUTION_SCORE = { '2160p': 16, '1080p': 12, '720p': 7, '480p': 3 };
-    var SOURCE_SCORE = { 'Remux': 4, 'BDRip': 3, 'WEB-DL': 3, 'WEBRip': 2, 'HDTV': 1, 'HDRip': 1 };
+    var SOURCE_SCORE = { 'Remux': 4, 'BDRip': 3, 'WEB-DL': 3, 'WEBRip': 2, 'HDTV': 1, 'HDRip': 1, 'SDTV': 0 };
     var MIN_PAYLOAD_MBPS = { '2160p': 10, '1080p': 3.5, '720p': 1.8, '480p': 0.8 };
 
     function minimumPayloadMbps(release) {
@@ -252,53 +215,62 @@
         return 5;
     }
 
-    // Hard gate, not a scored component — see docs/reference/torrent-mod-scoring-model.md.
-    var MIN_TITLE_SIMILARITY = 0.34;
-
     export function passesSearchTitleGate(item, target) {
-        return titleSimilarity(item.title, target.movie, target.englishTitle) >= MIN_TITLE_SIMILARITY;
+        return passesTitleGate(item, target);
     }
 
-    function passesMatchGate(item, target) {
+    function passesMatchGate(item, target, titlePasses) {
         var release = item.release;
-        if (!passesSearchTitleGate(item, target)) return false;
+        if (titlePasses === undefined ? !passesSearchTitleGate(item, target) : !titlePasses) return false;
         if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
         if (target.episode && release.explicitEpisode &&
             !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) return false;
         return true;
     }
 
-    export function scoreCandidate(item, target) {
+    export function createCandidateScoreBase(item, target) {
         var release = item.release;
-        var passes = passesMatchGate(item, target);
-        var matchScore = Math.round(titleSimilarity(item.title, target.movie, target.englishTitle) * 40) +
+        var payload = estimatePayload(item, target);
+        return {
+            titlePasses: passesSearchTitleGate(item, target),
+            titleScore: Math.round(titleSimilarity(item.title, target.movie, target.englishTitle) * 40),
+            qualityScore: qualityScoreFor(release, payload),
+            availabilityScore: availabilityScoreFor(item),
+            streamingRiskPenalty: streamingRiskPenaltyFor(item, payload),
+            pipelinePenalty: pipelinePenaltyFor(release),
+            payload: payload
+        };
+    }
+
+    export function scoreCandidateFromBase(item, target, base) {
+        var release = item.release;
+        var passes = passesMatchGate(item, target, base.titlePasses);
+        var matchScore = base.titleScore +
             (release.explicitSeason && release.seasons.indexOf(target.season) >= 0 ? 20 : 0) +
             (target.episode && release.explicitEpisode &&
                 target.episode >= release.episodeFrom && target.episode <= release.episodeTo ? 40 : 0);
-
-        var payload = estimatePayload(item, target);
-        var qualityScore = qualityScoreFor(release, payload);
-        var availabilityScore = availabilityScoreFor(item);
-        var streamingRiskPenalty = streamingRiskPenaltyFor(item, payload);
-        var pipelinePenalty = pipelinePenaltyFor(release);
         var matchConfidenceScore = Math.max(0, Math.min(4, matchScore / 25));
 
         return {
             passes: passes,
-            value: qualityScore + availabilityScore + matchConfidenceScore - streamingRiskPenalty - pipelinePenalty,
+            value: base.qualityScore + base.availabilityScore + matchConfidenceScore - base.streamingRiskPenalty - base.pipelinePenalty,
             matchScore: matchScore,
             matchConfidenceScore: matchConfidenceScore,
-            qualityScore: qualityScore,
-            availabilityScore: availabilityScore,
-            streamingRiskPenalty: streamingRiskPenalty,
-            pipelinePenalty: pipelinePenalty,
-            formatPenalty: pipelinePenalty,
-            payloadMbps: payload.mbps,
-            payloadConfidence: payload.confidence,
-            payloadCoverageEpisodes: payload.coverageEpisodes,
-            payloadDurationMinutes: payload.durationMinutes,
-            payloadReason: payload.reason
+            qualityScore: base.qualityScore,
+            availabilityScore: base.availabilityScore,
+            streamingRiskPenalty: base.streamingRiskPenalty,
+            pipelinePenalty: base.pipelinePenalty,
+            formatPenalty: base.pipelinePenalty,
+            payloadMbps: base.payload.mbps,
+            payloadConfidence: base.payload.confidence,
+            payloadCoverageEpisodes: base.payload.coverageEpisodes,
+            payloadDurationMinutes: base.payload.durationMinutes,
+            payloadReason: base.payload.reason
         };
+    }
+
+    export function scoreCandidate(item, target) {
+        return scoreCandidateFromBase(item, target, createCandidateScoreBase(item, target));
     }
 
     function matchesTranslation(item, voiceType) {

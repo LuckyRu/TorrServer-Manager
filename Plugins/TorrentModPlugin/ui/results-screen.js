@@ -2,7 +2,10 @@
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { canonicalTimeline, progressText } from '../metadata/tmdb.js';
     import { candidateBadgeText, candidateSubtitleText, candidateIdentity } from '../domain/results-core.js';
-    import { selectFilterChipData, selectEpisodeBadges, selectStatusText, selectPickerData, selectSearchProgress, selectPoolIndexers } from '../domain/results-selectors.js';
+    import { selectStatusText, selectSearchProgress } from '../domain/results-selectors.js';
+    import { createResultsProjectionCache } from '../domain/results-projections.js';
+    import { createRenderScheduler } from './render-scheduler.js';
+    import { pickerNavigationWindow, adjacentPickerId } from './picker-navigation.js';
 
     export function createResultsView(options) {
         var object = options.object;
@@ -17,70 +20,231 @@
         var trackers = $('<div class="torrent-mod__trackers"></div>');
         var trackerNodes = {};
         var episodeRows = {};
+        var candidateRows = {};
+        var candidateRowItems = {};
+        var candidateBackNode = null;
         var initialFocusDone = false;
+        var projections = createResultsProjectionCache(object, movie, hasSeasons, function (season) {
+            return domain.selection.getSeasonDefault(season);
+        });
+        var scheduler;
+        var lastFilterSignature = '';
+        var lastStatusSignature = '';
+        var pickerControllerRegistered = false;
+        var pickerRows = {};
+        var pickerItems = {};
+        var pickerOrder = [];
+        var pickerTarget = null;
+        var pickerFocusId = null;
 
         var picker = $('<div class="torrent-mod-picker" style="display:none"></div>');
         var pickerScroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var pickerBody = $('<div class="torrent-mod-picker__body"></div>');
         pickerScroll.append(pickerBody);
         picker.append(pickerScroll.render());
-        var focusedEpisodeNumber = null;
         var viewDestroyed = false;
         var lastFocusedNode = null;
         var lastEpisodeGridSeason = null;
 
+        var PICKER_NAVIGATION_RADIUS = 36;
+
+        function pickerNodeView(item, selected) {
+            return {
+                title: item.title || '',
+                badge: candidateBadgeText(item),
+                details: candidateSubtitleText(item),
+                selected: selected
+            };
+        }
+
+        function updatePickerNode(node, view) {
+            var signature = [view.title, view.badge, view.details, view.selected ? '1' : '0'].join('|');
+            if (node.attr('data-view-signature') === signature) return;
+            node.attr('data-view-signature', signature);
+            node.find('.torrent-mod-picker-item__title').text(view.title);
+            node.find('.torrent-mod-picker-item__badge').text(view.badge);
+            node.find('.torrent-mod-picker-item__details').text(view.details);
+            node.toggleClass('torrent-mod-picker-item--selected', view.selected);
+            var mark = node.find('.torrent-mod-picker-item__mark');
+            if (view.selected && !mark.length) node.append('<div class="torrent-mod-picker-item__mark">Выбрано</div>');
+            else if (!view.selected && mark.length) mark.remove();
+        }
+
+        function pickerNavigationNodes(focusId) {
+            return pickerNavigationWindow(pickerOrder, focusId, PICKER_NAVIGATION_RADIUS)
+                .map(function (id) { return pickerRows[id] && pickerRows[id][0]; })
+                .filter(Boolean);
+        }
+
+        function focusPicker(id) {
+            var node = pickerRows[id];
+            if (!node || !node[0] || !node[0].offsetParent) return;
+            pickerFocusId = id;
+            try {
+                var navigation = pickerNavigationNodes(id);
+                if (Navigator && Navigator.setCollection) Navigator.setCollection(navigation);
+                else Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
+                Lampa.Controller.collectionFocus(node[0], pickerScroll.render(true));
+            } catch (e) {}
+        }
+
+        function refreshPickerNavigation(positionBefore) {
+            var node = pickerRows[pickerFocusId];
+            if (!node || !node[0] || !node[0].offsetParent) {
+                if (pickerOrder.length) focusPicker(pickerOrder[0]);
+                return;
+            }
+            try {
+                if (Navigator && Navigator.setCollection && Navigator.focused) {
+                    Navigator.setCollection(pickerNavigationNodes(pickerFocusId));
+                    Navigator.focused(node[0]);
+                    node.addClass('focus');
+                    if (positionBefore !== null && isFinite(positionBefore)) {
+                        var shift = node[0].getBoundingClientRect().top - positionBefore;
+                        if (Math.abs(shift) > 0.5) pickerScroll.shift(shift);
+                    }
+                } else {
+                    focusPicker(pickerFocusId);
+                }
+            } catch (e) { focusPicker(pickerFocusId); }
+        }
+
+        function movePicker(direction) {
+            if (viewDestroyed || !pickerOrder.length) return;
+            try {
+                if (Navigator.canmove(direction)) {
+                    Navigator.move(direction);
+                    return;
+                }
+            } catch (e) {}
+            var next = adjacentPickerId(pickerOrder, pickerFocusId, direction);
+            if (next) focusPicker(next);
+        }
+
+        function resetPickerRows() {
+            pickerBody.empty();
+            pickerRows = {};
+            pickerItems = {};
+            pickerOrder = [];
+            pickerTarget = null;
+            pickerFocusId = null;
+        }
+
+        function renderPickerState(st) {
+            if (st.status !== 'ready' || !Array.isArray(st.items) || !st.items.length) {
+                resetPickerRows();
+                if (st.status === 'loading') {
+                    pickerBody.append($('<div class="torrent-mod-picker__empty"><span class="torrent-mod__spinner"></span>Ищем раздачи…</div>'));
+                } else if (st.status === 'error') {
+                    pickerBody.append($('<div class="torrent-mod-picker__empty">Не удалось получить раздачи</div>'));
+                    var retryRow = $('<div class="torrent-mod-picker-item selector"><div class="torrent-mod-picker-item__title">Повторить</div></div>');
+                    retryRow.on('hover:focus', function (e) { pickerScroll.update($(e.target), true); });
+                    retryRow.on('hover:enter', function () {
+                        if (!viewDestroyed) domain.episodes.retrySeasonLoad(domain.store.get().season);
+                    });
+                    pickerBody.append(retryRow);
+                } else {
+                    pickerBody.append($('<div class="torrent-mod-picker__empty">Раздач не найдено</div>'));
+                }
+                return { structureChanged: true, focusPosition: null };
+            }
+
+            var previousFocus = pickerFocusId;
+            var previousFocusNode = previousFocus && pickerRows[previousFocus];
+            var focusPosition = previousFocusNode && previousFocusNode[0] && previousFocusNode[0].offsetParent
+                ? previousFocusNode[0].getBoundingClientRect().top
+                : null;
+            var active = {};
+            var nextOrder = [];
+            var desiredNodes = [];
+            var structureChanged = false;
+            pickerTarget = st.target;
+
+            st.items.forEach(function (item) {
+                var id = candidateIdentity(item);
+                var selected = !!(st.selectedId && id === st.selectedId);
+                var node = pickerRows[id];
+                active[id] = true;
+                nextOrder.push(id);
+                pickerItems[id] = item;
+                if (!node) {
+                    structureChanged = true;
+                    node = torrentRow(item, selected).attr('data-picker-id', id);
+                    node.on('hover:focus', function () { pickerFocusId = id; });
+                    node.on('hover:enter', function () {
+                        var current = pickerItems[id];
+                        if (current) domain.selection.playPickerCandidate(current, pickerTarget);
+                    });
+                    pickerRows[id] = node;
+                }
+                updatePickerNode(node, pickerNodeView(item, selected));
+                desiredNodes.push(node[0]);
+            });
+
+            Object.keys(pickerRows).forEach(function (id) {
+                if (active[id]) return;
+                structureChanged = true;
+                pickerRows[id].remove();
+                delete pickerRows[id];
+                delete pickerItems[id];
+            });
+            if (pickerOrder.length !== nextOrder.length || pickerOrder.some(function (id, index) { return id !== nextOrder[index]; })) {
+                structureChanged = true;
+            }
+            pickerOrder = nextOrder;
+            if (structureChanged) {
+                var cursor = pickerBody[0].firstChild;
+                desiredNodes.forEach(function (node) {
+                    if (node === cursor) {
+                        cursor = cursor.nextSibling;
+                        return;
+                    }
+                    pickerBody[0].insertBefore(node, cursor);
+                });
+            }
+            pickerFocusId = previousFocus && active[previousFocus]
+                ? previousFocus
+                : (st.selectedId && active[st.selectedId] ? st.selectedId : pickerOrder[0]);
+            return { structureChanged: structureChanged, focusPosition: focusPosition };
+        }
+
         function openPickerPanel() {
             if (viewDestroyed) return;
             var state = domain.store.get();
-            var st = selectPickerData(object, state, domain.selection.getSeasonDefault(state.season));
-            pickerBody.empty();
-            picker.show();
-            var selectedNode = null;
-            if (st.status === 'loading') {
-                pickerBody.append($('<div class="torrent-mod-picker__empty"><span class="torrent-mod__spinner"></span>Ищем раздачи…</div>'));
-            } else if (st.status === 'error') {
-                pickerBody.append($('<div class="torrent-mod-picker__empty">Не удалось получить раздачи</div>'));
-                var retryRow = $('<div class="torrent-mod-picker-item selector"><div class="torrent-mod-picker-item__title">Повторить</div></div>');
-                retryRow.on('hover:focus', function (e) { pickerScroll.update($(e.target), true); });
-                retryRow.on('hover:enter', function () {
-                    if (viewDestroyed) return;
-                    domain.episodes.retrySeasonLoad(domain.store.get().season);
-                });
-                pickerBody.append(retryRow);
-            } else if (!st.items || !st.items.length) {
-                pickerBody.append($('<div class="torrent-mod-picker__empty">Раздач не найдено</div>'));
-            } else {
-                var target = st.target;
-                var selectedId = st.selectedId;
-                st.items.forEach(function (item) {
-                    var selected = !!(selectedId && candidateIdentity(item) === selectedId);
-                    var node = torrentRow(item, selected);
-                    if (selected) selectedNode = node;
-                    node.on('hover:enter', function () { domain.selection.playPickerCandidate(item, target); });
-                    pickerBody.append(node);
-                });
-            }
-            picker.addClass('torrent-mod-picker--open');
+            var st = projections.pickerData(state);
+            var wasOpen = picker.hasClass('torrent-mod-picker--open');
+            picker.show().addClass('torrent-mod-picker--open');
+            var renderResult = renderPickerState(st);
             try {
-                Lampa.Controller.add('torrent_mod_picker', {
-                    toggle: function () {
-                        if (viewDestroyed) return;
-                        Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
-                        var focusTarget = selectedNode && selectedNode[0] && selectedNode[0].offsetParent ? selectedNode[0] : false;
-                        Lampa.Controller.collectionFocus(focusTarget, pickerScroll.render(true));
-                    },
-                    left: requestClosePicker,
-                    back: requestClosePicker,
-                    right: function () {
-                        if (viewDestroyed) return;
-                        requestClosePicker();
-                        var filterChip = toolbar.find('.filter--filter');
-                        if (filterChip.length) filterChip.trigger('hover:enter');
-                    },
-                    up: function () { if (!viewDestroyed) Navigator.move('up'); },
-                    down: function () { if (!viewDestroyed) Navigator.move('down'); }
-                });
-                Lampa.Controller.toggle('torrent_mod_picker');
+                if (!pickerControllerRegistered) {
+                    pickerControllerRegistered = true;
+                    Lampa.Controller.add('torrent_mod_picker', {
+                        toggle: function () {
+                            if (viewDestroyed) return;
+                            if (pickerFocusId) focusPicker(pickerFocusId);
+                            else {
+                                Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
+                                Lampa.Controller.collectionFocus(false, pickerScroll.render(true));
+                            }
+                        },
+                        left: requestClosePicker,
+                        back: requestClosePicker,
+                        right: function () {
+                            if (viewDestroyed) return;
+                            requestClosePicker();
+                            var filterChip = toolbar.find('.filter--filter');
+                            if (filterChip.length) filterChip.trigger('hover:enter');
+                        },
+                        up: function () { movePicker('up'); },
+                        down: function () { movePicker('down'); }
+                    });
+                }
+                if (!wasOpen) Lampa.Controller.toggle('torrent_mod_picker');
+                else if (renderResult.structureChanged && pickerFocusId) refreshPickerNavigation(renderResult.focusPosition);
+                else if (renderResult.structureChanged) {
+                    Lampa.Controller.collectionSet(pickerScroll.render(true), pickerBody);
+                    Lampa.Controller.collectionFocus(false, pickerScroll.render(true));
+                }
             } catch (e) {}
         }
 
@@ -100,6 +264,7 @@
         function hidePickerDom() {
             picker.removeClass('torrent-mod-picker--open');
             picker.hide();
+            resetPickerRows();
             try { Lampa.Controller.toggle('content'); } catch (e) {}
             var activeEpisode = domain.store.get().activeEpisode;
             var node = activeEpisode ? episodeRows[activeEpisode] : null;
@@ -151,7 +316,7 @@
             filter.set('sort', buildSeasonItems(movie, initialSeason));
             toolbar.find('.filter--sort span').text('Сезон');
         }
-        syncFilterChips(selectFilterChipData(domain.store.get(), movie, hasSeasons));
+        syncFilterChips(projections.filterChipData(domain.store.get()));
 
         scroll.append(grid);
         explorer.appendHead(toolbar);
@@ -172,6 +337,7 @@
                 '<div class="torrent-mod-row__title">' + escapeHtml(title) + '</div>' +
                 (subtitle ? '<div class="torrent-mod-row__subtitle">' + escapeHtml(subtitle) + '</div>' : '') +
                 '<div class="torrent-mod-row__badge"></div>' +
+                '<div class="torrent-mod-row__action" aria-hidden="true">›</div>' +
                 '</div>'
             );
             var rowScroll = targetScroll || scroll;
@@ -191,9 +357,14 @@
         function renderEpisodes(episodes, season) {
             grid.empty();
             episodeRows = {};
+            candidateRows = {};
+            candidateRowItems = {};
+            candidateBackNode = null;
             var firstNumber = null;
-            episodes.forEach(function (episode) {
+            (Array.isArray(episodes) ? episodes : []).forEach(function (episode) {
+                if (!episode) return;
                 var number = parseInt(episode.episode_number, 10);
+                if (!isFinite(number) || number < 1) return;
                 if (firstNumber == null) firstNumber = number;
                 var view = canonicalTimeline(movie, season, number);
                 var node = row(
@@ -254,7 +425,6 @@
                     restoreFocus();
                 }
             } catch (e) {}
-            try { Lampa.Layer.update(); } catch (e) {}
         }
 
         function removePosterFromNavigation() {
@@ -301,12 +471,20 @@
             Object.keys(episodeRows).forEach(function (key) {
                 var entry = badgeMap[key];
                 var el = episodeRows[key].find('.torrent-mod-row__badge');
+                var action = episodeRows[key].find('.torrent-mod-row__action');
+                var signature = [(entry && entry.text) || '', !!(entry && entry.loading), !!(entry && entry.canPick)].join('|');
+                if (episodeRows[key].attr('data-badge-signature') === signature) return;
+                episodeRows[key].attr('data-badge-signature', signature);
                 if (entry && entry.loading) el.html('<span class="torrent-mod-row__badge--shimmer"></span>');
                 else el.text((entry && entry.text) || '');
+                action.toggleClass('torrent-mod-row__action--visible', !!(entry && entry.canPick));
             });
         }
 
         function syncFilterChips(data) {
+            var signature = JSON.stringify(data);
+            if (signature === lastFilterSignature) return;
+            lastFilterSignature = signature;
             if (hasSeasons) {
                 filter.chosen('sort', [data.seasonLabel]);
                 filter.set('sort', data.seasonItems);
@@ -321,8 +499,10 @@
         }
 
         function setStatus(text, loading) {
+            var signature = (loading ? '1' : '0') + '|' + text;
+            if (signature === lastStatusSignature) return;
+            lastStatusSignature = signature;
             status.html((loading ? '<span class="torrent-mod__spinner"></span>' : '') + escapeHtml(text));
-            try { Lampa.Layer.update(); } catch (e) {}
         }
 
         var TRACKER_SUCCESS_HIDE_MS = 4000;
@@ -351,7 +531,7 @@
         }
 
         function renderTrackers(progress) {
-            progress.trackers.forEach(function (indexer) {
+            (progress && Array.isArray(progress.trackers) ? progress.trackers : []).forEach(function (indexer) {
                 var entry = trackerNodes[indexer.id];
                 if (!entry) {
                     var node = $('<span class="torrent-mod__tracker torrent-mod__tracker--enter"></span>');
@@ -375,8 +555,6 @@
                     scheduleTrackerHide(indexer.id, TRACKER_SUCCESS_HIDE_MS - (Date.now() - indexer.reportedAt));
                 }
             });
-            // Same reasoning as setStatus above — this region's height feeds scroll.minus()'s math.
-            try { Lampa.Layer.update(); } catch (e) {}
         }
 
         var statusTickTimer = null;
@@ -402,24 +580,49 @@
             if (lastFocusedNode && lastFocusedNode[0] && $.contains(grid[0], lastFocusedNode[0])) {
                 focusedCandidateId = lastFocusedNode.attr('data-candidate-id') || null;
             }
-            grid.empty();
             episodeRows = {};
-            var candidateRows = {};
+            var items = Array.isArray(candidates) ? candidates : [];
+            var desired = [];
             if (canReturnToEpisodeList) {
-                var backNode = row('← К списку серий', '');
-                backNode.on('hover:enter', function () { domain.episodes.showEpisodeList(); });
-                grid.append(backNode);
+                if (!candidateBackNode) {
+                    candidateBackNode = row('← К списку серий', '');
+                    candidateBackNode.on('hover:enter', function () { domain.episodes.showEpisodeList(); });
+                }
+                desired.push(candidateBackNode[0]);
+            } else {
+                if (candidateBackNode) candidateBackNode.remove();
+                candidateBackNode = null;
             }
-            candidates.forEach(function (item) {
-                var node = row(item.title, candidateSubtitleText(item));
-                node.addClass('torrent-mod-candidate');
+            var activeIds = {};
+            items.forEach(function (item) {
                 var id = candidateIdentity(item);
+                activeIds[id] = true;
+                var node = candidateRows[id];
+                if (!node) {
+                    node = row(item.title, candidateSubtitleText(item));
+                    node.addClass('torrent-mod-candidate');
+                    node.on('hover:enter', function () {
+                        var current = candidateRowItems[id];
+                        if (current) domain.selection.playCandidate(current.item, current.target);
+                    });
+                    candidateRows[id] = node;
+                }
+                candidateRowItems[id] = { item: item, target: target };
                 node.attr('data-candidate-id', id);
+                node.find('.torrent-mod-row__title').text(item.title || '');
+                node.find('.torrent-mod-row__subtitle').text(candidateSubtitleText(item));
                 node.find('.torrent-mod-row__badge').text(candidateBadgeText(item));
-                node.on('hover:enter', function () { domain.selection.playCandidate(item, target); });
-                grid.append(node);
-                candidateRows[id] = node;
+                desired.push(node[0]);
             });
+            Object.keys(candidateRows).forEach(function (id) {
+                if (activeIds[id]) return;
+                candidateRows[id].remove();
+                delete candidateRows[id];
+                delete candidateRowItems[id];
+            });
+            var fragment = document.createDocumentFragment();
+            desired.forEach(function (node) { fragment.appendChild(node); });
+            grid[0].appendChild(fragment);
             lastFocusedNode = (focusedCandidateId && candidateRows[focusedCandidateId]) || null;
             refreshGrid();
             if (!initialFocusDone) {
@@ -443,52 +646,68 @@
             else if (content[0] === 'message') showMessage(content[3].text, content[3].retry);
         }
 
+        function flushScheduledRender(reasons) {
+            if (viewDestroyed) return;
+            var state = domain.store.get();
+            if (reasons.content) renderContent([state.stage, state.episodesCache, state.candidates, state.message]);
+            if (reasons.badges) updateEpisodeBadges(projections.episodeBadges(state));
+            if (reasons.filters) syncFilterChips(projections.filterChipData(state));
+            if (reasons.status) {
+                var progress = selectSearchProgress(state);
+                setStatus(selectStatusText(state), progress.stage === 'loading');
+                ensureStatusTicking(progress.stage);
+            }
+            if (reasons.trackers) renderTrackers(projections.poolIndexers(state));
+            if (reasons.picker) {
+                if (state.picker && state.picker.open) openPickerPanel();
+                else if (picker.hasClass('torrent-mod-picker--open')) hidePickerDom();
+            }
+            try { Lampa.Layer.update(); } catch (e) {}
+        }
+
+        scheduler = createRenderScheduler(domain.scope, flushScheduledRender);
+
         domain.scope.subscribeSelector(domain.store,
             function (state) { return [state.stage, state.episodesCache, state.candidates, state.message]; },
-            renderContent,
+            function () { scheduler.invalidate('content'); },
             sameTuple
         );
         domain.scope.subscribeSelector(domain.store,
             function (state) {
-                return [state.pool, state.episodesCache, state.poolStatus, state.seasonLoads, state.season, state.filters, state.stage, state.picker, state.seasonEpisodeCount, state.avgRuntimeMinutes];
+                return [state.pool, state.episodesCache, state.poolStatus, state.seasonLoads, state.season, state.filters, state.stage, state.seasonEpisodeCount, state.avgRuntimeMinutes];
             },
-            function () {
-                var state = domain.store.get();
-                updateEpisodeBadges(selectEpisodeBadges(object, state, domain.selection.getSeasonDefault(state.season)));
-            },
+            function () { scheduler.invalidate('badges'); },
             sameTuple
         );
         domain.scope.subscribeSelector(domain.store,
             function (state) { return [state.season, state.pool, state.filters, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
-            function () { syncFilterChips(selectFilterChipData(domain.store.get(), movie, hasSeasons)); },
+            function () { scheduler.invalidate('filters'); },
             sameTuple
         );
         domain.scope.subscribeSelector(domain.store,
             function (state) {
-                var progress = selectSearchProgress(state);
-                return [selectStatusText(state), progress.stage];
+                return [state.statusText, state.poolStatus, state.poolStartedAt, state.poolAutoRetryAt, state.poolAttempt, state.season, state.seasonLoads];
             },
-            function (presentation) {
-                setStatus(presentation[0], presentation[1] === 'loading');
-                ensureStatusTicking(presentation[1]);
-            },
+            function () { scheduler.invalidate('status'); },
             sameTuple
         );
         domain.scope.subscribeSelector(domain.store,
             function (state) { return [state.poolIndexers, state.poolAllIndexers]; },
-            function () { renderTrackers(selectPoolIndexers(domain.store.get())); },
+            function () { scheduler.invalidate('trackers'); },
             sameTuple
         );
         domain.scope.subscribeSelector(domain.store,
             function (state) { return [state.picker, state.pool, state.poolStatus, state.seasonLoads, state.season, state.filters, state.seasonEpisodeCount, state.avgRuntimeMinutes]; },
-            function (presentation, previous) {
-                if (presentation[0].open) openPickerPanel();
-                else if (previous[0].open) hidePickerDom();
-            },
+            function () { scheduler.invalidate('picker'); },
             sameTuple
         );
 
-        ensureStatusTicking(selectSearchProgress(domain.store.get()).stage);
+        scheduler.invalidate('content');
+        scheduler.invalidate('badges');
+        scheduler.invalidate('filters');
+        scheduler.invalidate('status');
+        scheduler.invalidate('trackers');
+        scheduler.invalidate('picker');
 
         function renderComponent(js) {
             return explorer.render(js);
