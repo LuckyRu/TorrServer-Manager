@@ -160,9 +160,11 @@ internal sealed class MainForm : Form
         var versionCaption = CreateCaption("Версия", new Point(340, 18));
         versionCaption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         versionValue.Text = "—";
-        versionValue.AutoSize = true;
+        versionValue.AutoSize = false;
+        versionValue.AutoEllipsis = true;
+        versionValue.Size = new Size(208, 24);
         versionValue.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        versionValue.Location = new Point(430, 18);
+        versionValue.Location = new Point(340, 42);
         var addressCaption = CreateCaption("Для Lampa", new Point(18, 88));
         addressValue.Text = controller.LanUrl;
         addressValue.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
