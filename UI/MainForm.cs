@@ -158,7 +158,7 @@ internal sealed class MainForm : Form
         statusDetails.AutoEllipsis = true;
         statusDetails.Size = new Size(265, 24);
         statusDetails.Location = new Point(59, 50);
-        var versionCaption = CreateCaption("Версия", new Point(340, 18));
+        var versionCaption = CreateCaption("Сборка", new Point(340, 18));
         versionCaption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         versionValue.Text = "—";
         versionValue.AutoSize = false;
@@ -177,8 +177,8 @@ internal sealed class MainForm : Form
         addressCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         addressCopyButton.Height = 30;
         addressCopyButton.Click += (_, _) => CopyToClipboard(addressCopyButton, addressValue.Text);
-        var buildCaption = CreateCaption("Сборка", new Point(18, 140));
-        updateText.Text = "Downstream-сборка · проверка upstream вручную";
+        var buildCaption = CreateCaption("Обновление", new Point(18, 140));
+        updateText.Text = "Upstream ещё не проверялся";
         updateText.ForeColor = Muted;
         updateText.Font = new Font("Segoe UI", 9F);
         updateText.AutoSize = false;
@@ -186,14 +186,17 @@ internal sealed class MainForm : Form
         updateText.Location = new Point(18, 160);
         updateText.Size = new Size(300, 42);
         checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 144), 100);
-        updateButton = CreateButton("Открыть upstream", Accent, new Point(440, 144), 108);
+        checkButton.AutoSize = false;
+        checkButton.Size = new Size(100, 40);
+        updateButton = CreateButton("Открыть релиз", Accent, new Point(440, 144), 108);
+        updateButton.AutoSize = false;
+        updateButton.Size = new Size(108, 40);
         updateButton.Enabled = false;
-        var updateButtonRow = CreateButtonRow(new Point(330, 144), new Size(218, 40), 40, checkButton, updateButton);
-        updateButtonRow.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        updateButton.Visible = false;
         statusPanel.Controls.AddRange([
             statusDot, statusText, statusDetails, versionCaption, versionValue,
             addressCaption, addressValue, addressCopyButton,
-            buildCaption, updateText, updateButtonRow
+            buildCaption, updateText, checkButton, updateButton
         ]);
         Controls.Add(statusPanel);
 
@@ -238,7 +241,7 @@ internal sealed class MainForm : Form
         hubButton.Click += (_, _) => OpenPluginHub();
         var hubCaption = new Label
         {
-            Text = "Плагины — добавьте вручную в отдельной Lampa: Настройки → Расширения → Добавить плагин",
+            Text = "Плагины · адрес загрузчика для Lampa",
             ForeColor = Muted,
             AutoSize = false,
             AutoEllipsis = true,
@@ -949,7 +952,7 @@ internal sealed class MainForm : Form
                 ? "Работает"
                 : flareSolverrStatus.ProcessRunning ? "Запускается" : flareSolverrStatus.IsInstalled ? "Остановлен" : "Не установлен";
             flareSolverrDetails.Text = flareSolverrStatus.IsRunning
-                ? $"API: {flareSolverrController.LocalUrl} · PID {flareSolverrStatus.ProcessId}"
+                ? "API доступен"
                 : flareSolverrStatus.IsInstalled
                     ? flareSolverrDesiredRunning ? "API недоступен · автоматическое восстановление" : "Остановлен вручную · автозапуск выключен"
                     : "Положите flaresolverr.exe в ProgramData\\FlareSolverr";
@@ -975,6 +978,8 @@ internal sealed class MainForm : Form
             return;
         SetBusy(true, "Проверка upstream…");
         updateText.Text = "Связь с официальными релизами GitHub…";
+        availableUpstreamRelease = null;
+        updateButton.Visible = false;
         try
         {
             var installed = await controller.GetInstalledVersionAsync(lifetime.Token);
@@ -984,7 +989,7 @@ internal sealed class MainForm : Form
                 installedBuild = null;
                 availableUpstreamRelease = null;
                 updateButton.Enabled = false;
-                updateText.Text = $"Неизвестная сборка: {installed}\nНужна пересборка с downstream-тегом";
+                updateText.Text = "Сборка не распознана\nНужна пересборка с downstream-тегом";
                 if (showUpToDateMessage)
                     MessageBox.Show(this, updateText.Text, "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
@@ -992,8 +997,9 @@ internal sealed class MainForm : Form
             {
                 installedBuild = build;
                 availableUpstreamRelease = release;
-                updateText.Text = $"{build.FullTag}\nНовая upstream-база: {release.Version} · нужен rebase";
+                updateText.Text = $"Новая база: {release.Version}\nНужен rebase downstream-коммитов";
                 updateButton.Enabled = true;
+                updateButton.Visible = true;
                 trayIcon.ShowBalloonTip(5000, "Новая upstream-база", $"TorrServer {release.Version}: нужен rebase downstream-коммитов", ToolTipIcon.Info);
             }
             else
@@ -1001,7 +1007,7 @@ internal sealed class MainForm : Form
                 installedBuild = build;
                 availableUpstreamRelease = null;
                 updateButton.Enabled = false;
-                updateText.Text = $"{build.FullTag}\nUpstream {build.UpstreamTag} актуален";
+                updateText.Text = $"Upstream {build.UpstreamTag} актуален";
                 if (showUpToDateMessage)
                     MessageBox.Show(this, "Сборка актуальна относительно upstream.", "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -1016,6 +1022,7 @@ internal sealed class MainForm : Form
         {
             SetBusy(false, null);
             updateButton.Enabled = availableUpstreamRelease is not null;
+            updateButton.Visible = availableUpstreamRelease is not null;
         }
     }
 
