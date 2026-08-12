@@ -1,8 +1,8 @@
-From b0e942982153a1c4a36b2029d8348812a77db1fd Mon Sep 17 00:00:00 2001
+From 8d156e5fd3b981320f0b948595b1b9f1f209f772 Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:42:52 +0300
-Subject: [PATCH 7/9] gstreamer: bound task-slot contention instead of letting
- clients evict each other
+Subject: [PATCH 07/12] gstreamer: bound task-slot contention instead of
+ letting clients evict each other
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

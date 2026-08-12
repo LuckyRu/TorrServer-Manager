@@ -1,7 +1,7 @@
-From ad97d4a4ece5a538799c5199b76f55694f764af0 Mon Sep 17 00:00:00 2001
+From 54f6b2bf4bc27507bb21b0db8ec44311affb438f Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:11:13 +0300
-Subject: [PATCH 5/9] gstreamer: update and extend tests for the gate-based
+Subject: [PATCH 05/12] gstreamer: update and extend tests for the gate-based
  lock and segment leasing
 
 Update call sites renamed from Task.mu to the gate helpers, and add

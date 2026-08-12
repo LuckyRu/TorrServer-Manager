@@ -1,7 +1,7 @@
-From bd97b82c28eadb83fb80b0004836c1f26d633e92 Mon Sep 17 00:00:00 2001
+From 6178060b14a283c3dcc2c023da49c2d6027c2501 Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:11:12 +0300
-Subject: [PATCH 2/9] gstreamer: make the task lock context-aware and add
+Subject: [PATCH 02/12] gstreamer: make the task lock context-aware and add
  LeaseSegment
 
 Task.mu was a plain sync.Mutex, so a cancelled request would still wait its

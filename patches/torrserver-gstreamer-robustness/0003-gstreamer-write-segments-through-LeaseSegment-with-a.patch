@@ -1,7 +1,7 @@
-From 76a255e833b5e7b11c01fc7c3a777db9282329b9 Mon Sep 17 00:00:00 2001
+From edfad59168b0acdedd659b1b1da01060b754bff5 Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:11:12 +0300
-Subject: [PATCH 3/9] gstreamer: write segments through LeaseSegment with a
+Subject: [PATCH 03/12] gstreamer: write segments through LeaseSegment with a
  bounded write deadline
 
 The segment handler used to call consume() under Task.mu, so a client that

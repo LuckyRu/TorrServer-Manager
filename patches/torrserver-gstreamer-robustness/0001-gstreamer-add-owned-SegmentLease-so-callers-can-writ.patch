@@ -1,7 +1,7 @@
-From e784ace878a1396123cc4f06302f55acaa71ff99 Mon Sep 17 00:00:00 2001
+From c111d08ee988627921c30b901daeb61071417776 Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:11:12 +0300
-Subject: [PATCH 1/9] gstreamer: add owned SegmentLease so callers can write
+Subject: [PATCH 01/12] gstreamer: add owned SegmentLease so callers can write
  outside the task lock
 
 Segment.Payloads alias the mp4BoxReader arena, which gets recycled on the next

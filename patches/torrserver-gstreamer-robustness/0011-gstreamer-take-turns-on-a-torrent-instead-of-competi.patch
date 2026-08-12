@@ -1,0 +1,298 @@
+From 3a5ecf3ac04e4a22f8bfad7b89d231b1e4a1cb03 Mon Sep 17 00:00:00 2001
+From: TorrServerManager <noreply@torrservermanager.local>
+Date: Wed, 12 Aug 2026 20:10:56 +0300
+Subject: [PATCH 11/12] gstreamer: take turns on a torrent instead of competing
+ for its connections
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+TorrServer creates a reader per HTTP request and its cache splits the torrent's
+connection budget across every open reader (ConnectionsLimit / len(readers)), giving
+each one its own fetch-this-piece-now claim at its own offset. Probing, reading the
+cue index and prerolling a pipeline each open a reader, so running them together
+starves whichever one the viewer is waiting for — a pipeline can fail its five second
+state-change budget while the swarm is plainly fast.
+
+Serialise them behind a per-torrent gate. Per torrent, not per file, because the
+budget is shared per torrent: probing one episode competes with playing another from
+the same pack. Requests wait on their own context; callers without one give up after a
+timeout and proceed, since stalling behind another operation would be worse than the
+contention.
+
+Also debounce repeated segment failures: a failing segment fails the same way when
+asked again immediately, and players retry hard enough to show four attempts inside
+two seconds, each costing a seek and a fresh reader. Replay the last error briefly
+instead. Cancellation is not remembered — it says nothing about the segment.
+---
+ server/gstreamer/pipeline_gst.go |  6 +++
+ server/gstreamer/service.go      | 78 ++++++++++++++++++++++++++++++++
+ server/gstreamer/task.go         | 71 +++++++++++++++++++++++++++++
+ 3 files changed, 155 insertions(+)
+
+diff --git a/server/gstreamer/pipeline_gst.go b/server/gstreamer/pipeline_gst.go
+index 6551823..2e5ebd6 100644
+--- a/server/gstreamer/pipeline_gst.go
++++ b/server/gstreamer/pipeline_gst.go
+@@ -1296,6 +1296,12 @@ func (r *gstRunner) freezeAtPosition(seconds float64) {
+ 
+ func (r *gstRunner) startPipeline(seconds float64) (float64, error) {
+ 	r.ensureTransientState()
++
++	// Prerolling opens a reader on the torrent and has a hard state-change budget, so it
++	// must not race probing or cue reading for the same torrent's connections.
++	releaseTorrent := r.task.acquireTorrent()
++	defer releaseTorrent()
++
+ 	gstTaskDebugf(r.task, "pipeline start requested=%.3fs audio=%d", seconds, r.audioIndex)
+ 	pipeline, err := gstRuntime.parseLaunch(r.createPipelineArgs())
+ 	if err != nil {
+diff --git a/server/gstreamer/service.go b/server/gstreamer/service.go
+index 54940d5..b027564 100644
+--- a/server/gstreamer/service.go
++++ b/server/gstreamer/service.go
+@@ -52,6 +52,9 @@ type Service struct {
+ 	cueCache map[string]cueCacheEntry
+ 	cueCalls singleflight.Group
+ 
++	gateMu sync.Mutex
++	gates  map[string]chan struct{}
++
+ 	cleanupRunning atomic.Bool
+ 	disposed       atomic.Bool
+ 	stopCleanup    chan struct{}
+@@ -69,6 +72,10 @@ const (
+ 
+ 	cueCacheTTL         = probeCacheTTL
+ 	cueNegativeCacheTTL = time.Minute
++
++	// How long an operation waits for the torrent gate before going ahead regardless.
++	probeGateWait    = 20 * time.Second
++	pipelineGateWait = 15 * time.Second
+ )
+ 
+ type probeCacheEntry struct {
+@@ -190,6 +197,7 @@ func (s *Service) getOrAdd(ctx context.Context, hash string, fileID string, audi
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	task.AcquireTorrent = func() func() { return s.acquireTorrentWithin(id, pipelineGateWait) }
+ 
+ 	var replaced *Task
+ 	var evicted []*Task
+@@ -249,6 +257,67 @@ func taskCallKey(hash string, fileID string, audio int) string {
+ 	return hash + "\x00" + fileID + "\x00" + strconv.Itoa(audio)
+ }
+ 
++// acquireTorrent serialises the operations that each open their own TorrServer reader:
++// probing, reading the cue index, starting a pipeline.
++//
++// TorrServer splits a torrent's connection budget across every open reader
++// (ConnectionsLimit / len(readers) in the cache prioritiser) and gives each reader its own
++// "fetch this piece now" claim at its own offset. Running these at the same time therefore
++// starves whichever one the viewer is actually waiting for, which is how a pipeline ends up
++// unable to preroll while the swarm is plainly fast.
++//
++// The gate is per torrent, not per file, because the budget is shared per torrent.
++func (s *Service) acquireTorrent(ctx context.Context, hash string) (func(), error) {
++	if hash == "" {
++		return func() {}, nil
++	}
++
++	gate := s.torrentGate(hash)
++	select {
++	case gate <- struct{}{}:
++		return func() { <-gate }, nil
++	case <-ctx.Done():
++		return nil, ctx.Err()
++	}
++}
++
++// acquireTorrentWithin is for callers without a request context. It gives up after the
++// timeout and lets the caller proceed anyway: waiting forever behind another torrent
++// operation would be a worse failure than the contention it is trying to avoid.
++func (s *Service) acquireTorrentWithin(hash string, timeout time.Duration) func() {
++	if hash == "" {
++		return func() {}
++	}
++
++	gate := s.torrentGate(hash)
++	timer := time.NewTimer(timeout)
++	defer timer.Stop()
++
++	select {
++	case gate <- struct{}{}:
++		return func() { <-gate }
++	case <-timer.C:
++		return func() {}
++	}
++}
++
++// Gates are kept for the lifetime of the service: one channel per torrent ever played is
++// negligible, and reclaiming them safely would need reference counting for no real gain.
++func (s *Service) torrentGate(hash string) chan struct{} {
++	s.gateMu.Lock()
++	defer s.gateMu.Unlock()
++
++	if s.gates == nil {
++		s.gates = make(map[string]chan struct{})
++	}
++	gate := s.gates[hash]
++	if gate == nil {
++		gate = make(chan struct{}, 1)
++		s.gates[hash] = gate
++	}
++	return gate
++}
++
+ func sleepContext(ctx context.Context, delay time.Duration) error {
+ 	timer := time.NewTimer(delay)
+ 	defer timer.Stop()
+@@ -358,7 +427,11 @@ func (s *Service) Probe(hash string, fileID string) (ProbeInfo, error) {
+ 			return cached, err
+ 		}
+ 		conf := s.currentConfig()
++		// gst-discoverer opens its own TorrServer reader; keep it off the torrent while
++		// another operation is already reading it. See acquireTorrent.
++		release := s.acquireTorrentWithin(hash, probeGateWait)
+ 		result, err := probeSource(sourceURL(conf, hash, fileID), conf)
++		release()
+ 		if err != nil {
+ 			return ProbeInfo{}, err
+ 		}
+@@ -404,7 +477,12 @@ func (s *Service) cueTimeline(ctx context.Context, conf Config, hash string, fil
+ 		if cue, ok := s.getCachedCue(key); ok {
+ 			return cue, nil
+ 		}
++		release, err := s.acquireTorrent(ctx, hash)
++		if err != nil {
++			return nil, err
++		}
+ 		cue := readMatroskaCueTimeline(ctx, sourceURL, probe.FileSize, probe.DurationNS)
++		release()
+ 		if cue == nil && ctx.Err() != nil {
+ 			// Cancelled, not absent: caching this would deny the next caller a cue
+ 			// timeline it could have had.
+diff --git a/server/gstreamer/task.go b/server/gstreamer/task.go
+index 4fcb43e..7cb2890 100644
+--- a/server/gstreamer/task.go
++++ b/server/gstreamer/task.go
+@@ -6,6 +6,7 @@ import (
+ 	"context"
+ 	"errors"
+ 	"math"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
+@@ -34,6 +35,10 @@ type Task struct {
+ 	// while", which is how the service tells a swap fight from an episode switch.
+ 	CreatedAt time.Time
+ 
++	// AcquireTorrent keeps pipeline startup off the torrent while probing or cue reading
++	// is using it; nil in tests, where there is no torrent to contend for.
++	AcquireTorrent func() func()
++
+ 	LastSentSegment int
+ 
+ 	initMu  sync.RWMutex
+@@ -50,6 +55,11 @@ type Task struct {
+ 	subtitleMu     sync.RWMutex
+ 	subtitleStores map[int]*subtitleStore
+ 
++	failureMu   sync.Mutex
++	failedKey   string
++	failedAt    time.Time
++	failedError error
++
+ 	disposed atomic.Bool
+ }
+ 
+@@ -129,6 +139,16 @@ func (t *Task) unlock() {
+ 	<-t.gateChan()
+ }
+ 
++func (t *Task) acquireTorrent() func() {
++	if t == nil || t.AcquireTorrent == nil {
++		return func() {}
++	}
++	if release := t.AcquireTorrent(); release != nil {
++		return release
++	}
++	return func() {}
++}
++
+ func (t *Task) UpdateLastActive() {
+ 	t.activeMu.Lock()
+ 	t.lastActive = time.Now().UTC()
+@@ -291,12 +311,21 @@ func (t *Task) WithSegment(ctx context.Context, index int, audio int, consume fu
+ // The caller writes it out after the lock is gone, so a player that stops reading its
+ // response can no longer stall every other request on this task.
+ func (t *Task) LeaseSegment(ctx context.Context, index int, audio int) (*SegmentLease, error) {
++	if err := t.recentSegmentFailure(index, audio); err != nil {
++		return nil, err
++	}
+ 	if err := t.lock(ctx); err != nil {
+ 		return nil, err
+ 	}
+ 	defer t.unlock()
+ 
++	// Re-check under the gate: the request ahead of us may have just failed this segment.
++	if err := t.recentSegmentFailure(index, audio); err != nil {
++		return nil, err
++	}
++
+ 	seg, err := t.segmentLocked(ctx, index, audio)
++	t.noteSegmentOutcome(index, audio, err)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -416,6 +445,48 @@ func (t *Task) validateSegmentIndex(index int) error {
+ 
+ const maxSegmentCatchupSeconds = 60
+ 
++// A failing segment fails the same way if asked again immediately, and each attempt costs
++// a seek and a fresh reader on the torrent. Players retry hard — four requests inside two
++// seconds shows up in the logs — so replay the last error for a moment instead of tearing
++// the pipeline down again for each one.
++const segmentFailureDebounce = 1500 * time.Millisecond
++
++func segmentFailureKey(index int, audio int) string {
++	return strconv.Itoa(index) + ":" + strconv.Itoa(audio)
++}
++
++func (t *Task) recentSegmentFailure(index int, audio int) error {
++	t.failureMu.Lock()
++	defer t.failureMu.Unlock()
++
++	if t.failedError == nil || t.failedKey != segmentFailureKey(index, audio) {
++		return nil
++	}
++	if time.Since(t.failedAt) >= segmentFailureDebounce {
++		t.failedError = nil
++		return nil
++	}
++	return t.failedError
++}
++
++func (t *Task) noteSegmentOutcome(index int, audio int, err error) {
++	// Cancellation says nothing about the segment: the next request may well succeed.
++	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
++		return
++	}
++
++	t.failureMu.Lock()
++	defer t.failureMu.Unlock()
++
++	if err == nil {
++		t.failedError = nil
++		return
++	}
++	t.failedKey = segmentFailureKey(index, audio)
++	t.failedAt = time.Now()
++	t.failedError = err
++}
++
+ func (t *Task) Frozen() {
+ 	t.lockBlocking()
+ 	defer t.unlock()

@@ -1,7 +1,7 @@
-From 59432b957006b8c9d57d2e3ce8c3ad4b911c9d80 Mon Sep 17 00:00:00 2001
+From 498970b8031d36a73284d58b0e708562fc6befd2 Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:57:11 +0300
-Subject: [PATCH 9/9] gstreamer: stop checkptr from aborting the test binary
+Subject: [PATCH 09/12] gstreamer: stop checkptr from aborting the test binary
  under -race
 
 go test -race could not run this package at all: it died with

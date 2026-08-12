@@ -1,0 +1,150 @@
+From 4d5f1fc0d01e7681af958a17446e958558bc1edc Mon Sep 17 00:00:00 2001
+From: TorrServerManager <noreply@torrservermanager.local>
+Date: Wed, 12 Aug 2026 20:10:56 +0300
+Subject: [PATCH 12/12] gstreamer: cover the torrent gate and segment failure
+ debounce
+
+The gate serialises per hash and leaves other torrents alone, honours the caller's
+context, and lets contextless callers through after their timeout. Repeated failures
+on one segment reach the runner once; a different segment still does; and a cancelled
+request does not poison the next attempt.
+---
+ server/gstreamer/pipeline_gst_test.go | 62 +++++++++++++++++++++++++++
+ server/gstreamer/service_test.go      | 51 ++++++++++++++++++++++
+ 2 files changed, 113 insertions(+)
+
+diff --git a/server/gstreamer/pipeline_gst_test.go b/server/gstreamer/pipeline_gst_test.go
+index 03c3f25..d74d84c 100644
+--- a/server/gstreamer/pipeline_gst_test.go
++++ b/server/gstreamer/pipeline_gst_test.go
+@@ -1521,6 +1521,68 @@ func TestTaskLeaseSegmentSkipsSeekForCancelledRequest(t *testing.T) {
+ 	}
+ }
+ 
++// A player that retries a failing segment must not cost a pipeline teardown per attempt.
++func TestTaskLeaseSegmentDebouncesRepeatedFailure(t *testing.T) {
++	sentinel := errors.New("segment exploded")
++	var attempts atomic.Int64
++	task := &Task{
++		LastSentSegment: -1,
++		Config:          Config{SegmentSeconds: 6}.normalized(),
++		runner: &fakePipelineRunner{
++			getSegment: func(context.Context, int, int) (Segment, error) {
++				attempts.Add(1)
++				return Segment{}, sentinel
++			},
++		},
++	}
++
++	for range 4 {
++		if _, err := task.LeaseSegment(context.Background(), 0, 0); !errors.Is(err, sentinel) {
++			t.Fatalf("error=%v, want sentinel", err)
++		}
++	}
++	if got := attempts.Load(); got != 1 {
++		t.Fatalf("runner was asked %d times, want 1 — the rest should replay the last error", got)
++	}
++
++	// A different segment is not suppressed.
++	if _, err := task.LeaseSegment(context.Background(), 1, 0); !errors.Is(err, sentinel) {
++		t.Fatalf("error=%v, want sentinel", err)
++	}
++	if got := attempts.Load(); got != 2 {
++		t.Fatalf("attempts=%d, want the second index to reach the runner", got)
++	}
++}
++
++// Cancellation says nothing about the segment, so it must not be remembered as a failure.
++func TestTaskLeaseSegmentDoesNotDebounceCancellation(t *testing.T) {
++	var attempts atomic.Int64
++	task := &Task{
++		LastSentSegment: -1,
++		Config:          Config{SegmentSeconds: 6}.normalized(),
++		runner: &fakePipelineRunner{
++			getSegment: func(ctx context.Context, _ int, _ int) (Segment, error) {
++				attempts.Add(1)
++				if err := ctx.Err(); err != nil {
++					return Segment{}, err
++				}
++				return Segment{Header: []byte("segment")}, nil
++			},
++		},
++	}
++
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	_, _ = task.LeaseSegment(ctx, 0, 0)
++
++	if _, err := task.LeaseSegment(context.Background(), 0, 0); err != nil {
++		t.Fatalf("error=%v, want the retry to be attempted", err)
++	}
++	if got := attempts.Load(); got != 1 {
++		t.Fatalf("attempts=%d, want the cancelled request not to poison the next one", got)
++	}
++}
++
+ // Everything a task can be asked to do, at once, the way a player plus the cleanup
+ // loop plus the bus watcher would. Errors are expected once Dispose lands; what this
+ // asserts is that the gate keeps LastSentSegment and the runner handle consistent, that
+diff --git a/server/gstreamer/service_test.go b/server/gstreamer/service_test.go
+index 2676742..903f800 100644
+--- a/server/gstreamer/service_test.go
++++ b/server/gstreamer/service_test.go
+@@ -137,6 +137,57 @@ func TestSwapDefendedOnlyCoversFreshAndActiveTasks(t *testing.T) {
+ 	}
+ }
+ 
++// Probing, cue reading and pipeline startup each open their own TorrServer reader, and the
++// torrent's connection budget is split across open readers — so they have to take turns.
++func TestAcquireTorrentSerialisesPerHash(t *testing.T) {
++	service := &Service{conf: Config{}.normalized()}
++
++	release, err := service.acquireTorrent(context.Background(), "hash")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// A different torrent is unaffected.
++	otherRelease, err := service.acquireTorrent(context.Background(), "other")
++	if err != nil {
++		t.Fatal(err)
++	}
++	otherRelease()
++
++	// The same torrent waits, and gives up with the caller's context.
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if _, err := service.acquireTorrent(ctx, "hash"); !errors.Is(err, context.Canceled) {
++		t.Fatalf("second acquire error=%v, want context.Canceled", err)
++	}
++
++	// Callers without a context proceed anyway rather than stall forever.
++	start := time.Now()
++	fallback := service.acquireTorrentWithin("hash", 30*time.Millisecond)
++	if elapsed := time.Since(start); elapsed < 25*time.Millisecond {
++		t.Fatalf("acquireTorrentWithin returned after %v, want it to wait for the timeout", elapsed)
++	}
++	fallback()
++
++	release()
++	again, err := service.acquireTorrent(context.Background(), "hash")
++	if err != nil {
++		t.Fatal(err)
++	}
++	again()
++}
++
++func TestAcquireTorrentIgnoresEmptyHash(t *testing.T) {
++	service := &Service{conf: Config{}.normalized()}
++	for range 3 {
++		release, err := service.acquireTorrent(context.Background(), "")
++		if err != nil {
++			t.Fatal(err)
++		}
++		release()
++	}
++}
++
+ func TestTaskCallKeySeparatesFilesAndAudio(t *testing.T) {
+ 	keys := map[string]struct{}{}
+ 	for _, key := range []string{

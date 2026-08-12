@@ -1,7 +1,7 @@
-From 312a1f2d920821ff37bccdcb9ac815a5ee3c7424 Mon Sep 17 00:00:00 2001
+From c6e1376acb1b904a9aa3bb87cf7c535b7b011aec Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:42:52 +0300
-Subject: [PATCH 8/9] gstreamer: cover task-slot contention and the cue cache
+Subject: [PATCH 08/12] gstreamer: cover task-slot contention and the cue cache
 
 Regression coverage for the swap fight: a freshly installed, still-serving task is
 defended and the caller gets ErrTaskBusy within the retry budget rather than hanging;

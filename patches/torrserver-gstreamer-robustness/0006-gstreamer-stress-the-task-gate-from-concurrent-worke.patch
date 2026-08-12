@@ -1,7 +1,7 @@
-From f21a984c3b829d7d7c32e613088c2dec567a5b9b Mon Sep 17 00:00:00 2001
+From ed60d41e5b333148fc8759fbd7d52756752b7cbc Mon Sep 17 00:00:00 2001
 From: TorrServerManager <noreply@torrservermanager.local>
 Date: Tue, 11 Aug 2026 23:42:52 +0300
-Subject: [PATCH 6/9] gstreamer: stress the task gate from concurrent workers
+Subject: [PATCH 06/12] gstreamer: stress the task gate from concurrent workers
 
 The gate tests so far each exercised one operation at a time, which is not what the
 lock discipline has to survive. Add a test that runs segment leases, EnsureInit,
