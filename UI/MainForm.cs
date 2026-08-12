@@ -185,9 +185,9 @@ internal sealed class MainForm : Form
         updateText.AutoEllipsis = true;
         updateText.Location = new Point(18, 160);
         updateText.Size = new Size(300, 42);
-        checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 144), 100);
+        checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(440, 144), 108);
         checkButton.AutoSize = false;
-        checkButton.Size = new Size(100, 40);
+        checkButton.Size = new Size(108, 40);
         updateButton = CreateButton("Открыть релиз", Accent, new Point(440, 144), 108);
         updateButton.AutoSize = false;
         updateButton.Size = new Size(108, 40);
@@ -979,7 +979,7 @@ internal sealed class MainForm : Form
         SetBusy(true, "Проверка обновлений…");
         updateText.Text = "Проверка официальной базы TorrServer…";
         availableUpstreamRelease = null;
-        updateButton.Visible = false;
+        LayoutUpstreamActions(showRelease: false);
         try
         {
             var installed = await controller.GetInstalledVersionAsync(lifetime.Token);
@@ -999,7 +999,7 @@ internal sealed class MainForm : Form
                 availableUpstreamRelease = release;
                 updateText.Text = $"Доступна новая база {release.Version}\nОткройте upstream для rebase";
                 SetButtonEnabled(updateButton, true);
-                updateButton.Visible = true;
+                LayoutUpstreamActions(showRelease: true);
                 trayIcon.ShowBalloonTip(5000, "Новая upstream-база", $"TorrServer {release.Version}: нужен rebase downstream-коммитов", ToolTipIcon.Info);
             }
             else
@@ -1022,8 +1022,15 @@ internal sealed class MainForm : Form
         {
             SetBusy(false, null);
             SetButtonEnabled(updateButton, availableUpstreamRelease is not null);
-            updateButton.Visible = availableUpstreamRelease is not null;
+            LayoutUpstreamActions(showRelease: availableUpstreamRelease is not null);
         }
+    }
+
+    private void LayoutUpstreamActions(bool showRelease)
+    {
+        updateButton.Location = new Point(440, 144);
+        checkButton.Location = showRelease ? new Point(330, 144) : new Point(440, 144);
+        updateButton.Visible = showRelease;
     }
 
     private void OpenTorrServerUpdateGuide()
