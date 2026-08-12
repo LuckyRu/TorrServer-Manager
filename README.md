@@ -104,11 +104,15 @@ Lampa на WebOS сама по себе — только плеер-оболоч
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-Она получает официальный стабильный release TorrServer по тегу `MatriX.*` из `config\torrserver-release.lock`, применяет GST patch, собирает `TorrServer.exe`,
+Она инициализирует субмодуль `external\TorrServer` из форка `LuckyRu/TorrServer`, проверяет pinned commit и официальный базовый тег `MatriX.*` из `config\torrserver-release.lock`, применяет GST patch, собирает `TorrServer.exe`,
 а затем публикует `TorrServerManager.exe` вместе со встроенным Torrent Mod Plugin в `publish\`.
-Требуются Windows, Git, .NET 10 SDK и Node.js; требуемую версию Go скрипт читает из скачанного
-`server\go.mod`, найдёт на PATH или скачает в
+Требуются Windows, Git с доступом к субмодулям, .NET 10 SDK и Node.js; требуемую версию Go скрипт читает из
+`external\TorrServer\server\go.mod`, найдёт на PATH или скачает в
 игнорируемый `.tools\`.
+
+После обычного `git clone` нужно выполнить `git submodule update --init --recursive` либо клонировать
+репозиторий сразу с `--recurse-submodules`. Сборка не изменяет рабочее дерево субмодуля: исходники
+копируются во временный `.build\` перед применением локальных патчей.
 
 Для отдельных изменений Manager см. [CLAUDE.md](CLAUDE.md) — команды `dotnet build` / `dotnet publish`,
 архитектура компонентов (`ServerController`, `JackettController`, `UpdateService`,

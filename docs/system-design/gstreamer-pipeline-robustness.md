@@ -171,7 +171,8 @@ Go-указатель именно так и выглядит.
 - `go test -tags=gst ./gstreamer` — зелёный на Windows и Linux.
 - `go test -race` под WSL (Ubuntu 24.04, gcc 13.3, Go 1.25.7 через `GOTOOLCHAIN=auto`) — зелёный,
   **с включённым checkptr**, ×10 прогонов. Конкурентные тесты гонялись ×30–50.
-- `powershell -File scripts\build-all.ps1` — полный прогон: скачивание релиза, оба патча, тесты,
+- `powershell -File scripts\build-all.ps1` — полный прогон: проверка submodule и официального базового
+  релиза, копирование источника, оба патча, тесты,
   `go build`, `dotnet publish`.
 
 Чего **не** сделано, и это главный пробел:

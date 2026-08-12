@@ -1,6 +1,6 @@
 # Пересобрать TorrServer с расширенным GST-пайплайном
 
-Два патча накладываются на официальный исходник TorrServer, в этом порядке:
+Два патча накладываются на исходник TorrServer из pinned git submodule, в этом порядке:
 
 1. [`../../patches/torrserver-gstreamer-container-support.patch`](../../patches/torrserver-gstreamer-container-support.patch)
    — расширяет GST-first транспорт Torrent Mod. Один плоский файл, накладывается `git apply`.
@@ -14,10 +14,44 @@
    diff-плоского-файла-к-плоскому-файлу вместо читаемых шагов.
 
 Для обычной сборки всего продукта используйте [`../../scripts/build-all.ps1`](../../scripts/build-all.ps1):
-он сам скачивает официальный стабильный release TorrServer по тегу `MatriX.*` и накатывает оба
-патча в правильном порядке. Без параметров скрипт использует тег из `config\torrserver-release.lock`.
-Для проверки нового релиза можно передать тег явно: `-TorrServerTag MatriX.142.2`, а после проверки
-обновить lock-файл. Ветки, произвольные commit и draft/prerelease не принимаются.
+он инициализирует `external/TorrServer`, проверяет его commit по
+`config/torrserver-release.lock`, подтверждает официальный стабильный базовый релиз `MatriX.*` и
+накатывает оба патча в правильном порядке. Субмодуль не изменяется: сборщик копирует только его
+`server/` во временный `.build/`.
+
+Lock-файл хранит три связанные величины:
+
+```json
+{
+  "submodulePath": "external/TorrServer",
+  "repository": "git@github.com:LuckyRu/TorrServer.git",
+  "tag": "MatriX.142.2",
+  "commit": "d442a8b4500568ddd2d7647c7b1f72f073b79ea9"
+}
+```
+
+`tag` — официальный upstream-релиз, от которого происходит кодовая база, а `commit` — точный
+коммит форка, который реально собирается. В форке пока может не быть собственного `MatriX.*`-тега.
+Ветки, незапиненные commit и draft/prerelease не принимаются.
+
+Для clean clone:
+
+```powershell
+git clone --recurse-submodules <repository-url>
+Set-Location <repository-directory>
+git submodule status --recursive
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
+```
+
+Если репозиторий уже склонирован без субмодулей:
+
+```powershell
+git submodule update --init --recursive
+```
+
+Обновление источника выполняется атомарно: сначала checkout проверенного commit в
+`external/TorrServer`, затем обновляются `commit` и `tag` в lock-файле одним коммитом основного
+репозитория. Нельзя запускать сборку с изменённым или незакоммиченным рабочим деревом субмодуля.
 
 ## Что поддержано
 
@@ -36,11 +70,11 @@ TS/M2TS, VOB/MPEG-PS и Ogg намеренно не включены: их demux
 
 ## Сборка
 
-`git am` (нужен для серии robustness) требует настоящего git-репозитория с закоммиченным
-индексом — `git init`, затем коммит сразу после первого патча, до серии:
+`git am` (нужен для серии robustness) выполняется во временной копии `server/` и требует настоящего
+git-репозитория с закоммиченным индексом — `git init`, затем коммит сразу после первого патча, до серии:
 
 ```powershell
-Set-Location <TorrServer-source>
+Set-Location <TorrServer-copy>
 git init -q .
 git apply --check <TorrServerManager>\patches\torrserver-gstreamer-container-support.patch
 git apply <TorrServerManager>\patches\torrserver-gstreamer-container-support.patch
@@ -69,14 +103,15 @@ go build '-tags=nosqlite,gst' -trimpath '-ldflags=-s -w -checklinkname=0' -o Tor
 запустить менеджер с `--background`. После запуска проверить `http://127.0.0.1:8090/gst/echo`:
 у `gst_discoverer` и `gstreamer` должно быть `works: true`.
 
-## Clean clone
+## Clean clone и выпуск
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -TorrServerTag MatriX.142.2
+git submodule update --init --recursive
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-Скрипт требует Git, .NET 10 SDK и Node.js. Версия Go читается из `server\go.mod` выбранного
-release, затем берётся с PATH либо скачивается в
-`.tools\go-1.25.7\`; исходники TorrServer и промежуточные файлы лежат в `.build\`. Обе папки
+Скрипт требует Git с доступом к `git@github.com:LuckyRu/TorrServer.git`, .NET 10 SDK и Node.js. Версия
+Go читается из `external\TorrServer\server\go.mod`, затем берётся с PATH либо скачивается в
+`.tools\go-1.25.7\`; копия исходников и промежуточные файлы лежат в `.build\`. Обе папки
 игнорируются Git и не являются частью поставки. GStreamer runtime не компилируется из исходников:
 его устанавливает/контролирует Manager на целевой машине.

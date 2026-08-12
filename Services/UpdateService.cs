@@ -8,7 +8,7 @@ internal sealed record ReleaseInfo(string Version);
 internal sealed partial class UpdateService : IDisposable
 {
     private const string LatestReleaseApi = "https://api.github.com/repos/YouROK/TorrServer/releases/latest";
-    public const string SourceRepositoryUrl = "https://github.com/YouROK/TorrServer";
+    public const string SourceRepositoryUrl = "https://github.com/LuckyRu/TorrServer";
     private readonly HttpClient httpClient;
 
     public UpdateService()
