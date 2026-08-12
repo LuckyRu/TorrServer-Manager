@@ -203,7 +203,7 @@ internal sealed partial class ServerController : IDisposable
         }
     }
 
-    [GeneratedRegex(@"MatriX(?:\.\d+)+", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"MatriX(?:\.\d+)+(?:-TorrentMod(?:\.\d+)+)?", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();
 
     public void Dispose() => httpClient.Dispose();

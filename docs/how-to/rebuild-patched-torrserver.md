@@ -10,8 +10,10 @@
 он инициализирует `external/TorrServer`, берёт ровно тот commit, который записан в gitlink,
 находит ближайший downstream-тег `MatriX.*-TorrentMod.*` в его истории, извлекает из него
 upstream-базу и подтверждает её совпадение с официальным стабильным релизом upstream. В бинарник
-передаётся только upstream-версия `MatriX.142.2`; полный downstream-тег остаётся идентификатором
-сборки. Субмодуль не изменяется: сборщик копирует только его `server/` во временный `.build/`.
+передаётся полный downstream-тег `MatriX.142.2-TorrentMod.1.0`, поэтому версия самого бинарника
+отражает модифицированную сборку. Updater сравнивает из этого значения только upstream-базу с
+официальными релизами. Субмодуль не изменяется: сборщик копирует только его `server/` во временный
+`.build/`.
 
 Для clean clone:
 
@@ -62,7 +64,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 `TorrServer.exe` с тегами `nosqlite,gst` и публикует Manager.
 
 Для release-сборки скрипт сам берёт downstream-тег из истории субмодуля, проверяет его
-upstream-часть и передаёт только её в `-X server/version.Version`.
+upstream-часть и передаёт полный тег в `-X server/version.Version`.
 
 Перед заменой установленного бинарника остановить `TorrServerManager.exe`, иначе его supervisor
 может перезапустить старый TorrServer. Скопировать новый файл поверх `TorrServer.exe` и снова

@@ -217,7 +217,7 @@ if (-not $SkipTests) {
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $serverOutput = Join-Path $outputRoot 'TorrServer.exe'
-$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$torrServerVersion"
+$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$torrServerReleaseTag"
 Invoke-Native -FilePath $go -Arguments @('build', '-tags=nosqlite,gst', '-trimpath', "-ldflags=$ldflags", '-o', $serverOutput, './cmd') -WorkingDirectory $serverModule
 
 $managerArguments = @('publish', 'TorrServerManager.csproj', '-c', 'Release', '-o', $outputRoot)
@@ -227,7 +227,8 @@ Write-Host ""
 Write-Host "Готово:" -ForegroundColor Green
 Write-Host "  Manager:   $(Join-Path $outputRoot 'TorrServerManager.exe')"
 Write-Host "  TorrServer: $serverOutput"
-Write-Host "  Version:    $torrServerVersion"
+Write-Host "  Version:    $torrServerReleaseTag"
+Write-Host "  Upstream:   $torrServerVersion"
 Write-Host "  Release:    $torrServerReleaseTag"
 Write-Host "  Source:     $($torrServerSource.Repository)@$($torrServerSource.Commit)"
 Write-Host "  Go:         $goVersion"

@@ -50,11 +50,11 @@ internal sealed partial class UpdateService : IDisposable
     {
         var match = VersionRegex().Match(value);
         return match.Success
-            ? match.Value["MatriX".Length..].TrimStart('.').Split('.').Select(v => int.TryParse(v, out var n) ? n : 0).ToArray()
+            ? match.Groups["upstream"].Value["MatriX".Length..].TrimStart('.').Split('.').Select(v => int.TryParse(v, out var n) ? n : 0).ToArray()
             : [];
     }
 
-    [GeneratedRegex(@"MatriX(?:\.\d+)+", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<upstream>MatriX(?:\.\d+)+)(?:-TorrentMod(?:\.\d+)+)?", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();
 
     public void Dispose() => httpClient.Dispose();
