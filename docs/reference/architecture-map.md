@@ -20,10 +20,10 @@
 
 | Файл | Роль |
 |---|---|
-| `ServerController.cs` | `TorrServer.exe` как дочерний процесс: старт/стоп/рестарт, HTTP health-check `127.0.0.1:8090`, версия из `--version` (формат `MatriX.x.x.x`). |
+| `ServerController.cs` | `TorrServer.exe` как дочерний процесс: старт/стоп/рестарт, HTTP health-check `127.0.0.1:8090`, downstream-версия из `--version` (формат `MatriX.x.x-TorrentMod.x.x`). |
 | `JackettController.cs` | `JackettConsole.exe` та же схема, без службы Windows и UAC. Флаги: `-z --DataFolder <dir> -p 9117 --NoUpdates`. |
 | `ProcessRecoveryTracker.cs` | Состояние supervisor для TorrServer, Jackett и FlareSolverr: порог HTTP-сбоев, экспоненциальный backoff и журналирование восстановления. Ручной Stop меняет желаемое состояние и не компенсируется автозапуском. |
-| `UpdateService.cs` | Проверяет GitHub Releases TorrServer и сравнивает версии. Установка намеренно отключена: downstream-ветка форка требует обновления исходников и пересборки. |
+| `UpdateService.cs` | Проверяет официальные upstream-релизы TorrServer и сравнивает их с upstream-базой локального downstream-тега. Установка не выполняется: новая база требует rebase downstream-ветки и пересборки. |
 | `FirewallService.cs` | На старте — non-elevated проверка правил `Get-NetFirewallRule`; если нет — один elevated `New-NetFirewallRule` (`-EncodedCommand`, один UAC-запрос) для портов TorrServer/Plugin Hub. Jackett правило не нужно (loopback-only). |
 
 ## Plugin Hub (`PluginHub.cs`) — крупнейший файл

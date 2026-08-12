@@ -3,7 +3,8 @@ using System.Text.RegularExpressions;
 
 namespace TorrServerManager.Services;
 
-internal sealed record ReleaseInfo(string Version);
+internal sealed record ReleaseInfo(string Version, string HtmlUrl);
+internal sealed record InstalledBuildInfo(string FullTag, string UpstreamTag, bool IsDownstream);
 
 internal sealed partial class UpdateService : IDisposable
 {
@@ -28,7 +29,26 @@ internal sealed partial class UpdateService : IDisposable
         var root = document.RootElement;
         var tag = root.GetProperty("tag_name").GetString()
             ?? throw new InvalidDataException("GitHub не вернул версию релиза.");
-        return new ReleaseInfo(tag);
+        var htmlUrl = root.TryGetProperty("html_url", out var htmlUrlProperty)
+            ? htmlUrlProperty.GetString()
+            : null;
+        return new ReleaseInfo(tag, htmlUrl ?? $"https://github.com/YouROK/TorrServer/releases/tag/{tag}");
+    }
+
+    public static bool TryParseInstalledBuild(string value, out InstalledBuildInfo build)
+    {
+        var match = VersionRegex().Match(value.Trim());
+        if (!match.Success)
+        {
+            build = null!;
+            return false;
+        }
+
+        build = new InstalledBuildInfo(
+            match.Value,
+            match.Groups["upstream"].Value,
+            match.Groups["downstream"].Success);
+        return true;
     }
 
     public static bool IsNewer(string candidate, string installed)
@@ -54,7 +74,7 @@ internal sealed partial class UpdateService : IDisposable
             : [];
     }
 
-    [GeneratedRegex(@"(?<upstream>MatriX(?:\.\d+)+)(?:-TorrentMod(?:\.\d+)+)?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(?<upstream>MatriX(?:\.\d+)+)(?<downstream>-TorrentMod(?:\.\d+)+)?$", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();
 
     public void Dispose() => httpClient.Dispose();

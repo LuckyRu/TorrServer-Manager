@@ -86,7 +86,8 @@ internal sealed class MainForm : Form
     private readonly ToolStripMenuItem trayJackettStartItem = new("Запустить");
     private readonly ToolStripMenuItem trayJackettStopItem = new("Остановить");
     private readonly ToolStripMenuItem trayJackettRestartItem = new("Перезапустить");
-    private ReleaseInfo? availableRelease;
+    private ReleaseInfo? availableUpstreamRelease;
+    private InstalledBuildInfo? installedBuild;
     private bool allowExit;
     private bool busy;
     private bool jackettBusy;
@@ -353,18 +354,20 @@ internal sealed class MainForm : Form
         var updatePanel = CreateCard(new Rectangle(24, 896, 572, 94));
         var updateTitle = new Label
         {
-            Text = "Обновления TorrServer",
+            Text = "TorrServer · наша сборка",
             Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(18, 14)
         };
-        updateText.Text = "Проверка выполняется вручную через GitHub";
+        updateText.Text = "Downstream-сборка · проверка upstream вручную";
         updateText.ForeColor = Muted;
+        updateText.Font = new Font("Segoe UI", 9F);
+        updateText.AutoSize = false;
         updateText.AutoEllipsis = true;
         updateText.Location = new Point(19, 45);
-        updateText.Size = new Size(300, 24);
-        checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 24), 100);
-        updateButton = CreateButton("Инструкция", Accent, new Point(440, 24), 108);
+        updateText.Size = new Size(300, 42);
+        checkButton = CreateButton("Проверить upstream", Color.FromArgb(71, 85, 105), new Point(330, 24), 100);
+        updateButton = CreateButton("Открыть upstream", Accent, new Point(440, 24), 108);
         updateButton.Enabled = false;
         var updateButtonRow = CreateButtonRow(new Point(330, 24), new Size(218, 40), 40, checkButton, updateButton);
         updateButtonRow.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -477,7 +480,7 @@ internal sealed class MainForm : Form
         trayStartItem.Click += async (_, _) => await RunOperationAsync("Запуск…", StartTorrServerAsync);
         trayStopItem.Click += async (_, _) => await RunOperationAsync("Остановка…", StopTorrServerAsync);
         trayRestartItem.Click += async (_, _) => await RunOperationAsync("Перезапуск…", RestartTorrServerAsync);
-        var checkItem = new ToolStripMenuItem("Проверить обновления", null, async (_, _) => await CheckForUpdatesAsync(showUpToDateMessage: true));
+        var checkItem = new ToolStripMenuItem("Проверить upstream", null, async (_, _) => await CheckForUpdatesAsync(showUpToDateMessage: true));
         var exitItem = new ToolStripMenuItem("Выход", null, (_, _) => ExitApplication());
         menu.Items.AddRange([
             openManagerItem,
@@ -976,59 +979,70 @@ internal sealed class MainForm : Form
     {
         if (busy)
             return;
-        SetBusy(true, "Проверка обновлений…");
+        SetBusy(true, "Проверка upstream…");
         updateText.Text = "Связь с официальными релизами GitHub…";
         try
         {
             var installed = await controller.GetInstalledVersionAsync(lifetime.Token);
             var release = await updateService.GetLatestReleaseAsync(lifetime.Token);
-            if (UpdateService.IsNewer(release.Version, installed))
+            if (!UpdateService.TryParseInstalledBuild(installed, out var build))
             {
-                availableRelease = release;
-                updateText.Text = $"Доступна {release.Version} · установлена {installed} · нужна пересборка";
+                installedBuild = null;
+                availableUpstreamRelease = null;
+                updateButton.Enabled = false;
+                updateText.Text = $"Неизвестная сборка: {installed}\nНужна пересборка с downstream-тегом";
+                if (showUpToDateMessage)
+                    MessageBox.Show(this, updateText.Text, "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            else if (UpdateService.IsNewer(release.Version, build.UpstreamTag))
+            {
+                installedBuild = build;
+                availableUpstreamRelease = release;
+                updateText.Text = $"{build.FullTag}\nНовая upstream-база: {release.Version} · нужен rebase";
                 updateButton.Enabled = true;
-                trayIcon.ShowBalloonTip(5000, "Доступно обновление", $"TorrServer {release.Version}: нужна пересборка", ToolTipIcon.Info);
+                trayIcon.ShowBalloonTip(5000, "Новая upstream-база", $"TorrServer {release.Version}: нужен rebase downstream-коммитов", ToolTipIcon.Info);
             }
             else
             {
-                availableRelease = null;
+                installedBuild = build;
+                availableUpstreamRelease = null;
                 updateButton.Enabled = false;
-                updateText.Text = $"Установлена актуальная версия {installed}";
+                updateText.Text = $"{build.FullTag}\nUpstream {build.UpstreamTag} актуален";
                 if (showUpToDateMessage)
-                    MessageBox.Show(this, "Установлена актуальная версия TorrServer.", "Обновления", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(this, "Сборка актуальна относительно upstream.", "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
         catch (Exception exception)
         {
             AppLog.Write(exception);
-            updateText.Text = "Не удалось проверить обновления";
+            updateText.Text = "Не удалось проверить upstream\nПовторите проверку позже";
             MessageBox.Show(this, exception.Message, "Проверка обновлений", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
             SetBusy(false, null);
-            updateButton.Enabled = availableRelease is not null;
+            updateButton.Enabled = availableUpstreamRelease is not null;
         }
     }
 
     private void OpenTorrServerUpdateGuide()
     {
-        if (availableRelease is null)
+        if (availableUpstreamRelease is null || installedBuild is null)
             return;
         var answer = MessageBox.Show(
             this,
-            $"Доступна версия TorrServer {availableRelease.Version}.\n\n" +
-            "Автоматическая установка отключена: текущий бинарник содержит локальные изменения GST. " +
-            "Откройте исходники, примените patch и пересоберите TorrServer по инструкции проекта.\n\n" +
-            "Открыть исходники TorrServer?",
-            "Обновление TorrServer",
+            $"Доступна новая upstream-база {availableUpstreamRelease.Version}.\n\n" +
+            $"Установлена наша сборка {installedBuild.FullTag}.\n" +
+            "Нужно перенести downstream-коммиты ветки torrserver-manager и пересобрать продукт.\n\n" +
+            "Открыть upstream-релиз?",
+            "Состояние сборки TorrServer",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Information);
         if (answer != DialogResult.Yes)
             return;
         try
         {
-            Process.Start(new ProcessStartInfo(UpdateService.SourceRepositoryUrl) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(availableUpstreamRelease.HtmlUrl) { UseShellExecute = true });
         }
         catch (Exception exception)
         {
@@ -1041,7 +1055,7 @@ internal sealed class MainForm : Form
     {
         busy = value;
         checkButton.Enabled = !value;
-        updateButton.Enabled = !value && availableRelease is not null;
+        updateButton.Enabled = !value && availableUpstreamRelease is not null;
         if (value && activity is not null)
         {
             statusDot.ForeColor = Amber;
