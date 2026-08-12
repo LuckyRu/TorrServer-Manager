@@ -142,7 +142,7 @@ internal sealed class MainForm : Form
         Controls.Add(title);
         Controls.Add(subtitle);
 
-        var statusPanel = CreateCard(new Rectangle(24, 82, 572, 150));
+        var statusPanel = CreateCard(new Rectangle(24, 82, 572, 220));
         statusDot.Text = "●";
         statusDot.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
         statusDot.ForeColor = Amber;
@@ -177,16 +177,33 @@ internal sealed class MainForm : Form
         addressCopyButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         addressCopyButton.Height = 30;
         addressCopyButton.Click += (_, _) => CopyToClipboard(addressCopyButton, addressValue.Text);
-        statusPanel.Controls.AddRange([statusDot, statusText, statusDetails, versionCaption, versionValue, addressCaption, addressValue, addressCopyButton]);
+        var buildCaption = CreateCaption("Сборка", new Point(18, 140));
+        updateText.Text = "Downstream-сборка · проверка upstream вручную";
+        updateText.ForeColor = Muted;
+        updateText.Font = new Font("Segoe UI", 9F);
+        updateText.AutoSize = false;
+        updateText.AutoEllipsis = true;
+        updateText.Location = new Point(18, 160);
+        updateText.Size = new Size(300, 42);
+        checkButton = CreateButton("Проверить", Color.FromArgb(71, 85, 105), new Point(330, 144), 100);
+        updateButton = CreateButton("Открыть upstream", Accent, new Point(440, 144), 108);
+        updateButton.Enabled = false;
+        var updateButtonRow = CreateButtonRow(new Point(330, 144), new Size(218, 40), 40, checkButton, updateButton);
+        updateButtonRow.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        statusPanel.Controls.AddRange([
+            statusDot, statusText, statusDetails, versionCaption, versionValue,
+            addressCaption, addressValue, addressCopyButton,
+            buildCaption, updateText, updateButtonRow
+        ]);
         Controls.Add(statusPanel);
 
-        startButton = CreateButton("Запустить", Accent, new Point(24, 252), 106);
-        stopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(140, 252), 112);
-        restartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(262, 252), 132);
-        openButton = CreateButton("Открыть веб", Green, new Point(404, 252), 132);
-        Controls.Add(CreateButtonRow(new Point(24, 252), new Size(572, 40), 40, startButton, stopButton, restartButton, openButton));
+        startButton = CreateButton("Запустить", Accent, new Point(24, 322), 106);
+        stopButton = CreateButton("Остановить", Color.FromArgb(71, 85, 105), new Point(140, 322), 112);
+        restartButton = CreateButton("Перезапустить", Color.FromArgb(71, 85, 105), new Point(262, 322), 132);
+        openButton = CreateButton("Открыть веб", Green, new Point(404, 322), 132);
+        Controls.Add(CreateButtonRow(new Point(24, 322), new Size(572, 40), 40, startButton, stopButton, restartButton, openButton));
 
-        var lampaPanel = CreateCard(new Rectangle(24, 312, 572, 220));
+        var lampaPanel = CreateCard(new Rectangle(24, 382, 572, 220));
         var lampaTitle = new Label
         {
             Text = "Lampa",
@@ -244,7 +261,7 @@ internal sealed class MainForm : Form
         ]);
         Controls.Add(lampaPanel);
 
-        var jackettPanel = CreateCard(new Rectangle(24, 548, 572, 184));
+        var jackettPanel = CreateCard(new Rectangle(24, 618, 572, 184));
         var jackettTitle = new Label
         {
             Text = "Jackett / Torznab",
@@ -310,7 +327,7 @@ internal sealed class MainForm : Form
         ]);
         Controls.Add(jackettPanel);
 
-        var flareSolverrPanel = CreateCard(new Rectangle(24, 748, 572, 132));
+        var flareSolverrPanel = CreateCard(new Rectangle(24, 818, 572, 132));
         var flareSolverrTitle = new Label
         {
             Text = "FlareSolverr",
@@ -350,29 +367,6 @@ internal sealed class MainForm : Form
             flareSolverrButtonRow
         ]);
         Controls.Add(flareSolverrPanel);
-
-        var updatePanel = CreateCard(new Rectangle(24, 896, 572, 94));
-        var updateTitle = new Label
-        {
-            Text = "TorrServer · наша сборка",
-            Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(18, 14)
-        };
-        updateText.Text = "Downstream-сборка · проверка upstream вручную";
-        updateText.ForeColor = Muted;
-        updateText.Font = new Font("Segoe UI", 9F);
-        updateText.AutoSize = false;
-        updateText.AutoEllipsis = true;
-        updateText.Location = new Point(19, 45);
-        updateText.Size = new Size(300, 42);
-        checkButton = CreateButton("Проверить upstream", Color.FromArgb(71, 85, 105), new Point(330, 24), 100);
-        updateButton = CreateButton("Открыть upstream", Accent, new Point(440, 24), 108);
-        updateButton.Enabled = false;
-        var updateButtonRow = CreateButtonRow(new Point(330, 24), new Size(218, 40), 40, checkButton, updateButton);
-        updateButtonRow.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        updatePanel.Controls.AddRange([updateTitle, updateText, updateButtonRow]);
-        Controls.Add(updatePanel);
 
         startButton.Click += async (_, _) => await RunOperationAsync("Запуск…", StartTorrServerAsync);
         stopButton.Click += async (_, _) => await RunOperationAsync("Остановка…", StopTorrServerAsync);
