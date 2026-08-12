@@ -32,8 +32,11 @@ npm run test:plugin                                                 # JS plugin 
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1  # clean full build: TorrServer + Manager
 ```
 
-No linter in this repo. The full clean build (fixed TorrServer source + GST patch + Manager) is
-`scripts/build-all.ps1`; it writes both executables to `publish\`. Full release checklist (version bump, deploy, plugin-cache refresh) is the
+No linter in this repo. The full clean build (TorrServer submodule + Manager) is
+`scripts/build-all.ps1`; it writes both executables to `publish\`. TorrServer is pulled in as the
+`external/TorrServer` submodule (fork `LuckyRu/TorrServer`, branch `torrserver-manager`) — downstream
+fixes are commits on that branch, not patch files; see
+[`docs/how-to/rebuild-patched-torrserver.md`](docs/how-to/rebuild-patched-torrserver.md). Full release checklist (version bump, deploy, plugin-cache refresh) is the
 **`release-a-change` skill**; fast JS-only iteration without a full rebuild is the **`iterate-on-a-plugin-
 without-rebuilding`** doc. Verifying UI/navigation/search behavior live is the **`verify-lampa-live`**
 skill — Lampa has no public API docs, its own source and a live instance are the only ground truth.
