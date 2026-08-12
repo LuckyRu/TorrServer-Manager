@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [string]$TorrServerTag = '',
-    [string]$TorrServerCommit = '',
     [string]$OutputDirectory = '',
     [switch]$SkipTests,
     [switch]$NoGoBootstrap
@@ -11,14 +10,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $buildRoot = Join-Path $repoRoot '.build'
-# Один плоский патч (git apply) + одна именованная серия format-patch (git am),
-# применяемая поверх него, в этом порядке.
-$containerSupportPatch = Join-Path $repoRoot 'patches\torrserver-gstreamer-container-support.patch'
-$robustnessPatchDir = Join-Path $repoRoot 'patches\torrserver-gstreamer-robustness'
-$torrServerLockPath = Join-Path $repoRoot 'config\torrserver-release.lock'
 $torrServerSubmodulePath = Join-Path $repoRoot 'external\TorrServer'
 $officialTorrServerRepository = 'YouROK/TorrServer'
 $expectedSubmodulePath = 'external/TorrServer'
+$torrServerReleaseTagPattern = '^(?<upstream>MatriX\.\d+(?:\.\d+)+)-TorrentMod\.(?<downstream>\d+(?:\.\d+)*)$'
 $githubApiHeaders = @{ 'User-Agent' = 'TorrServerManager-build' }
 $outputRoot = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     Join-Path $repoRoot 'publish'
@@ -64,34 +59,6 @@ function Invoke-NativeOutput {
     }
 }
 
-function Read-TorrServerSourceLock {
-    if (-not (Test-Path -LiteralPath $torrServerLockPath)) {
-        throw "Не найден lock-файл источника TorrServer: $torrServerLockPath"
-    }
-
-    try {
-        $lock = Get-Content -LiteralPath $torrServerLockPath -Raw | ConvertFrom-Json
-    } catch {
-        throw "Не удалось прочитать lock-файл TorrServer: $($_.Exception.Message)"
-    }
-
-    foreach ($property in @('repository', 'tag', 'commit')) {
-        if ([string]::IsNullOrWhiteSpace([string]$lock.$property)) {
-            throw "В lock-файле TorrServer отсутствует '$property'."
-        }
-    }
-    if ([string]$lock.submodulePath -ne $expectedSubmodulePath) {
-        throw "Lock-файл ожидает submodulePath '$expectedSubmodulePath'."
-    }
-    if ([string]$lock.tag -notmatch '^MatriX\.\d+(\.\d+)*$') {
-        throw "Недопустимый базовый тег TorrServer '$($lock.tag)'. Разрешены только официальные теги MatriX.*."
-    }
-    if ([string]$lock.commit -notmatch '^[0-9a-fA-F]{40}$') {
-        throw "Commit TorrServer должен быть полным 40-символьным SHA."
-    }
-    return $lock
-}
-
 function Assert-OfficialTorrServerTag {
     param([Parameter(Mandatory = $true)][string]$Tag)
 
@@ -107,24 +74,24 @@ function Assert-OfficialTorrServerTag {
     if ([string]$release.tag_name -ne $Tag -or $release.draft -or $release.prerelease) {
         throw "Тег TorrServer '$Tag' не является официальным стабильным релизом upstream."
     }
+
+    $upstreamRef = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @(
+        'ls-remote', "https://github.com/$officialTorrServerRepository.git", "refs/tags/$Tag^{}"
+    )
+    $upstreamCommit = ($upstreamRef -split '\s+')[0]
+    $localCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', "refs/tags/$Tag^{}")
+    if ($upstreamCommit -notmatch '^[0-9a-fA-F]{40}$' -or $localCommit.ToLowerInvariant() -ne $upstreamCommit.ToLowerInvariant()) {
+        throw "Тег '$Tag' в submodule не совпадает с официальным upstream commit."
+    }
 }
 
 function Resolve-TorrServerSource {
-    param([Parameter(Mandatory = $true)][psobject]$Lock)
-
-    if (-not [string]::IsNullOrWhiteSpace($TorrServerTag) -and $TorrServerTag -ne $Lock.tag) {
-        throw "Запрошен TorrServerTag '$TorrServerTag', но lock-файл закрепляет '$($Lock.tag)'. Обновите lock вместе с submodule."
-    }
-    if (-not [string]::IsNullOrWhiteSpace($TorrServerCommit) -and $TorrServerCommit.ToLowerInvariant() -ne $Lock.commit.ToLowerInvariant()) {
-        throw "Запрошен TorrServerCommit '$TorrServerCommit', но lock-файл закрепляет '$($Lock.commit)'."
-    }
-
     if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.gitmodules'))) {
         throw "Не найден .gitmodules. Источник TorrServer должен быть подключён как submodule."
     }
     $submoduleUrl = (git config --file (Join-Path $repoRoot '.gitmodules') --get "submodule.$expectedSubmodulePath.url" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $submoduleUrl -ne [string]$Lock.repository) {
-        throw "URL submodule '$expectedSubmodulePath' не совпадает с lock-файлом: '$submoduleUrl'."
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($submoduleUrl)) {
+        throw "В .gitmodules не найден URL submodule '$expectedSubmodulePath'."
     }
 
     Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'sync', '--recursive')
@@ -134,21 +101,28 @@ function Resolve-TorrServerSource {
         throw "В submodule не найден server/go.mod: $torrServerSubmodulePath"
     }
 
-    $actualCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', 'HEAD')
-    if ($actualCommit.ToLowerInvariant() -ne [string]$Lock.commit.ToLowerInvariant()) {
-        throw "Commit submodule '$actualCommit' не совпадает с lock-файлом '$($Lock.commit)'. Обновите gitlink и lock атомарно."
-    }
-
     $dirty = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'status', '--porcelain', '--untracked-files=no')
     if (-not [string]::IsNullOrWhiteSpace($dirty)) {
         throw "Рабочее дерево TorrServer загрязнено. Сборка разрешена только из чистого pinned submodule.`n$dirty"
     }
 
-    Assert-OfficialTorrServerTag -Tag $Lock.tag
+    Invoke-Native -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'fetch', '--tags', 'origin')
+    $resolvedTag = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'describe', '--tags', '--match', 'MatriX.*-TorrentMod.*', '--abbrev=0', 'HEAD')
+    $tagMatch = [regex]::Match($resolvedTag, $torrServerReleaseTagPattern)
+    if (-not $tagMatch.Success) {
+        throw "Не удалось определить downstream-тег MatriX.*-TorrentMod.* из истории submodule."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TorrServerTag) -and $TorrServerTag -ne $resolvedTag) {
+        throw "Запрошен TorrServerTag '$TorrServerTag', но submodule закреплён на '$resolvedTag'."
+    }
+    $upstreamTag = $tagMatch.Groups['upstream'].Value
+    Assert-OfficialTorrServerTag -Tag $upstreamTag
+    $actualCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', 'HEAD')
     return [pscustomobject]@{
-        Tag = [string]$Lock.tag
-        Commit = [string]$Lock.commit
-        Repository = [string]$Lock.repository
+        ReleaseTag = $resolvedTag
+        UpstreamTag = $upstreamTag
+        Commit = $actualCommit
+        Repository = $submoduleUrl
     }
 }
 
@@ -215,25 +189,17 @@ function Resolve-GoVersion {
     return $version
 }
 
-if (-not (Test-Path -LiteralPath $containerSupportPatch)) {
-    throw "Не найден patch TorrServer: $containerSupportPatch"
-}
-$robustnessPatches = @(Get-ChildItem -LiteralPath $robustnessPatchDir -Filter '*.patch' | Sort-Object Name)
-if ($robustnessPatches.Count -eq 0) {
-    throw "В $robustnessPatchDir не найдено ни одного *.patch файла."
-}
-
-$sourceLock = Read-TorrServerSourceLock
-$torrServerSource = Resolve-TorrServerSource -Lock $sourceLock
-$TorrServerTag = $torrServerSource.Tag
-$sourceRoot = Join-Path $buildRoot "TorrServer-$TorrServerTag-$($torrServerSource.Commit.Substring(0, 12))"
+$torrServerSource = Resolve-TorrServerSource
+$torrServerReleaseTag = $torrServerSource.ReleaseTag
+$torrServerVersion = $torrServerSource.UpstreamTag
+$sourceRoot = Join-Path $buildRoot "TorrServer-$torrServerReleaseTag-$($torrServerSource.Commit.Substring(0, 12))"
 $serverModule = Join-Path $sourceRoot 'server'
 if (Test-Path -LiteralPath $sourceRoot) {
     Remove-Item -LiteralPath $sourceRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
-Write-Host "Копирование TorrServer submodule $($torrServerSource.Commit) (base $TorrServerTag)..."
+Write-Host "Копирование TorrServer submodule $($torrServerSource.Commit) (release $torrServerReleaseTag, base $torrServerVersion)..."
 Copy-Item -LiteralPath (Join-Path $torrServerSubmodulePath 'server') -Destination $serverModule -Recurse -Force
 if (-not (Test-Path -LiteralPath $serverModule)) {
     throw "В submodule TorrServer не найден server/: $serverModule"
@@ -244,36 +210,6 @@ $goRoot = Join-Path $repoRoot ".tools\go-$goVersion\go"
 $goExe = Join-Path $goRoot 'bin\go.exe'
 $go = Get-GoExecutable
 
-# git init даёт репозиторий для git am (нужен коммит-объект на каждый патч серии);
-# git apply работает и без него, но так оба шага живут в одном контексте.
-Invoke-Native -FilePath 'git.exe' -Arguments @('init', '-q', '.') -WorkingDirectory $sourceRoot
-
-Invoke-Native -FilePath 'git.exe' -Arguments @('apply', '--check', $containerSupportPatch) -WorkingDirectory $sourceRoot
-Invoke-Native -FilePath 'git.exe' -Arguments @('apply', $containerSupportPatch) -WorkingDirectory $sourceRoot
-
-# git am применяет каждый патч поверх текущего индекса, а не поверх файлов на диске —
-# без коммита индекс после git init пуст, и am не увидит файлы, которые apply уже изменил.
-Invoke-Native -FilePath 'git.exe' -Arguments @('add', '-A') -WorkingDirectory $sourceRoot
-Invoke-Native -FilePath 'git.exe' -Arguments @(
-    '-c', 'user.name=TorrServerManager build',
-    '-c', 'user.email=noreply@torrservermanager.local',
-    'commit', '-q', '-m', 'import: TorrServer + container-support patch'
-) -WorkingDirectory $sourceRoot
-
-# git am сохраняет автора/дату из заголовков патча, но для коммита-«применителя»
-# всё равно нужен committer; задаём его через окружение процесса, не через git config,
-# чтобы не трогать ничью конфигурацию и не зависеть от identity текущей машины.
-$env:GIT_AUTHOR_NAME = 'TorrServerManager build'
-$env:GIT_AUTHOR_EMAIL = 'noreply@torrservermanager.local'
-$env:GIT_COMMITTER_NAME = $env:GIT_AUTHOR_NAME
-$env:GIT_COMMITTER_EMAIL = $env:GIT_AUTHOR_EMAIL
-try {
-    foreach ($patch in $robustnessPatches) {
-        Invoke-Native -FilePath 'git.exe' -Arguments @('am', $patch.FullName) -WorkingDirectory $sourceRoot
-    }
-} finally {
-    Remove-Item Env:\GIT_AUTHOR_NAME, Env:\GIT_AUTHOR_EMAIL, Env:\GIT_COMMITTER_NAME, Env:\GIT_COMMITTER_EMAIL -ErrorAction SilentlyContinue
-}
 Invoke-Native -FilePath $go -Arguments @('fmt', './gstreamer') -WorkingDirectory $serverModule
 if (-not $SkipTests) {
     Invoke-Native -FilePath $go -Arguments @('test', '-tags=gst', './gstreamer') -WorkingDirectory $serverModule
@@ -281,7 +217,7 @@ if (-not $SkipTests) {
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $serverOutput = Join-Path $outputRoot 'TorrServer.exe'
-$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$TorrServerTag"
+$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$torrServerVersion"
 Invoke-Native -FilePath $go -Arguments @('build', '-tags=nosqlite,gst', '-trimpath', "-ldflags=$ldflags", '-o', $serverOutput, './cmd') -WorkingDirectory $serverModule
 
 $managerArguments = @('publish', 'TorrServerManager.csproj', '-c', 'Release', '-o', $outputRoot)
@@ -291,7 +227,7 @@ Write-Host ""
 Write-Host "Готово:" -ForegroundColor Green
 Write-Host "  Manager:   $(Join-Path $outputRoot 'TorrServerManager.exe')"
 Write-Host "  TorrServer: $serverOutput"
-Write-Host "  Version:    $TorrServerTag"
-Write-Host "  Release:    $TorrServerTag"
+Write-Host "  Version:    $torrServerVersion"
+Write-Host "  Release:    $torrServerReleaseTag"
 Write-Host "  Source:     $($torrServerSource.Repository)@$($torrServerSource.Commit)"
 Write-Host "  Go:         $goVersion"

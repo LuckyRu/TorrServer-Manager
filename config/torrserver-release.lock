@@ -1,6 +1,0 @@
-{
-  "submodulePath": "external/TorrServer",
-  "repository": "git@github.com:LuckyRu/TorrServer.git",
-  "tag": "MatriX.142.2",
-  "commit": "d442a8b4500568ddd2d7647c7b1f72f073b79ea9"
-}

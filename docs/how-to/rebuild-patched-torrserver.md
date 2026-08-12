@@ -1,38 +1,17 @@
 # Пересобрать TorrServer с расширенным GST-пайплайном
 
-Два патча накладываются на исходник TorrServer из pinned git submodule, в этом порядке:
-
-1. [`../../patches/torrserver-gstreamer-container-support.patch`](../../patches/torrserver-gstreamer-container-support.patch)
-   — расширяет GST-first транспорт Torrent Mod. Один плоский файл, накладывается `git apply`.
-2. [`../../patches/torrserver-gstreamer-robustness/`](../../patches/torrserver-gstreamer-robustness/)
-   — устойчивость пайплайна к хаотичному поведению плеера (аренда сегмента вне лока задачи,
-   контекстно-зависимый лок при seek); разбор — [`../system-design/gstreamer-pipeline-robustness.md`](../system-design/gstreamer-pipeline-robustness.md).
-   Не один файл, а упорядоченная серия `git format-patch` (`0001-*.patch`, `0002-*.patch`, ...),
-   накладывается `git am` поверх первого патча. Серия, а не squash, чтобы у каждой логической
-   правки было своё сообщение коммита и свой дифф — иначе при следующем изменении пришлось бы
-   перегенерировать один плоский файл целиком, и история самого TorrServerManager показывала бы
-   diff-плоского-файла-к-плоскому-файлу вместо читаемых шагов.
+Расширения GST находятся в форке [`LuckyRu/TorrServer`](https://github.com/LuckyRu/TorrServer)
+отдельными содержательными коммитами ветки `torrserver-manager`. Родительский репозиторий
+фиксирует точный downstream-коммит через gitlink `external/TorrServer`; отдельный lock-файл не
+нужен и намеренно не используется. Релизные теги имеют формат
+`MatriX.<upstream>-TorrentMod.<version>`, например `MatriX.142.2-TorrentMod.1.0`.
 
 Для обычной сборки всего продукта используйте [`../../scripts/build-all.ps1`](../../scripts/build-all.ps1):
-он инициализирует `external/TorrServer`, проверяет его commit по
-`config/torrserver-release.lock`, подтверждает официальный стабильный базовый релиз `MatriX.*` и
-накатывает оба патча в правильном порядке. Субмодуль не изменяется: сборщик копирует только его
-`server/` во временный `.build/`.
-
-Lock-файл хранит три связанные величины:
-
-```json
-{
-  "submodulePath": "external/TorrServer",
-  "repository": "git@github.com:LuckyRu/TorrServer.git",
-  "tag": "MatriX.142.2",
-  "commit": "d442a8b4500568ddd2d7647c7b1f72f073b79ea9"
-}
-```
-
-`tag` — официальный upstream-релиз, от которого происходит кодовая база, а `commit` — точный
-коммит форка, который реально собирается. В форке пока может не быть собственного `MatriX.*`-тега.
-Ветки, незапиненные commit и draft/prerelease не принимаются.
+он инициализирует `external/TorrServer`, берёт ровно тот commit, который записан в gitlink,
+находит ближайший downstream-тег `MatriX.*-TorrentMod.*` в его истории, извлекает из него
+upstream-базу и подтверждает её совпадение с официальным стабильным релизом upstream. В бинарник
+передаётся только upstream-версия `MatriX.142.2`; полный downstream-тег остаётся идентификатором
+сборки. Субмодуль не изменяется: сборщик копирует только его `server/` во временный `.build/`.
 
 Для clean clone:
 
@@ -49,9 +28,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 git submodule update --init --recursive
 ```
 
-Обновление источника выполняется атомарно: сначала checkout проверенного commit в
-`external/TorrServer`, затем обновляются `commit` и `tag` в lock-файле одним коммитом основного
-репозитория. Нельзя запускать сборку с изменённым или незакоммиченным рабочим деревом субмодуля.
+Обновление источника выполняется атомарно: в форке обновляется ветка `torrserver-manager`, после
+чего родительский репозиторий обновляет gitlink одним коммитом. В clean clone Git получает ровно
+этот commit; поле `branch = torrserver-manager` в `.gitmodules` служит подсказкой для сопровождающих,
+но не заменяет pin. Нельзя запускать сборку с изменённым или незакоммиченным рабочим деревом
+субмодуля.
 
 ## Что поддержано
 
@@ -70,33 +51,18 @@ TS/M2TS, VOB/MPEG-PS и Ogg намеренно не включены: их demux
 
 ## Сборка
 
-`git am` (нужен для серии robustness) выполняется во временной копии `server/` и требует настоящего
-git-репозитория с закоммиченным индексом — `git init`, затем коммит сразу после первого патча, до серии:
+Ручное применение patch-файлов больше не требуется: они мигрированы в историю форка и удалены
+из этого репозитория. Для локального полного прогона достаточно:
 
 ```powershell
-Set-Location <TorrServer-copy>
-git init -q .
-git apply --check <TorrServerManager>\patches\torrserver-gstreamer-container-support.patch
-git apply <TorrServerManager>\patches\torrserver-gstreamer-container-support.patch
-git add -A
-git -c user.name=build -c user.email=build@local commit -q -m import
-
-$env:GIT_AUTHOR_NAME = 'build'; $env:GIT_AUTHOR_EMAIL = 'build@local'
-$env:GIT_COMMITTER_NAME = 'build'; $env:GIT_COMMITTER_EMAIL = 'build@local'
-Get-ChildItem <TorrServerManager>\patches\torrserver-gstreamer-robustness\*.patch |
-    Sort-Object Name | ForEach-Object { git am $_.FullName }
-
-Set-Location server
-gofmt -w gstreamer
-go test -tags=gst ./gstreamer
-go build '-tags=nosqlite,gst' -trimpath '-ldflags=-s -w -checklinkname=0' -o TorrServer.exe ./cmd
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-Автор/коммиттер задаются через окружение процесса, а не `git config` — это чужой временный клон,
-трогать чью-то git-identity незачем и небезопасно на CI-машине.
+Скрипт форматирует GST-код, запускает `go test -tags=gst ./gstreamer`, собирает
+`TorrServer.exe` с тегами `nosqlite,gst` и публикует Manager.
 
-Для release-сборки версия должна совпадать с официальным тегом: добавьте
-`-X server/version.Version=MatriX.<version>` в `-ldflags`.
+Для release-сборки скрипт сам берёт downstream-тег из истории субмодуля, проверяет его
+upstream-часть и передаёт только её в `-X server/version.Version`.
 
 Перед заменой установленного бинарника остановить `TorrServerManager.exe`, иначе его supervisor
 может перезапустить старый TorrServer. Скопировать новый файл поверх `TorrServer.exe` и снова

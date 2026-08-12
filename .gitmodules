@@ -1,3 +1,4 @@
 [submodule "external/TorrServer"]
 	path = external/TorrServer
 	url = git@github.com:LuckyRu/TorrServer.git
+	branch = torrserver-manager

@@ -1,16 +1,13 @@
 # GStreamer pipeline: устойчивость к хаотичному поведению плеера
 
-Патч-серия [`patches/torrserver-gstreamer-robustness/`](../../patches/torrserver-gstreamer-robustness/)
-к вендорённому TorrServer — что она меняет, зачем и что нельзя сломать.
+Расширения GST поддерживаются в downstream-ветке `torrserver-manager` форка
+[`LuckyRu/TorrServer`](https://github.com/LuckyRu/TorrServer). Каждый логический шаг хранится
+отдельным коммитом самого TorrServer, а `external/TorrServer` в родительском репозитории
+фиксирует собираемый commit. Это делает историю изменений и разрешение конфликтов видимыми
+непосредственно там, где находится изменённый код.
 
-**Основное назначение документа — разбор конфликтов.** `vendor/` в `.gitignore`, сборка каждый раз
-качает релиз TorrServer заново и накатывает патчи через `git am`. При обновлении апстрима часть
-патчей перестанет применяться, и тот, кто будет разрешать конфликт, должен знать не «какие строки
-были», а **какое свойство каждый коммит удерживает**. Слить неправильно здесь легко: всё
-скомпилируется и тесты пройдут, а плеер начнёт изредка получать чужие байты.
-
-Порядок применения: сначала `torrserver-gstreamer-container-support.patch` (`git apply`), затем эта
-серия (`git am`, по возрастанию номера). Как пересобрать —
+При обновлении upstream нужно переносить downstream-коммиты в ветку форка и заново проверить
+инварианты ниже. Как пересобрать —
 [`../how-to/rebuild-patched-torrserver.md`](../how-to/rebuild-patched-torrserver.md).
 
 ## 1. Инварианты
@@ -21,17 +18,17 @@
 ### И1. Байты сегмента копируются под гейтом задачи
 
 `Segment.Payloads` — не владеющие копии, а срезы в переиспользуемую арену парсера.
-`mp4BoxReader.ReleaseSegment` ([mp4box.go:2613](../../vendor/torrserver-source/server/gstreamer/mp4box.go))
+`mp4BoxReader.ReleaseSegment` ([mp4box.go:2613](../../external/TorrServer/server/gstreamer/mp4box.go))
 возвращает буферы в оборот, и вызывается он из `discardReadySegment`
-([pipeline_gst.go:1248](../../vendor/torrserver-source/server/gstreamer/pipeline_gst.go)), который
+([pipeline_gst.go:1248](../../external/TorrServer/server/gstreamer/pipeline_gst.go)), который
 дёргают `Seek`, `GetSegment`, `freezeAtPosition`, `Dispose`.
 
 Отсюда: сегмент, полученный из `runner.GetSegment`, действителен **только пока держится гейт
-задачи**. `leaseSegment` ([segment.go:35](../../vendor/torrserver-source/server/gstreamer/segment.go))
+задачи**. `leaseSegment` ([segment.go:35](../../external/TorrServer/server/gstreamer/segment.go))
 обязан вызываться внутри критической секции, до `unlock()`.
 
 Как ломается: кто-то «оптимизирует» `LeaseSegment`
-([task.go:293](../../vendor/torrserver-source/server/gstreamer/task.go)), перенеся снятие копии за
+([task.go:293](../../external/TorrServer/server/gstreamer/task.go)), перенеся снятие копии за
 `unlock()` или заменив копию обратно на заём. Компилируется, тесты зелёные, а под нагрузкой плеер
 получает куски чужого сегмента. Регрессия ловится
 `TestTaskLeaseSegmentCopiesOutOfReaderArena`.
@@ -48,7 +45,7 @@
 ### И3. Отменённый запрос не выполняет работу
 
 Гейт — канал, а не мьютекс, именно чтобы ожидание прерывалось по контексту
-([task.go:92](../../vendor/torrserver-source/server/gstreamer/task.go)). Проверка `ctx` стоит **до**
+([task.go:92](../../external/TorrServer/server/gstreamer/task.go)). Проверка `ctx` стоит **до**
 перемотки, а не после. Иначе скраб по таймлайну превращается в очередь из десятков бессмысленных
 `Seek`.
 
@@ -56,7 +53,7 @@
 потеря `ctx` в сигнатуре `seekToSegmentLocked`. Ловится
 `TestTaskLeaseSegmentSkipsSeekForCancelledRequest`.
 
-## 2. Патчи
+## 2. Downstream-коммиты
 
 | № | Коммит | Держит | Файлы |
 |---|---|---|---|
@@ -69,6 +66,9 @@
 | 0007 | ограничение борьбы за слот задачи | И3 | `service.go`, `task.go`, `cue.go`, `handlers.go` |
 | 0008 | тесты борьбы за слот и кэша cue | — | тесты |
 | 0009 | checkptr не роняет тесты под `-race` | — | `gst_api.go`, `video_probe_gst.go` |
+| 0010 | сохраняет byte offset, который несут Matroska cues | — | cue/reader |
+| 0011 | не даёт конкурентным клиентам бороться за подключения одного torrent | — | torrent gate |
+| 0012 | покрывает torrent gate и debounce ошибок сегмента | — | тесты |
 
 Разбор нетривиальных.
 
@@ -89,7 +89,7 @@
 
 Глобальный `WriteTimeout` на сервере поставить нельзя: тот же listener отдаёт длинные скачивания
 `/stream`. Поэтому дедлайн ставится точечно на сегментный ответ через `http.NewResponseController`
-([handlers.go:453](../../vendor/torrserver-source/server/gstreamer/handlers.go)).
+([handlers.go:453](../../external/TorrServer/server/gstreamer/handlers.go)).
 
 ⚠️ **30 секунд — непроверенная величина.** Выбрана умозрительно и не испытана на реально медленном
 клиенте. Если тяжёлый 4K-сегмент в pass-through не успевает вычитаться за 30 с, это регресс: раньше
@@ -106,12 +106,12 @@ URL-схемы, а не баг; исправлять его означало б�
 Что сделано:
 
 - **Цикл ограничен** тремя попытками с backoff и уважением к `ctx`
-  ([service.go:118](../../vendor/torrserver-source/server/gstreamer/service.go)); проигравший
+  ([service.go:118](../../external/TorrServer/server/gstreamer/service.go)); проигравший
   получает `ErrTaskBusy` → 503 + `Retry-After`, а не крутится вечно.
 - **Ключ singleflight — вся тройка** `(hash, fileID, audio)`. По одному хэшу разнородные запросы
   схлопывались, и одному из вызывающих возвращалась чужая задача — отсюда и брались лишние витки.
 - **Свежеустановленная задача защищена** от вытеснения: `swapDefended`
-  ([service.go:240](../../vendor/torrserver-source/server/gstreamer/service.go)).
+  ([service.go:240](../../external/TorrServer/server/gstreamer/service.go)).
 
 Про последнее — **важное отличие от первоначального замысла**. Напрашивающееся условие «задача
 активна недавно» негодно: при штатной смене серии старая задача активна ровно в момент переключения,
@@ -157,7 +157,7 @@ Go-указатель именно так и выглядит.
 | # | Проблема | Почему отложено |
 |---|---|---|
 | S4 | Нет дедупликации одинаковых запросов сегмента; повторы плеера сериализуются и делают работу заново | Нужны замеры, чтобы понять, окупается ли |
-| S5 | Разморозка перематывает на `r.position()`, а не на начало запрошенного сегмента ([pipeline_gst.go](../../vendor/torrserver-source/server/gstreamer/pipeline_gst.go), ветка `IsFrozen` в `GetSegment`) — в режиме без cue может тихо отдать содержимое не того отрезка | Узкое окно, низкая вероятность |
+| S5 | Разморозка перематывает на `r.position()`, а не на начало запрошенного сегмента ([pipeline_gst.go](../../external/TorrServer/server/gstreamer/pipeline_gst.go), ветка `IsFrozen` в `GetSegment`) — в режиме без cue может тихо отдать содержимое не того отрезка | Узкое окно, низкая вероятность |
 | S6 | `pipelineReadTimeout` 45 с не учитывает дедлайн `ctx`; нет предохранителя после серии отказов | — |
 | S7 | `MaxTasks` по умолчанию 0 = без лимита, каждая задача — полный пайплайн | Одна строка в конфиге, но меняет поведение по умолчанию |
 | S8 | Цикл очистки последовательный, `FreezeIfInactive` берёт гейт блокирующе — одна занятая задача задерживает заморозку остальных на тик | `tryLock` уже есть, применить в `cleanupInactive` |
@@ -172,7 +172,7 @@ Go-указатель именно так и выглядит.
 - `go test -race` под WSL (Ubuntu 24.04, gcc 13.3, Go 1.25.7 через `GOTOOLCHAIN=auto`) — зелёный,
   **с включённым checkptr**, ×10 прогонов. Конкурентные тесты гонялись ×30–50.
 - `powershell -File scripts\build-all.ps1` — полный прогон: проверка submodule и официального базового
-  релиза, копирование источника, оба патча, тесты,
+  релиза, копирование источника, тесты,
   `go build`, `dotnet publish`.
 
 Чего **не** сделано, и это главный пробел:
@@ -184,25 +184,13 @@ Go-указатель именно так и выглядит.
 - ⚠️ Дедлайн записи 30 с (см. 0003) не испытан на медленном клиенте.
 - ⚠️ Смена серии после 0007 меняет наблюдаемое поведение и проверена только моками.
 
-## 5. Работа с серией
+## 5. Работа с downstream-веткой
 
-Обновление апстрима, конфликт в `git am`:
-
-```bash
-# разрешить конфликт в рабочем дереве, затем
-git add <files>
-git am --continue
-```
-
-После правки серии её нужно перегенерировать из дерева сборки:
-
-```bash
-git format-patch <base>..HEAD -o <repo>/patches/torrserver-gstreamer-robustness --no-signature
-```
-
-где `<base>` — коммит с наложенным `container-support` патчем и без коммитов серии. Проверять
-результат прогоном `scripts\build-all.ps1` целиком, а не только применением патчей: он и применяет,
-и тестирует, и собирает.
+При обновлении upstream нужно сохранить официальный `MatriX.*` тег в истории, перенести
+downstream-коммиты в `torrserver-manager` и создать тег вида
+`MatriX.<upstream>-TorrentMod.<version>`. После этого родительский репозиторий обновляет
+gitlink `external/TorrServer`. Проверять результат нужно прогоном `scripts\build-all.ps1`
+целиком: он проверяет происхождение тега, тестирует и собирает.
 
 ## См. также
 
@@ -210,6 +198,6 @@ git format-patch <base>..HEAD -o <repo>/patches/torrserver-gstreamer-robustness 
 - [`../reference/architecture-map.md`](../reference/architecture-map.md) — карта C#-части
 
 Обзорного описания GST-пайплайна в `docs/` намеренно нет: единственный источник истины — код в
-`vendor/torrserver-source/server/gstreamer/`. Три лежавших здесь обзорных документа были написаны без
+`external/TorrServer/server/gstreamer/`. Три лежавших здесь обзорных документа были написаны без
 чтения кода, содержали выдуманные сигнатуры и структуры и удалены. Если обзор понадобится — писать
 только по коду, со ссылками `файл:строка`.
