@@ -178,7 +178,7 @@ internal sealed class MainForm : Form
         addressCopyButton.Height = 30;
         addressCopyButton.Click += (_, _) => CopyToClipboard(addressCopyButton, addressValue.Text);
         var buildCaption = CreateCaption("Обновление", new Point(18, 140));
-        updateText.Text = "Upstream ещё не проверялся";
+        updateText.Text = "Проверка новой базы ещё не выполнялась";
         updateText.ForeColor = Muted;
         updateText.Font = new Font("Segoe UI", 9F);
         updateText.AutoSize = false;
@@ -191,7 +191,7 @@ internal sealed class MainForm : Form
         updateButton = CreateButton("Открыть релиз", Accent, new Point(440, 144), 108);
         updateButton.AutoSize = false;
         updateButton.Size = new Size(108, 40);
-        updateButton.Enabled = false;
+        SetButtonEnabled(updateButton, false);
         updateButton.Visible = false;
         statusPanel.Controls.AddRange([
             statusDot, statusText, statusDetails, versionCaption, versionValue,
@@ -235,13 +235,13 @@ internal sealed class MainForm : Form
         lampaAppCopyButton.Height = 30;
         lampaAppCopyButton.Click += (_, _) => CopyToClipboard(lampaAppCopyButton, lampaAppAddress.Text);
 
-        var hubButton = CreateButton("Управлять", Color.FromArgb(124, 58, 237), new Point(440, 120), 108);
+        var hubButton = CreateButton("Плагины Lampa", Color.FromArgb(124, 58, 237), new Point(440, 120), 108);
         hubButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         hubButton.Height = 30;
         hubButton.Click += (_, _) => OpenPluginHub();
         var hubCaption = new Label
         {
-            Text = "Плагины · адрес загрузчика для Lampa",
+            Text = "Plugin Hub · адрес загрузчика для Lampa",
             ForeColor = Muted,
             AutoSize = false,
             AutoEllipsis = true,
@@ -900,10 +900,10 @@ internal sealed class MainForm : Form
                 SetTrayIcon(Red);
             }
 
-            startButton.Enabled = !busy && !status.ProcessRunning;
-            stopButton.Enabled = !busy && status.ProcessRunning;
-            restartButton.Enabled = !busy && status.ProcessRunning;
-            openButton.Enabled = status.HttpResponding;
+            SetButtonEnabled(startButton, !busy && !status.ProcessRunning);
+            SetButtonEnabled(stopButton, !busy && status.ProcessRunning);
+            SetButtonEnabled(restartButton, !busy && status.ProcessRunning);
+            SetButtonEnabled(openButton, status.HttpResponding);
             trayStartItem.Enabled = !busy && !status.ProcessRunning;
             trayStopItem.Enabled = !busy && status.ProcessRunning;
             trayRestartItem.Enabled = !busy && status.ProcessRunning;
@@ -938,11 +938,11 @@ internal sealed class MainForm : Form
                 jackettDetails.Text = "Локальный Torznab недоступен";
             }
 
-            jackettStartButton.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning;
-            jackettStopButton.Enabled = !jackettBusy && (jackettStatus.ProcessRunning || flareSolverrStatus.ProcessRunning);
-            jackettRestartButton.Enabled = !jackettBusy && jackettStatus.IsInstalled && flareSolverrStatus.IsInstalled;
-            jackettOpenButton.Enabled = jackettStatus.IsRunning;
-            jackettUpdateButton.Enabled = !jackettBusy && jackettStatus.IsInstalled;
+            SetButtonEnabled(jackettStartButton, !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning);
+            SetButtonEnabled(jackettStopButton, !jackettBusy && (jackettStatus.ProcessRunning || flareSolverrStatus.ProcessRunning));
+            SetButtonEnabled(jackettRestartButton, !jackettBusy && jackettStatus.IsInstalled && flareSolverrStatus.IsInstalled);
+            SetButtonEnabled(jackettOpenButton, jackettStatus.IsRunning);
+            SetButtonEnabled(jackettUpdateButton, !jackettBusy && jackettStatus.IsInstalled);
             trayJackettStartItem.Enabled = !jackettBusy && jackettStatus.IsInstalled && !jackettStatus.ProcessRunning;
             trayJackettStopItem.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
             trayJackettRestartItem.Enabled = !jackettBusy && jackettStatus.ProcessRunning;
@@ -957,9 +957,9 @@ internal sealed class MainForm : Form
                     ? flareSolverrDesiredRunning ? "API недоступен · автоматическое восстановление" : "Остановлен вручную · автозапуск выключен"
                     : "Положите flaresolverr.exe в ProgramData\\FlareSolverr";
             flareSolverrVersionValue.Text = flareSolverrStatus.Version;
-            flareSolverrStartButton.Enabled = !flareSolverrBusy && flareSolverrStatus.IsInstalled && !flareSolverrStatus.ProcessRunning;
-            flareSolverrStopButton.Enabled = !flareSolverrBusy && flareSolverrStatus.ProcessRunning;
-            flareSolverrRestartButton.Enabled = !flareSolverrBusy && flareSolverrStatus.IsInstalled && flareSolverrStatus.ProcessRunning;
+            SetButtonEnabled(flareSolverrStartButton, !flareSolverrBusy && flareSolverrStatus.IsInstalled && !flareSolverrStatus.ProcessRunning);
+            SetButtonEnabled(flareSolverrStopButton, !flareSolverrBusy && flareSolverrStatus.ProcessRunning);
+            SetButtonEnabled(flareSolverrRestartButton, !flareSolverrBusy && flareSolverrStatus.IsInstalled && flareSolverrStatus.ProcessRunning);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception exception)
@@ -976,8 +976,8 @@ internal sealed class MainForm : Form
     {
         if (busy)
             return;
-        SetBusy(true, "Проверка upstream…");
-        updateText.Text = "Связь с официальными релизами GitHub…";
+        SetBusy(true, "Проверка обновлений…");
+        updateText.Text = "Проверка официальной базы TorrServer…";
         availableUpstreamRelease = null;
         updateButton.Visible = false;
         try
@@ -988,7 +988,7 @@ internal sealed class MainForm : Form
             {
                 installedBuild = null;
                 availableUpstreamRelease = null;
-                updateButton.Enabled = false;
+                SetButtonEnabled(updateButton, false);
                 updateText.Text = "Сборка не распознана\nНужна пересборка с downstream-тегом";
                 if (showUpToDateMessage)
                     MessageBox.Show(this, updateText.Text, "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -997,8 +997,8 @@ internal sealed class MainForm : Form
             {
                 installedBuild = build;
                 availableUpstreamRelease = release;
-                updateText.Text = $"Новая база: {release.Version}\nНужен rebase downstream-коммитов";
-                updateButton.Enabled = true;
+                updateText.Text = $"Доступна новая база {release.Version}\nОткройте upstream для rebase";
+                SetButtonEnabled(updateButton, true);
                 updateButton.Visible = true;
                 trayIcon.ShowBalloonTip(5000, "Новая upstream-база", $"TorrServer {release.Version}: нужен rebase downstream-коммитов", ToolTipIcon.Info);
             }
@@ -1006,8 +1006,8 @@ internal sealed class MainForm : Form
             {
                 installedBuild = build;
                 availableUpstreamRelease = null;
-                updateButton.Enabled = false;
-                updateText.Text = $"Upstream {build.UpstreamTag} актуален";
+                SetButtonEnabled(updateButton, false);
+                updateText.Text = $"База {build.UpstreamTag} актуальна";
                 if (showUpToDateMessage)
                     MessageBox.Show(this, "Сборка актуальна относительно upstream.", "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -1021,7 +1021,7 @@ internal sealed class MainForm : Form
         finally
         {
             SetBusy(false, null);
-            updateButton.Enabled = availableUpstreamRelease is not null;
+            SetButtonEnabled(updateButton, availableUpstreamRelease is not null);
             updateButton.Visible = availableUpstreamRelease is not null;
         }
     }
@@ -1055,8 +1055,8 @@ internal sealed class MainForm : Form
     private void SetBusy(bool value, string? activity)
     {
         busy = value;
-        checkButton.Enabled = !value;
-        updateButton.Enabled = !value && availableUpstreamRelease is not null;
+        SetButtonEnabled(checkButton, !value);
+        SetButtonEnabled(updateButton, !value && availableUpstreamRelease is not null);
         if (value && activity is not null)
         {
             statusDot.ForeColor = Amber;
@@ -1068,10 +1068,10 @@ internal sealed class MainForm : Form
     private void SetJackettBusy(bool value, string? activity)
     {
         jackettBusy = value;
-        jackettStartButton.Enabled = !value;
-        jackettStopButton.Enabled = !value;
-        jackettRestartButton.Enabled = !value;
-        jackettUpdateButton.Enabled = !value;
+        SetButtonEnabled(jackettStartButton, !value);
+        SetButtonEnabled(jackettStopButton, !value);
+        SetButtonEnabled(jackettRestartButton, !value);
+        SetButtonEnabled(jackettUpdateButton, !value);
         if (value && activity is not null)
         {
             jackettDot.ForeColor = Amber;
@@ -1082,9 +1082,9 @@ internal sealed class MainForm : Form
     private void SetFlareSolverrBusy(bool value, string? activity)
     {
         flareSolverrBusy = value;
-        flareSolverrStartButton.Enabled = !value;
-        flareSolverrStopButton.Enabled = !value;
-        flareSolverrRestartButton.Enabled = !value;
+        SetButtonEnabled(flareSolverrStartButton, !value);
+        SetButtonEnabled(flareSolverrStopButton, !value);
+        SetButtonEnabled(flareSolverrRestartButton, !value);
         if (value && activity is not null)
         {
             flareSolverrDot.ForeColor = Amber;
@@ -1139,7 +1139,7 @@ internal sealed class MainForm : Form
         if (lampaAppBusy)
             return;
         lampaAppBusy = true;
-        lampaAppUpdateButton.Enabled = false;
+        SetButtonEnabled(lampaAppUpdateButton, false);
         var originalText = lampaAppUpdateButton.Text;
         lampaAppUpdateButton.Text = "Обновление…";
         try
@@ -1155,7 +1155,7 @@ internal sealed class MainForm : Form
         finally
         {
             lampaAppUpdateButton.Text = originalText;
-            lampaAppUpdateButton.Enabled = true;
+            SetButtonEnabled(lampaAppUpdateButton, true);
             lampaAppBusy = false;
             UpdateLampaAppCaption();
         }
@@ -1283,6 +1283,17 @@ internal sealed class MainForm : Form
         timer.Start();
     }
 
+    private static void SetButtonEnabled(Button button, bool enabled)
+    {
+        button.Enabled = enabled;
+        if (button.Tag is not Color normalColor)
+            return;
+
+        button.BackColor = enabled ? normalColor : Color.FromArgb(226, 232, 240);
+        button.ForeColor = enabled ? Color.White : Color.FromArgb(100, 116, 139);
+        button.Cursor = enabled ? Cursors.Hand : Cursors.Default;
+    }
+
     private static FlowLayoutPanel CreateButtonRow(Point location, Size size, int buttonHeight, params Button[] buttons)
     {
         var row = new FlowLayoutPanel
@@ -1319,6 +1330,7 @@ internal sealed class MainForm : Form
         FlatStyle = FlatStyle.Flat,
         BackColor = backColor,
         ForeColor = Color.White,
+        Tag = backColor,
         Cursor = Cursors.Hand,
         FlatAppearance = { BorderSize = 0 }
     };
