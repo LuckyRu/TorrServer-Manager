@@ -5,6 +5,7 @@
     import { buildMoviePlayerData } from './movie-player.js';
     import { buildSeriesPlayerData } from './series-player.js';
     import { normalizeAudioTracks, preferenceFromTrack, resolvePreferredTrack } from './audio-tracks.js';
+    import { clientId } from './client-identity.js';
     import { log, warn } from '../shared/core/log.js';
     import { createLifecycle } from '../shared/core/lifecycle.js';
     import {
@@ -174,10 +175,15 @@
         return base + '/stream/' + encodeURIComponent(sourceName) + '?link=' + encodeURIComponent(hash) + '&index=' + encodeURIComponent(file.id) + '&preload';
     }
 
+    // The only GST URL we build ourselves; everything below it comes out of the playlists
+    // this one returns, already carrying the session. So this is also the only place the
+    // client identity has to be attached.
     function gstStreamUrl(session, file, audioIndex, seconds) {
         var base = torrServerBase();
         if (!base) return '';
         var url = base + '/gst/' + encodeURIComponent(session.hash) + '/master.m3u8?index=' + encodeURIComponent(file.id) + '&audio=' + encodeURIComponent(audioIndex);
+        var client = clientId();
+        if (client) url += '&client=' + encodeURIComponent(client);
         if (typeof seconds === 'number' && isFinite(seconds) && seconds > 0) url += '&seconds=' + encodeURIComponent(Math.floor(seconds));
         return url;
     }

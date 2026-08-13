@@ -94,7 +94,7 @@ runner.test('ручная смена дорожки рестартует GST с 
     globalThis.__playerPlays[0].voiceovers[1].onSelect();
     await waitForPlay(2);
     const restarted = globalThis.__playerPlays[1];
-    if (!restarted.url.includes('&audio=5&seconds=123')) throw new Error('переключение не сохранило audio/position: ' + restarted.url);
+    if (!restarted.url.includes('&audio=5') || !restarted.url.includes('&seconds=123')) throw new Error('переключение не сохранило audio/position: ' + restarted.url);
     if (Lampa.Storage.get('torrent_mod_audio_preference')) throw new Error('preference сохранён до canplay');
 
     globalThis.__emitPlayerVideo('canplay');
