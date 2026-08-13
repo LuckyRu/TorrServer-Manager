@@ -553,8 +553,10 @@
             pathLayout: session.mode === MODE_SERIES ? parseSeriesFileLayout(session.bestFile) : null
         });
         updatePreparation(session, 'probing', 'Анализ аудиодорожек…');
-        // Silent nudge: ask TorrServer to start filling this file's cache while GST probes it.
-        firePreload(preloadUrlFor(session.bestFile, session.hash));
+        // No preload nudge for the file we are about to play: it fetches the head while the
+        // viewer may be resuming elsewhere, and both draw on the same connections. Measured
+        // on a cold torrent resuming 16 minutes in, it cost 33s before the first playlist.
+        // Warming the *next* episode is still worth it — see startNextEpisodePreload.
         prepareTransport(session, session.bestFile, 0, function (transport) {
             if (!session.alive) return;
             session.activeFile = session.bestFile;
