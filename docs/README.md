@@ -55,6 +55,12 @@ ADR/system-design/reference там, где одно объясняет друг�
   локом задачи, вытеснение задач при смене серии, неотменяемые перемотки; реализованные правки и
   инварианты, которые нельзя сломать при разборе конфликтов патчей) →
   [`system-design/gstreamer-pipeline-robustness.md`](system-design/gstreamer-pipeline-robustness.md)
+- **Три идентичности: клиент, пайплайн, торрент** (целевая модель тракта `клиент → HTTP → GST →
+  торрент` для нескольких домашних клиентов: как HTTP различает клиентов, почему пайплайн на пару
+  «клиент + файл», как масштабировать кэш и бюджет соединений одного торрента) →
+  [`system-design/three-identities-client-pipeline-torrent.md`](system-design/three-identities-client-pipeline-torrent.md)
+  — и пошаговый план работ к нему:
+  [`system-design/three-identities-implementation-plan.md`](system-design/three-identities-implementation-plan.md)
 - **Формула оценки раздач Torrent Mod** (гейт, скоринг, сегодняшний фикс шумного поиска по названию) →
   [`reference/torrent-mod-scoring-model.md`](reference/torrent-mod-scoring-model.md)
 - **Справочник по граблям JS/API Torrent Mod** (кириллица в регэкспах, `Component.create`,
