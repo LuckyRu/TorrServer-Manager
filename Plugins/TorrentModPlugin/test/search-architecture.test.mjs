@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { parseRelease, parseSignals } from '../search/release-parsing.js';
 import { parseYear, yearMatches } from '../search/release-year.js';
-import { extractStudios } from '../search/release-studios.js';
+import { extractStudios, registerStudioRules } from '../search/release-studios.js';
 import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate } from '../search/search-gates.js';
 import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gate-identity.js';
 import { workFamily, isAnimeTarget } from '../search/work-profile.js';
@@ -295,6 +295,22 @@ test('на живом корпусе разбор не выдумывает се
                 'нелепый диапазон серий ' + signals.episodeFrom + '-' + signals.episodeTo + ' из «' + title + '»');
         }
     });
+});
+
+// ---------- правила, пополняемые вне кода ----------
+// Реестр студий глобален для модуля, поэтому эта проверка идёт последней.
+
+test('студию можно добавить и переименовать правилами, не трогая код', () => {
+    assert.deepEqual(extractStudios('Сериал (2024) 1080p] MVO (Тайм Медиа Групп)'), ['Тайм Медиа Групп']);
+
+    registerStudioRules([{ name: 'Тайм Медиа', aliases: ['Тайм Медиа Групп', 'TimeMedia'], disabled: false }]);
+    // Оба написания сводятся к каноническому имени из правил.
+    assert.deepEqual(extractStudios('Сериал (2024) 1080p] MVO (Тайм Медиа Групп)'), ['Тайм Медиа']);
+    assert.deepEqual(extractStudios('Сериал (2024) 1080p от TimeMedia'), ['Тайм Медиа']);
+
+    // Встроенную студию можно погасить, не пересобирая плагин.
+    registerStudioRules([{ name: 'ProFilms', disabled: true }]);
+    assert.deepEqual(extractStudios('Фильм (2024) BDRip 1080p ProFilms'), []);
 });
 
 console.log('\nИтог: ' + passed + ' passed, ' + failed + ' failed');

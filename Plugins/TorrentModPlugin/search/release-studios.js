@@ -32,12 +32,9 @@ function wordPattern(word) {
     return new RegExp('(?:^|[^a-zа-яё0-9])' + pattern + '(?:[^a-zа-яё0-9]|$)', 'i');
 }
 
-var KNOWN_PATTERNS = KNOWN_STUDIOS.map(function (studio) {
-    return { name: studio, pattern: wordPattern(studio) };
-});
-
+var KNOWN_PATTERNS = [];
 var canonicalIndex = {};
-KNOWN_STUDIOS.forEach(function (studio) { canonicalIndex[studio.toLowerCase()] = studio; });
+var canonicalByKey = {};
 
 // «HDRezka Studio» и «HDrezka» — одна студия. Сравниваем по буквам и цифрам без регистра,
 // отбрасывая родовое слово в хвосте: студии пишут его через раз.
@@ -48,12 +45,41 @@ function canonicalKey(name) {
         .replace(/(?:studios?|студи[яи]|team|records)$/, '');
 }
 
-var canonicalByKey = {};
-KNOWN_STUDIOS.forEach(function (studio) { canonicalByKey[canonicalKey(studio)] = studio; });
-
 function canonical(name) {
     return canonicalIndex[name.toLowerCase()] || canonicalByKey[canonicalKey(name)] || name;
 }
+
+// Реестр студий: встроенные значения плюс то, что пользователь дописал в search-rules.json.
+// Пользовательская запись может добавить написания (aliases) или отключить встроенную (disabled).
+export function registerStudioRules(rules) {
+    (rules || []).forEach(function (rule) {
+        var name = String((rule && rule.name) || '').trim();
+        if (!name) return;
+        if (rule.disabled) {
+            KNOWN_PATTERNS = KNOWN_PATTERNS.filter(function (known) { return known.name !== name; });
+            delete canonicalIndex[name.toLowerCase()];
+            delete canonicalByKey[canonicalKey(name)];
+            return;
+        }
+        addStudio(name);
+        (rule.aliases || []).forEach(function (alias) {
+            var text = String(alias || '').trim();
+            if (!text) return;
+            canonicalIndex[text.toLowerCase()] = name;
+            canonicalByKey[canonicalKey(text)] = name;
+            KNOWN_PATTERNS.push({ name: name, pattern: wordPattern(text) });
+        });
+    });
+}
+
+function addStudio(name) {
+    if (canonicalIndex[name.toLowerCase()]) return;
+    canonicalIndex[name.toLowerCase()] = name;
+    canonicalByKey[canonicalKey(name)] = name;
+    KNOWN_PATTERNS.push({ name: name, pattern: wordPattern(name) });
+}
+
+KNOWN_STUDIOS.forEach(addStudio);
 
 function cleanName(raw) {
     return String(raw)

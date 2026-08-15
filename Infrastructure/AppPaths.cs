@@ -19,6 +19,10 @@ internal static class AppPaths
     public static readonly string ServerLog = Path.Combine(LogsDirectory, "server.log");
     public static readonly string ManagerLog = Path.Combine(LogsDirectory, "manager.log");
     public static readonly string PluginHubConfig = Path.Combine(StateDirectory, "lampa-plugins.json");
+    // Правила поиска, которые пользователь пополняет без пересборки: студии перевода и их
+    // написания. Формат и поведение при отсутствии файла —
+    // docs/system-design/torrent-mod-search-architecture.md §4.
+    public static readonly string SearchRulesFile = Path.Combine(DataDirectory, "search-rules.json");
     public static readonly string PluginCacheDirectory = Path.Combine(StateDirectory, "lampa-cache");
     public static readonly string PluginCacheState = Path.Combine(PluginCacheDirectory, "cache-state.json");
     public static readonly string LampaAppDirectory = Path.Combine(StateDirectory, "lampa-app");

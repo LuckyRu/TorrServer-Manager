@@ -2,6 +2,7 @@
     import { searchMovieTorrents, searchMovieTorrentsProgressive } from '../search/movie-search.js';
     import { searchSeriesTorrents, searchSeriesTorrentsProgressive } from '../search/series-search.js';
     import { notify } from '../shared/utils.js';
+    import { ensureSearchRules } from '../search/rules-source.js';
     import { mergeReleases } from '../shared/release-identity.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
@@ -102,7 +103,10 @@
             var generation = state.poolGeneration;
             log('episodes', 'loadAllTorrents старт, generation=' + generation);
             store.patch({ poolStatus: 'loading', poolStartedAt: Date.now(), pool: [], poolIndexers: [], poolAllIndexers: [] });
-            ensureEnglishTitle().then(function (englishTitle) {
+            // Правила студий должны быть на месте до первого разбора заголовка — парсер
+            // синхронный. Ждём их здесь же, где уже ждём англоязычное название.
+            Promise.all([ensureEnglishTitle(), ensureSearchRules()]).then(function (results) {
+                var englishTitle = results[0];
                 // Re-check staleness after the async englishTitle wait before firing the real search.
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
                 var target = {

@@ -261,6 +261,12 @@ internal sealed class PluginHub : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" && path.Equals("/api/search-rules", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteJsonAsync(context.Response, LoadSearchRules());
+                return;
+            }
+
             // Parallel per-indexer search (start/poll/cancel) — see docs/system-design/torrent-mod-parallel-search.md
             if (context.Request.HttpMethod == "GET" && path.Equals("/api/torrent-search/start", StringComparison.OrdinalIgnoreCase))
             {
@@ -1622,6 +1628,74 @@ internal sealed class PluginHub : IDisposable
     private static bool IsLoopback(IPAddress? address) =>
         address is not null && (IPAddress.IsLoopback(address) ||
             (address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4())));
+
+    private sealed record SearchRulesStudio(string Name, string[]? Aliases, bool Disabled);
+
+    private sealed record SearchRulesFile(SearchRulesStudio[]? Studios);
+
+    private readonly object searchRulesLock = new();
+    private DateTime searchRulesStamp;
+    private object? searchRulesCache;
+
+    // Файл правят вручную и без перезапуска менеджера, поэтому решает время изменения, а не
+    // разовое чтение при старте. Битый JSON не роняет поиск: отдаём пустые правила и текст
+    // ошибки в warnings — плагин продолжает на встроенных значениях.
+    private object LoadSearchRules()
+    {
+        lock (searchRulesLock)
+        {
+            var stamp = File.Exists(AppPaths.SearchRulesFile)
+                ? File.GetLastWriteTimeUtc(AppPaths.SearchRulesFile)
+                : DateTime.MinValue;
+            if (searchRulesCache is not null && stamp == searchRulesStamp) return searchRulesCache;
+
+            searchRulesStamp = stamp;
+            searchRulesCache = ReadSearchRules();
+            return searchRulesCache;
+        }
+    }
+
+    private static object ReadSearchRules()
+    {
+        if (!File.Exists(AppPaths.SearchRulesFile))
+        {
+            return new { schema = 1, studios = Array.Empty<object>(), warnings = Array.Empty<string>() };
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<SearchRulesFile>(
+                File.ReadAllText(AppPaths.SearchRulesFile),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip });
+
+            var studios = (parsed?.Studios ?? Array.Empty<SearchRulesStudio>())
+                .Where(studio => !string.IsNullOrWhiteSpace(studio.Name))
+                .Take(2000)
+                .Select(studio => new
+                {
+                    name = studio.Name.Trim(),
+                    aliases = (studio.Aliases ?? Array.Empty<string>())
+                        .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                        .Select(alias => alias.Trim())
+                        .Take(20)
+                        .ToArray(),
+                    disabled = studio.Disabled
+                })
+                .ToArray();
+
+            return new { schema = 1, studios, warnings = Array.Empty<string>() };
+        }
+        catch (Exception error)
+        {
+            AppLog.Write($"Не удалось прочитать {AppPaths.SearchRulesFile}: {error.Message}");
+            return new
+            {
+                schema = 1,
+                studios = Array.Empty<object>(),
+                warnings = new[] { $"search-rules.json не разобран: {error.Message}" }
+            };
+        }
+    }
 
     private static async Task WriteJsonAsync(HttpListenerResponse response, object value)
     {
