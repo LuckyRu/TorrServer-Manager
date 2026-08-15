@@ -191,7 +191,22 @@
         }
 
         function runSeasonSearch(season, generation) {
-            var target = { movie: object.movie, season: season, episode: 0, englishTitle: store.get().englishTitle };
+            // Дозагрузка обязана искать по тому же набору имён, что и основной поиск, иначе
+            // расходятся и запрос, и гейт по названию. Ждать приходится только если название
+            // ещё не получено — обычно основной поиск его уже разрешил.
+            var known = store.get().englishTitle;
+            if (known !== null) {
+                runSeasonSearchWith(season, generation, known);
+                return;
+            }
+            ensureEnglishTitle().then(function (englishTitle) {
+                if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                runSeasonSearchWith(season, generation, englishTitle);
+            });
+        }
+
+        function runSeasonSearchWith(season, generation, englishTitle) {
+            var target = { movie: object.movie, mode: MODE_SERIES, season: season, episode: 0, englishTitle: englishTitle };
             searchSeriesTorrents(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
                     log('episodes', 'ensureSeasonLoaded(' + season + ') отброшен как устаревший');

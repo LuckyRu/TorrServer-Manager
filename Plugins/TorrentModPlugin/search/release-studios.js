@@ -39,9 +39,13 @@ var KNOWN_PATTERNS = KNOWN_STUDIOS.map(function (studio) {
 var canonicalIndex = {};
 KNOWN_STUDIOS.forEach(function (studio) { canonicalIndex[studio.toLowerCase()] = studio; });
 
-// «HDRezka Studio» и «HDrezka» — одна студия; сравниваем по буквам и цифрам без регистра.
+// «HDRezka Studio» и «HDrezka» — одна студия. Сравниваем по буквам и цифрам без регистра,
+// отбрасывая родовое слово в хвосте: студии пишут его через раз.
 function canonicalKey(name) {
-    return String(name).toLowerCase().replace(/[^a-zа-яё0-9]+/g, '');
+    return String(name)
+        .toLowerCase()
+        .replace(/[^a-zа-яё0-9]+/g, '')
+        .replace(/(?:studios?|студи[яи]|team|records)$/, '');
 }
 
 var canonicalByKey = {};

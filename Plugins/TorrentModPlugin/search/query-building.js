@@ -1,5 +1,6 @@
     // ---------- query building ----------
-    import { enabled, pad, compact, unique } from '../shared/utils.js';
+    import { enabled, pad, unique } from '../shared/utils.js';
+    import { workFamily, prefersLocalTitle } from './work-profile.js';
 
     export function normalizedTitleKey(value) {
         var source = String(value || '');
@@ -15,26 +16,7 @@
         ].filter(Boolean), normalizedTitleKey);
     }
 
-    export function isAnimeTarget(target) {
-        target = target || {};
-        if (target.mode && target.mode !== 'series') return false;
-        var movie = target.movie || {};
-        var language = String(movie.original_language || '').toLowerCase();
-        var countries = Array.isArray(movie.origin_country)
-            ? movie.origin_country.map(function (country) { return String(country || '').toUpperCase(); })
-            : [];
-        var genres = (Array.isArray(movie.genre_ids) ? movie.genre_ids : [])
-            .map(function (genre) { return String(genre); });
-        var genreNames = (Array.isArray(movie.genres) ? movie.genres : [])
-            .map(function (genre) { return String(genre && (genre.name || genre) || '').toLowerCase(); });
-        var animation = genres.indexOf('16') >= 0 || genreNames.some(function (name) {
-            return /animation|анимац|мультфильм|мультсериал|动画|アニメ|애니/.test(name);
-        });
-        var asian = ['ja', 'zh', 'ko'].indexOf(language) >= 0 || countries.some(function (country) {
-            return ['JP', 'CN', 'KR'].indexOf(country) >= 0;
-        });
-        return animation && asian;
-    }
+    export { isAnimeTarget } from './work-profile.js';
 
     export function searchNames(target) {
         target = target || {};
@@ -70,25 +52,46 @@
         }
     }
 
+    // Настройка Lampa parse_lang по умолчанию даёт оригинальное название. Для корейского,
+    // японского и китайского это письмо, которого нет в индексе русских трекеров, — такой
+    // запрос возвращает случайную свежую выдачу, а не «ничего не найдено».
+    function hasSearchableLetters(value) {
+        return /[a-zа-яё]/i.test(String(value || ''));
+    }
+
+    export function queryNames(target) {
+        var movie = (target && target.movie) || {};
+        var local = movie.title || movie.name || '';
+        var preferred = defaultSearchName(movie, target && target.englishTitle, target && target.includeYear);
+        var ordered = prefersLocalTitle(workFamily(target))
+            ? [local, target && target.englishTitle, preferred]
+            : [preferred, hasSearchableLetters(preferred) ? '' : local, hasSearchableLetters(preferred) ? '' : (target && target.englishTitle)];
+        return unique(ordered.filter(Boolean), normalizedTitleKey);
+    }
+
     export function buildQueries(target) {
-        var name = defaultSearchName(target.movie, target.englishTitle, target.includeYear);
-        if (!name) return [];
+        var names = queryNames(target);
+        if (!names.length) return [];
         var queries = [];
 
-        if (target.episode) {
-            queries.push(name + ' S' + pad(target.season) + 'E' + pad(target.episode));
-        }
-        if (target.season) {
-            queries.push(name + ' S' + pad(target.season));
-            if (enabled('torrent_mod_query_russian', true)) {
-                queries.push(name + ' ' + target.season + ' сезон');
+        // Второе название добавляется только там, где первое заведомо не ищется, — цена запроса
+        // это отдельный job на каждый трекер с собственными ретраями.
+        names.slice(0, 2).forEach(function (name) {
+            if (target.episode) {
+                queries.push(name + ' S' + pad(target.season) + 'E' + pad(target.episode));
             }
-        }
-        if (!target.season) {
-            queries.push(name);
-        }
+            if (target.season) {
+                queries.push(name + ' S' + pad(target.season));
+                if (enabled('torrent_mod_query_russian', true)) {
+                    queries.push(name + ' ' + target.season + ' сезон');
+                }
+            }
+            if (!target.season) {
+                queries.push(name);
+            }
+        });
 
-        return unique(queries, compact).slice(0, 4);
+        return unique(queries, normalizedTitleKey).slice(0, 4);
     }
 
     export function buildAnimeQueries(target) {
