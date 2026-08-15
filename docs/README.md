@@ -79,6 +79,9 @@ ADR/system-design/reference там, где одно объясняет друг�
   [`system-design/lampa-navigation-contract.md`](system-design/lampa-navigation-contract.md)
 - **Как устроен поиск/скоринг/буферизация Torrent Mod целиком** →
   [`system-design/torrent-mod-search-pipeline.md`](system-design/torrent-mod-search-pipeline.md)
+- **Целевая архитектура поиска** (профиль произведения вместо пары фильм/сериал, правила трекеров как
+  данные, год, азиатский контент, диагностика; замеры по 1780 живым заголовкам девяти трекеров) →
+  [`system-design/torrent-mod-search-architecture.md`](system-design/torrent-mod-search-architecture.md)
 - **План перестройки Torrent Mod на единый пул раздач** →
   [`system-design/torrent-mod-unified-pool.md`](system-design/torrent-mod-unified-pool.md)
 - **Доменная архитектура Torrent Mod** (Store/State/Interactors, `shared/core/` примитивы надёжности,
