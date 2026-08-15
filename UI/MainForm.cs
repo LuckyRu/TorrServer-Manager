@@ -36,11 +36,15 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer statusTimer = new() { Interval = 2500 };
     private readonly System.Threading.Timer flareSolverrUpdateTimer;
     private readonly System.Threading.Timer supervisorTimer;
+    // Never disposed: a timer tick already in flight when the form closes still runs its
+    // finally and releases the gate, and SemaphoreSlim only needs disposing when its
+    // AvailableWaitHandle has been taken, which nothing here does.
     private readonly SemaphoreSlim refreshLock = new(1, 1);
     private readonly SemaphoreSlim supervisorLock = new(1, 1);
     private readonly SemaphoreSlim torrServerOperationLock = new(1, 1);
     private readonly SemaphoreSlim jackettStackOperationLock = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
+    private volatile bool shuttingDown;
     private readonly ProcessRecoveryTracker torrServerRecovery = new("TorrServer");
     private readonly ProcessRecoveryTracker jackettRecovery = new("Jackett");
     private readonly ProcessRecoveryTracker flareSolverrRecovery = new("FlareSolverr");
@@ -862,7 +866,7 @@ internal sealed class MainForm : Form
 
     private async Task RefreshStatusAsync()
     {
-        if (!await refreshLock.WaitAsync(0))
+        if (shuttingDown || !await refreshLock.WaitAsync(0))
             return;
         try
         {
@@ -962,6 +966,9 @@ internal sealed class MainForm : Form
             SetButtonEnabled(flareSolverrRestartButton, !flareSolverrBusy && flareSolverrStatus.IsInstalled && flareSolverrStatus.ProcessRunning);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        // Whatever a tick trips over once teardown has begun says nothing about the app's
+        // health — it is this method racing the dispose it was told to stand down from.
+        catch (Exception) when (shuttingDown) { }
         catch (Exception exception)
         {
             AppLog.Write(exception);
@@ -1230,6 +1237,9 @@ internal sealed class MainForm : Form
             return;
         }
 
+        // Stop() does not end a tick that is already awaiting, and that tick goes on to touch
+        // everything disposed below. The flag is what tells it to stand down.
+        shuttingDown = true;
         statusTimer.Stop();
         lifetime.Cancel();
         flareSolverrUpdateTimer.Dispose();
@@ -1244,10 +1254,6 @@ internal sealed class MainForm : Form
         controller.Dispose();
         ffprobeService.Dispose();
         gStreamerService.Dispose();
-        refreshLock.Dispose();
-        supervisorLock.Dispose();
-        torrServerOperationLock.Dispose();
-        jackettStackOperationLock.Dispose();
         lifetime.Dispose();
     }
 

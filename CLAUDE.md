@@ -84,6 +84,10 @@ summary:
   reactive), don't patch another bail branch.
 - In C#, `foreach`+`await` over async tasks preserves list order, not completion order — use
   `Task.WhenAny` in a loop when "fastest first" matters.
+- `-race` is not an oracle for *logical* races: two goroutines can be perfectly synchronised on memory
+  and still corrupt a stream by acting in the wrong order. The cache sweep moving a reader that was
+  mid-read was silent under `-race` and needed a deterministic rendezvous test
+  ([§5.1](docs/system-design/one-torrent-many-streams-concurrency.md)).
 
 Full list with root cause and fix: [`docs/reference/torrent-mod-gotchas.md`](docs/reference/torrent-mod-gotchas.md).
 
