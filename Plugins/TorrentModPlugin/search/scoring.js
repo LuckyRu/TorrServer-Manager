@@ -314,6 +314,11 @@
                 input: current.length,
                 output: next.length,
                 filtered: fallback ? 0 : current.length - next.length,
+                // Откат — это «фильтр проигнорирован», а не «фильтр ничего не отсеял». Без
+                // отдельного признака лог утверждал второе, и расхождение списка с выбранным
+                // фильтром выглядело необъяснимым.
+                fallback: fallback,
+                wouldFilter: fallback ? current.length : 0,
                 rejectedTitles: fallback ? [] : titles(current.filter(function (item) { return !predicate(item); }))
             });
             current = next;

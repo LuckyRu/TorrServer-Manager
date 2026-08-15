@@ -263,6 +263,10 @@
             // Movie: no episode list; keep the old auto-play-or-full-candidates behaviour.
             if (!hasSeasons) { showMoviePool(pickerOnly); return; }
 
+            // На сериальном пути pickerOnly принимался и молча игнорировался — выбор запускался
+            // всегда. Сейчас это не расходится с намерением вызывающего.
+            if (pickerOnly) { openPicker(episode); return; }
+
             // Pool settlement status is checked only after candidates — a still-loading pool can already have a valid match.
             var evaluation = evaluateCandidatePool(state.pool, target, state);
             logCandidateEvaluation('selectEpisode(' + episode + ')', target, evaluation);

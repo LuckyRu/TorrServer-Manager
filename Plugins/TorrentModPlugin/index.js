@@ -3,12 +3,14 @@
     import { addSettings } from './ui/settings.js';
     import { addStyles } from './ui/styles.js';
     import { TorrentModComponent } from './ui/torrent-mod-component.js';
-    import { log } from './shared/core/log.js';
+    import { log, applyDebugSetting } from './shared/core/log.js';
+    import { enabled } from './shared/utils.js';
 
     function main() {
         if (!window.Lampa || window.torrent_mod_ready) return;
         window.torrent_mod_ready = true;
 
+        applyDebugSetting(enabled('torrent_mod_debug', false));
         addStyles();
         addSettings();
         Lampa.Template.add('torrent_mod', '<div></div>');

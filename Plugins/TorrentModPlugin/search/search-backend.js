@@ -80,11 +80,16 @@
 
     function summarizeGate(stage, decisions) {
         var rejectedTitles = [];
+        var rejectedDetails = [];
         var rejected = 0;
         decisions.forEach(function (decision) {
             if (decision.passes) return;
             rejected++;
-            if (rejectedTitles.length < 100) rejectedTitles.push(decision.title);
+            if (rejectedTitles.length >= 100) return;
+            rejectedTitles.push(decision.title);
+            // Причина рядом с заголовком, а не только в общем счётчике: иначе на вопрос
+            // «почему отброшена именно эта раздача» ответить нечем.
+            rejectedDetails.push({ title: decision.title, reason: decision.reason, details: decision.details });
         });
         return {
             stage: stage,
@@ -92,7 +97,8 @@
             accepted: decisions.length - rejected,
             filtered: rejected,
             reasonCounts: reasonCounts(decisions),
-            rejectedTitles: rejectedTitles
+            rejectedTitles: rejectedTitles,
+            rejected: rejectedDetails
         };
     }
 
@@ -138,7 +144,10 @@
                 return all.concat(stage.rejectedTitles);
             }, []).slice(0, 100),
             stages: stages.map(function (stage) {
-                return { stage: stage.stage, input: stage.input, accepted: stage.accepted, filtered: stage.filtered, reasonCounts: stage.reasonCounts };
+                return {
+                    stage: stage.stage, input: stage.input, accepted: stage.accepted,
+                    filtered: stage.filtered, reasonCounts: stage.reasonCounts, rejected: stage.rejected
+                };
             })
         };
         if (filtered) log('search', 'Фильтрация ' + source + ': принято ' + title.items.length + ' из ' + rawResults.length, summary);

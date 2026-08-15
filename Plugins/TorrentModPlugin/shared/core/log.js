@@ -22,6 +22,14 @@
         if (overflow > 0) diagnostics.entries.splice(0, overflow);
     }
 
+    // Настройка «Отладка поиска» не была подключена ни к чему: единственным способом включить
+    // подробный лог оставался devtools, недоступный на телевизоре — то есть там, где продукт и
+    // живёт. Читаем настройку при старте, дальше флагом можно управлять и из консоли.
+    export function applyDebugSetting(value) {
+        var diagnostics = diagnosticsState();
+        if (diagnostics) diagnostics.verbose = value === true;
+    }
+
     export function debugEnabled() {
         var diagnostics = diagnosticsState();
         return !!diagnostics && diagnostics.verbose === true;
