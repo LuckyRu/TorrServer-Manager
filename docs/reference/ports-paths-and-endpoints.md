@@ -37,7 +37,10 @@
 | `GET` | `/api/config` | Текущая конфигурация (JSON) | LAN |
 | `POST` | `/api/config` | Сохранить конфигурацию + запустить рефреш | loopback |
 | `POST` | `/api/plugins/refresh` | Форс-рефреш кэша плагинов (нужен `-d ""` в curl) | loopback |
-| `GET` | `/api/torrent-search?query=` | Агрегированный поиск по всем индексаторам Jackett для Torrent Mod | LAN || `GET` | `/lampa.js` | Bootstrap loader — читает `/api/config`, инжектит включённые плагины | LAN |
+| `GET` | `/api/torrent-search/start` | Запустить поиск: возвращает `{jobId, totalIndexers, indexers[]}`, по одной задаче на индексатор | LAN |
+| `GET` | `/api/torrent-search/poll` | Накопленные результаты и состояние каждого индексатора (`ok`, `elapsedMs`) | LAN |
+| `GET` | `/api/torrent-search/cancel` | Отмена поиска. Именно `GET`: `HttpListener` требует `Content-Length` даже на пустом `POST` | LAN |
+| `GET` | `/lampa.js` | Bootstrap loader — читает `/api/config`, инжектит включённые плагины | LAN |
 | `GET` | `/plugins/{cacheKey}.js` | Закэшированный плагин (по SHA-256-based ключу) | LAN |
 | `GET` | `/favicon.ico` | Иконка хостимого Lampa-приложения для WebOS/WebView | LAN |
 | `GET`/etc | `/app/*` | Статика самого Lampa web-app (`yumata/lampa` дистрибутив) | LAN |
@@ -87,7 +90,7 @@ Jackett кладёт в `Link` результата свой loopback download-�
 | `POST /torrents {action:'list'}` | Поиск уже зарегистрированной раздачи по title/hash перед повторным добавлением |
 | `POST /torrents {action:'add', link, title, ...}` | Регистрация magnet или loopback `.torrent`-ссылки |
 | `POST /torrents {action:'get', hash}` | Список файлов раздачи (`file_stats[]`, у каждого свой `.id`, не позиция в массиве) |
-| `GET /stream/...` | Прямой поток выбранного файла, который передаётся в `Player.play({url})` |
-| `GET /gst/{hash}/master.m3u8?index={fileId}&audio=0` | GST/HLS reserve-поток для штатного Lampa fallback |
+| `GET /gst/{hash}/master.m3u8?index={fileId}&audio=0&client={id}` | **Единственный транспорт воспроизведения**: GST/HLS. Плейлист уводит на `/gst/{hash}/c/{token}/…`, дальше сессия несётся в самом URL |
+| `GET /stream/...` | **Не** транспорт воспроизведения. Используется только для тихого `&preload` — прогрева следующей серии ([ADR-0003](../adr/0003-no-global-player-patching.md): `url_reserve` не передаётся, fallback на прямой поток отсутствует намеренно) |
 | `POST /cache {action:'get', hash}` | Справочный API статуса буферизации; текущий Torrent Mod не поллит его для собственного pre-start buffer |
 | `GET /ffp/{hash}/{fileId}` | ffprobe-снятые характеристики потоков (реальные, не угаданные из названия); 400, если на этой сборке TorrServer нет `ffprobe` |

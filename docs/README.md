@@ -61,6 +61,9 @@ ADR/system-design/reference там, где одно объясняет друг�
   [`system-design/three-identities-client-pipeline-torrent.md`](system-design/three-identities-client-pipeline-torrent.md)
   — и пошаговый план работ к нему:
   [`system-design/three-identities-implementation-plan.md`](system-design/three-identities-implementation-plan.md)
+- **Сценарии использования и план автотестов** (карта пользовательских сценариев с режимами отказа,
+  аудит покрытия — что покрыто иллюзорно, приёмы детерминированных тестов на гонки, матрица
+  «дефект → тест») → [`system-design/scenarios-and-test-plan.md`](system-design/scenarios-and-test-plan.md)
 - **Один торрент — несколько потоков: конкурентность** (что делят одновременные воспроизведения
   одной раздачи: подтверждённые гонки закрытые и оставшиеся, проход вытеснения, который меняет то,
   что измеряет, гейт торрента, выключающийся под нагрузкой) →

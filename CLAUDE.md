@@ -27,13 +27,17 @@ install` first run), but Node.js must be installed on the build machine.
 dotnet build TorrServerManager.csproj                              # debug build
 dotnet publish TorrServerManager.csproj -c Release                 # -> bin\Release\net10.0-windows\win-x64\publish\
 dotnet run --project TorrServerManager.csproj                      # run locally
-dotnet run --project TorrServerManager.csproj -- --background      # run hidden to tray (autostart flag)
+dotnet run --project TorrServerManager.csproj -- --background      # run hidden to tray; the app only reads the flag, it never registers autostart
 npm run test:plugin                                                 # JS plugin tests, run before any plugin release
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1  # clean full build: TorrServer + Manager
 ```
 
 No linter in this repo. The full clean build (TorrServer submodule + Manager) is
-`scripts/build-all.ps1`; it writes both executables to `publish\`. TorrServer is pulled in as the
+`scripts/build-all.ps1`; it writes both executables to `publish\`. **Concurrency tests in
+`external/TorrServer/server` have no oracle without `-race`, and `-race` is impossible on Windows
+(needs cgo, no gcc) — run `scripts\test-race.ps1` (WSL, ~8 s); `build-all.ps1` calls it. A test that
+spawns goroutines and cannot fail without `-race` is a `t.Skip`.** Scenario map, coverage audit and
+race-test design: [`docs/system-design/scenarios-and-test-plan.md`](docs/system-design/scenarios-and-test-plan.md). TorrServer is pulled in as the
 `external/TorrServer` submodule (fork `LuckyRu/TorrServer`, branch `torrserver-manager`) — downstream
 fixes are commits on that branch, not patch files; see
 [`docs/how-to/rebuild-patched-torrserver.md`](docs/how-to/rebuild-patched-torrserver.md). Full release checklist (version bump, deploy, plugin-cache refresh) is the

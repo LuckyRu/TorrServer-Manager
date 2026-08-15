@@ -346,7 +346,17 @@ $go = Get-GoExecutable
 
 Invoke-Native -FilePath $go -Arguments @('fmt', './gstreamer') -WorkingDirectory $serverModule
 if (-not $SkipTests) {
-    Invoke-Native -FilePath $go -Arguments @('test', '-tags=gst', './gstreamer') -WorkingDirectory $serverModule
+    Invoke-Native -FilePath $go -Arguments @('test', '-tags=gst', './gstreamer', './torr/...', './settings') -WorkingDirectory $serverModule
+
+    # Конкурентные тесты состоят из горутин и wg.Wait(); без детектора гонок у них нет оракула
+    # вообще. -race требует cgo, которого на Windows здесь нет, поэтому прогон идёт через WSL.
+    if ($null -ne (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        Invoke-Native -FilePath 'powershell.exe' -Arguments @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'test-race.ps1')
+        )
+    } else {
+        Write-Host 'WSL не найден: прогон под -race пропущен, конкурентные тесты в этой сборке без оракула.' -ForegroundColor Yellow
+    }
 }
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
