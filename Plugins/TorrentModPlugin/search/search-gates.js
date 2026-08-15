@@ -17,7 +17,10 @@
         segment = segment.replace(/^(?:S\d{1,2}E\d{1,3}(?:[-–]E?\d{1,3})?|E\d{1,3}(?:[-–]E?\d{1,3})?)\s*[-:|]?\s*/i, '').trim();
         var bracketIndex = segment.search(/[([]/);
         if (bracketIndex >= 0) segment = segment.slice(0, bracketIndex);
-        var technicalIndex = segment.search(/\b(?:S\d{1,2}E\d{1,3}|S\d{1,2}|E\d{1,3}|\d{3,4}p|4K|UHD|WEB-?DL(?:Rip)?|WEBRip|BDRip|Blu-?Ray|Remux|HDTV|HDRip|DVDRip|H\.?26[45]|HEVC|AVC)\b/i);
+        // «Season 4» и «4 сезон» — технический хвост, а не часть названия: без этого раздача
+        // «The Boys Season 4» не совпадала с целью «The Boys» вообще.
+        var technicalIndex = segment.search(/\b(?:S\d{1,2}E\d{1,3}|S\d{1,2}|E\d{1,3}|\d{3,4}p|4K|UHD|WEB-?DL(?:Rip)?|WEBRip|BDRip|Blu-?Ray|Remux|HDTV|HDRip|DVDRip|H\.?26[45]|HEVC|AVC|Seasons?\s*\d)\b/i);
+        if (technicalIndex < 0) technicalIndex = segment.search(/\d{1,2}\s*(?:сезон|season)|(?:сезон|серии|серия)\s*[:№]/i);
         if (technicalIndex > 0) segment = segment.slice(0, technicalIndex);
         return segment.replace(/[,:;\s-]+$/g, '').trim();
     }
@@ -32,41 +35,88 @@
         });
     }
 
-    function segmentSimilarity(segment, name) {
+    var CJK = /[぀-ヿ㐀-䶿一-鿿가-힯]/;
+    var CJK_MIN_CHARS = 3;
+
+    // Название, у которого совпали все значимые слова, но добавлены свои: «Игра в кальмара: Вызов»
+    // при цели «Игра в кальмара». Из заголовка нельзя понять, это то же произведение под более
+    // полным именем или соседнее — поэтому не отказ, а ослабленное совпадение; решает пул (§1.3).
+    var EXTENDED_TITLE_SCORE = 0.6;
+
+    function segmentMatch(segment, name) {
         var compactName = normalizedTitleKey(name);
         var compactSegment = normalizedTitleKey(segment);
-        if (!compactName || !compactSegment) return 0;
-        if (compactSegment === compactName) return 1;
+        if (!compactName || !compactSegment) return { score: 0, extended: false };
+        if (compactSegment === compactName) return { score: 1, extended: false };
+
         if (!/\s/.test(compactName) && !/\s/.test(compactSegment)) {
-            return compactName.indexOf(compactSegment) >= 0 || compactSegment.indexOf(compactName) >= 0 ? 1 : 0;
+            // Подстрока допустима только для письменностей без пробелов: там иначе не совпадёт
+            // ничего. Для остальных она превращала «Оно» в «Кукушонок», «Звонок» и «Метроном».
+            var bothCjk = CJK.test(compactName) && CJK.test(compactSegment);
+            if (!bothCjk) return { score: 0, extended: false };
+            var shorter = Math.min(compactName.length, compactSegment.length);
+            if (shorter < CJK_MIN_CHARS) return { score: 0, extended: false };
+            var contained = compactName.indexOf(compactSegment) >= 0 || compactSegment.indexOf(compactName) >= 0;
+            return contained ? { score: 1, extended: compactName.length !== compactSegment.length } : { score: 0, extended: false };
         }
 
         var nameTokens = compactName.split(' ');
         var segmentTokens = compactSegment.split(' ');
         var wanted = significantTokens(name);
-        if (!wanted.length) return 0;
+        if (!wanted.length) return { score: 0, extended: false };
         var hits = wanted.filter(function (token) { return segmentTokens.indexOf(token) >= 0; }).length;
-        if (wanted.length > 1 && hits === wanted.length) return 1;
-        if (segmentTokens.length !== nameTokens.length) return 0;
+
+        if (hits === wanted.length) {
+            var extra = segmentTokens.filter(function (token) {
+                return token.length > 2 && !STOPWORDS[token] && nameTokens.indexOf(token) < 0;
+            });
+            if (!extra.length) return { score: 1, extended: false };
+            // Расширение — это название целиком, а за ним добавка: «Игра в кальмара: Вызов».
+            // Если слова цели просто рассыпаны по сегменту, это чужой заголовок, а не расширение:
+            // «The Beach Boys - The Pet Sounds Sessions» не является расширением «The Boys».
+            var isPrefix = nameTokens.every(function (token, index) { return segmentTokens[index] === token; });
+            return isPrefix ? { score: EXTENDED_TITLE_SCORE, extended: true } : { score: 0, extended: false };
+        }
+
+        if (segmentTokens.length !== nameTokens.length) return { score: 0, extended: false };
         var allHits = nameTokens.filter(function (token) { return segmentTokens.indexOf(token) >= 0; }).length;
-        if (wanted.length > 1 && hits < 2) return 0;
-        if (wanted.length === 1 && nameTokens.length > 1 && allHits / nameTokens.length < 0.75) return 0;
-        return hits / wanted.length;
+        if (wanted.length > 1 && hits < 2) return { score: 0, extended: false };
+        if (wanted.length === 1 && nameTokens.length > 1 && allHits / nameTokens.length < 0.75) return { score: 0, extended: false };
+        return { score: hits / wanted.length, extended: false };
+    }
+
+    function segmentSimilarity(segment, name) {
+        return segmentMatch(segment, name).score;
     }
 
     function titleAnalysis(title, movie, englishTitle) {
         var segments = extractSearchTitleSegments(title);
         var names = baseTitles(movie || {}, englishTitle);
-        var scores = segments.map(function (segment) {
-            var best = 0;
-            names.forEach(function (name) { best = Math.max(best, segmentSimilarity(segment, name)); });
+        var matches = segments.map(function (segment) {
+            var best = { score: 0, extended: false };
+            names.forEach(function (name) {
+                var match = segmentMatch(segment, name);
+                // При равном счёте точное совпадение вытесняет расширенное.
+                if (match.score > best.score || (match.score === best.score && best.extended && !match.extended)) best = match;
+            });
             return best;
         });
+        var winner = matches.reduce(function (best, match) {
+            if (match.score > best.score || (match.score === best.score && best.extended && !match.extended)) return match;
+            return best;
+        }, { score: 0, extended: false });
         return {
             segments: segments,
-            scores: scores,
-            similarity: scores.reduce(function (best, score) { return Math.max(best, score); }, 0)
+            scores: matches.map(function (match) { return match.score; }),
+            similarity: winner.score,
+            extended: winner.score > 0 && winner.extended
         };
+    }
+
+    // Совпало ли название точно, или только с добавленными словами. Пул использует это, чтобы
+    // не показывать спин-офф, когда само произведение найдено.
+    export function evaluateTitleMatch(item, target) {
+        return titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle);
     }
 
     export function titleSimilarity(title, movie, englishTitle) {

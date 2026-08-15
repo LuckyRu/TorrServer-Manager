@@ -1,4 +1,5 @@
-    import { titleSimilarity, passesSearchTitleGate as passesTitleGate } from './search-gates.js';
+    import { titleSimilarity, passesSearchTitleGate as passesTitleGate, evaluateTitleMatch } from './search-gates.js';
+    import { evaluateIdentityGate, narrowToExactMatches } from './gate-identity.js';
     import { filtersOf } from '../domain/filter-state.js';
 
     var CONFIDENCE_ORDER = { none: 0, low: 1, medium: 2, high: 3 };
@@ -220,20 +221,18 @@
     }
 
     function passesMatchGate(item, target, titlePasses) {
-        var release = item.release;
         if (titlePasses === undefined ? !passesSearchTitleGate(item, target) : !titlePasses) return false;
-        if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) return false;
-        if (target.episode && release.explicitEpisode &&
-            !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) return false;
-        return true;
+        return evaluateIdentityGate(item, target).passes;
     }
 
     export function createCandidateScoreBase(item, target) {
         var release = item.release;
         var payload = estimatePayload(item, target);
+        var titleMatch = evaluateTitleMatch(item, target);
         return {
             titlePasses: passesSearchTitleGate(item, target),
-            titleScore: Math.round(titleSimilarity(item.title, target.movie, target.englishTitle) * 40),
+            titleExtended: titleMatch.extended,
+            titleScore: Math.round(titleMatch.similarity * 40),
             qualityScore: qualityScoreFor(release, payload),
             availabilityScore: availabilityScoreFor(item),
             streamingRiskPenalty: streamingRiskPenaltyFor(item, payload),
@@ -275,7 +274,12 @@
 
     function matchesTranslation(item, voiceType) {
         if (!voiceType || voiceType === 'any') return true;
-        return item.release.voiceType === voiceType;
+        var release = item.release || {};
+        // Раздача с несколькими переводами подходит под выбор любого из них.
+        var present = release.voiceTypes && release.voiceTypes.length
+            ? release.voiceTypes
+            : (release.voiceType ? [release.voiceType] : []);
+        return present.indexOf(voiceType) >= 0;
     }
 
     function matchesTranslator(item, translator) {
@@ -337,18 +341,26 @@
         var filtered = applyStateFiltersDetailed(pool, state, target);
         var rejectedByGate = [];
         var scoredItems = filtered.items.map(function (item) {
-            var scored = Object.assign({}, item, { _score: scoreCandidate(item, target) });
+            var base = createCandidateScoreBase(item, target);
+            var scored = Object.assign({}, item, {
+                _score: scoreCandidateFromBase(item, target, base),
+                _titleExtended: base.titleExtended
+            });
             if (!scored._score.passes) rejectedByGate.push(scored);
             return scored;
         });
-        var candidates = scoredItems.filter(function (item) { return item._score.passes; });
+        var passing = scoredItems.filter(function (item) { return item._score.passes; });
+        var narrowed = narrowToExactMatches(passing, target);
+        var candidates = narrowed.items;
         candidates.sort(function (a, b) { return b._score.value - a._score.value || b.seeders - a.seeders; });
         var gateStage = {
             stage: 'matchGate',
             input: scoredItems.length,
             output: candidates.length,
-            filtered: rejectedByGate.length,
-            rejectedTitles: titles(rejectedByGate)
+            filtered: rejectedByGate.length + narrowed.rejected.length,
+            rejectedTitles: titles(rejectedByGate).concat(narrowed.rejected.map(function (entry) {
+                return (entry.item && entry.item.title ? entry.item.title : 'Без названия') + ' [' + entry.reason + ']';
+            }))
         };
 
         return {
@@ -359,9 +371,9 @@
             afterStateFilters: filtered.items.length,
             stateFilteredCount: filtered.filteredCount,
             stateFilteredTitles: filtered.rejectedTitles,
-            gateFilteredCount: rejectedByGate.length,
+            gateFilteredCount: rejectedByGate.length + narrowed.rejected.length,
             gateFilteredTitles: gateStage.rejectedTitles,
-            filteredCount: filtered.filteredCount + rejectedByGate.length,
+            filteredCount: filtered.filteredCount + rejectedByGate.length + narrowed.rejected.length,
             rejectedTitles: filtered.rejectedTitles.concat(gateStage.rejectedTitles)
         };
     }

@@ -1,0 +1,98 @@
+// Гейт идентичности: та ли это вещь, а не насколько она хороша. Отвечает на вопросы «тот ли
+// сезон», «та ли серия», «не сезонный ли это пак под фильм», «тот ли год».
+//
+// Год и расширенное название проверяются относительно пула, а не абсолютно: кандидат
+// отбрасывается, только если в пуле есть точное совпадение, которым его можно заменить.
+// Абсолютный гейт по году уничтожил бы аниме-трекеры (года нет в принципе), многолетние паки
+// и все сезоны сериала кроме первого — см. §5 архитектурного документа.
+
+import { yearMatches } from './release-year.js';
+import { MODE_MOVIE } from '../shared/state.js';
+
+function yearOf(value) {
+    var year = parseInt(String(value || '').slice(0, 4), 10);
+    return year > 1800 ? year : 0;
+}
+
+export function targetYear(target) {
+    var movie = (target && target.movie) || {};
+    if (!target || target.mode === MODE_MOVIE) return yearOf(movie.release_date || movie.first_air_date);
+
+    var seasons = Array.isArray(movie.seasons) ? movie.seasons : [];
+    for (var i = 0; i < seasons.length; i++) {
+        if (parseInt(seasons[i].season_number, 10) === target.season) {
+            var seasonYear = yearOf(seasons[i].air_date);
+            if (seasonYear) return seasonYear;
+        }
+    }
+    return yearOf(movie.first_air_date || movie.release_date);
+}
+
+// Сезонный пак, попавший в поиск фильма. Одного «S1» мало — эта запись слишком легко возникает
+// из шума вроде «BDRip S1 5.1»; нужен второй сигнал: диапазон серий или слово «сезон».
+function looksLikeSeriesPack(item) {
+    var release = item.release || {};
+    if (!release.explicitSeason) return false;
+    return release.explicitEpisode || /сезон|season/i.test(String(item.title || ''));
+}
+
+export function evaluateIdentityGate(item, target) {
+    var release = (item && item.release) || {};
+    target = target || {};
+
+    if (target.mode === MODE_MOVIE) {
+        if (looksLikeSeriesPack(item)) {
+            return { passes: false, reason: 'series-pack-for-movie', details: { seasons: release.seasons } };
+        }
+        return { passes: true, reason: '', details: {} };
+    }
+
+    if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) {
+        return { passes: false, reason: 'season-mismatch', details: { seasons: release.seasons, wanted: target.season } };
+    }
+    if (target.episode && release.explicitEpisode &&
+        !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) {
+        return {
+            passes: false,
+            reason: 'episode-out-of-range',
+            details: { from: release.episodeFrom, to: release.episodeTo, wanted: target.episode }
+        };
+    }
+    return { passes: true, reason: '', details: {} };
+}
+
+// Относительные правила: применяются к уже прошедшему гейт пулу и только при наличии замены.
+// Каждое возвращает список отклонённых, поэтому пул физически не может опустеть.
+export function narrowToExactMatches(scored, target) {
+    var wantedYear = targetYear(target);
+    var rejected = [];
+
+    function apply(name, isExact, isWrong) {
+        var exact = scored.filter(isExact);
+        if (!exact.length) return;
+        var kept = [];
+        scored.forEach(function (item) {
+            if (isWrong(item)) rejected.push({ item: item, reason: name });
+            else kept.push(item);
+        });
+        scored = kept;
+    }
+
+    // Расширенное название («Игра в кальмара: Вызов») уступает точному, когда точное найдено.
+    apply('title-extension',
+        function (item) { return item._titleExtended === false; },
+        function (item) { return item._titleExtended === true; });
+
+    // Год отбрасывает одноимённое, только если год цели известен и в пуле есть попадание в него.
+    if (wantedYear) {
+        apply('year-mismatch',
+            function (item) { return yearMatches(item.release && item.release.year, wantedYear) === true; },
+            function (item) {
+                var year = item.release && item.release.year;
+                if (!year || year.confidence !== 'high') return false;
+                return yearMatches(year, wantedYear) === false;
+            });
+    }
+
+    return { items: scored, rejected: rejected };
+}

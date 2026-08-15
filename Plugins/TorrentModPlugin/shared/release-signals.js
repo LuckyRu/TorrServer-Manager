@@ -54,10 +54,27 @@
             result.explicitSeason = true;
         }
 
+        // Азиатские раздачи считают серии как «вышло/всего»: [16/16], [30/30], [50/50]. Пак
+        // покрывает серии с первой по вышедшую. Ограничение в три цифры не даёт спутать это с
+        // годом или разрешением; второе число должно быть не меньше первого.
+        match = source.match(/[\[(](\d{1,3})\s*\/\s*(\d{1,3})[\])]/);
+        if (match) {
+            var aired = parseInt(match[1], 10);
+            var total = parseInt(match[2], 10);
+            if (aired > 0 && total >= aired) {
+                result.episodeFrom = 1;
+                result.episodeTo = aired;
+                result.explicitEpisode = true;
+                return result;
+            }
+        }
+
         // Matches Russian/Ukrainian/English episode-marker phrasing plus "E01-E12" and "x of N" ranges.
         match = source.match(/(?:серии|серия|серії|серія|episodes?|эпизоды?)\s*[:№]?\s*(\d{1,3})(?!\d)(?:\s*[-–]\s*(\d{1,3})(?!\d))?/i) ||
             source.match(/(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?\s*(?:серии|серия|серії|серія|episodes?|эпизоды?)(?:\s*(?:из|of|з)\s*\d{1,3})?/i) ||
             source.match(/[\[(](\d{1,3})\s*[-–]\s*(\d{1,3})\s*(?:из|of|з)\s*\d{1,3}/i) ||
+            // AniLibria закрывает заголовок голым диапазоном серий: «…[HEVC][1-12]».
+            source.match(/[\[(](\d{1,3})\s*[-–]\s*(\d{1,3})[\])]/) ||
             source.match(/\bE(\d{1,3})(?:\s*[-–]\s*E?(\d{1,3}))?\b/i);
         if (match) {
             result.episodeFrom = parseInt(match[1], 10);

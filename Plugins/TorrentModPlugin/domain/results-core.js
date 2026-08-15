@@ -27,6 +27,25 @@
         return order ? order.filter(function (v) { return present[v]; }) : Object.keys(present);
     }
 
+    // Раздача несёт несколько переводов сразу, поэтому меню строится из объединения, а не из
+    // одного значения на раздачу.
+    export function poolVoiceTypes(pool) {
+        var found = [];
+        var seen = {};
+        (pool || []).forEach(function (item) {
+            var release = item.release || {};
+            var values = release.voiceTypes && release.voiceTypes.length
+                ? release.voiceTypes
+                : (release.voiceType ? [release.voiceType] : []);
+            values.forEach(function (value) {
+                if (!value || seen[value]) return;
+                seen[value] = true;
+                found.push(value);
+            });
+        });
+        return found;
+    }
+
     export function poolTranslators(pool) {
         var found = [];
         var seen = {};
@@ -64,7 +83,7 @@
             });
         }
 
-        var voiceFound = poolValues(state, function (item) { return item.release.voiceType; });
+        var voiceFound = poolVoiceTypes(state.pool);
         var voiceOptions = state.pool ? (voiceFound.length ? voiceFound : []) : ['Дубляж', 'Многоголосый', 'Одноголосый', 'Оригинал'];
         var voiceItems = [{ title: 'Любой', value: 'any', selected: filters.voiceType === 'any' }].concat(
             voiceOptions.map(function (v) {
