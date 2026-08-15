@@ -37,6 +37,7 @@
 | `GET` | `/api/config` | Текущая конфигурация (JSON) | LAN |
 | `POST` | `/api/config` | Сохранить конфигурацию + запустить рефреш | loopback |
 | `POST` | `/api/plugins/refresh` | Форс-рефреш кэша плагинов (нужен `-d ""` в curl) | loopback |
+| `GET` | `/api/search-rules` | Студии перевода из `data\search-rules.json` (пополняются без пересборки) | LAN |
 | `GET` | `/api/torrent-search/start` | Запустить поиск: возвращает `{jobId, totalIndexers, indexers[]}`, по одной задаче на индексатор | LAN |
 | `GET` | `/api/torrent-search/poll` | Накопленные результаты и состояние каждого индексатора (`ok`, `elapsedMs`) | LAN |
 | `GET` | `/api/torrent-search/cancel` | Отмена поиска. Именно `GET`: `HttpListener` требует `Content-Length` даже на пустом `POST` | LAN |
