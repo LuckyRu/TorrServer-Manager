@@ -3,7 +3,8 @@ param(
     [string]$TorrServerTag = '',
     [string]$OutputDirectory = '',
     [switch]$SkipTests,
-    [switch]$NoGoBootstrap
+    [switch]$NoGoBootstrap,
+    [switch]$RequireRelease
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +60,83 @@ function Invoke-NativeOutput {
     }
 }
 
+function Invoke-NativeExitCode {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $false)][string[]]$Arguments = @(),
+        [Parameter(Mandatory = $false)][string]$WorkingDirectory = $repoRoot
+    )
+
+    Push-Location $WorkingDirectory
+    try {
+        & $FilePath @Arguments *> $null
+        return $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+}
+
+function Get-SubmoduleGitlink {
+    $entry = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('ls-tree', 'HEAD', $expectedSubmodulePath)
+    $match = [regex]::Match($entry, '^\s*\d+\s+commit\s+(?<sha>[0-9a-f]{40})\s')
+    if (-not $match.Success) {
+        return ''
+    }
+    return $match.Groups['sha'].Value
+}
+
+function Test-SubmoduleAncestor {
+    param(
+        [Parameter(Mandatory = $true)][string]$Ancestor,
+        [Parameter(Mandatory = $true)][string]$Descendant
+    )
+
+    $code = Invoke-NativeExitCode -FilePath 'git.exe' `
+        -Arguments @('merge-base', '--is-ancestor', $Ancestor, $Descendant) `
+        -WorkingDirectory $torrServerSubmodulePath
+    switch ($code) {
+        0 { return $true }
+        1 { return $false }
+        default {
+            throw "git merge-base не смог сравнить $Ancestor и $Descendant (код $code). Выполните 'git -C $expectedSubmodulePath fetch origin'."
+        }
+    }
+}
+
+# `git submodule update` выписывает gitlink родителя, а на рабочей ветке gitlink отстаёт
+# по построению: родитель записывает его последним шагом выпуска, а не первым. Безусловный
+# update молча пересобирает предыдущий релиз из detached HEAD.
+function Sync-TorrServerSubmodule {
+    param([Parameter(Mandatory = $false)][string]$Gitlink = '')
+
+    Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'sync', '--recursive')
+
+    if (-not (Test-Path -LiteralPath (Join-Path $torrServerSubmodulePath 'server\go.mod'))) {
+        Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'update', '--init', '--recursive', '--', $expectedSubmodulePath)
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($Gitlink)) {
+        return
+    }
+
+    $head = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', 'HEAD')
+    if ($head -eq $Gitlink) {
+        return
+    }
+
+    if (Test-SubmoduleAncestor -Ancestor $Gitlink -Descendant $head) {
+        Write-Host "Субмодуль опережает gitlink родителя: сборка идёт из рабочей ветки, откат не выполняется." -ForegroundColor Yellow
+        return
+    }
+    if (Test-SubmoduleAncestor -Ancestor $head -Descendant $Gitlink) {
+        Write-Host "Субмодуль отстаёт от gitlink родителя: перемотка вперёд на $($Gitlink.Substring(0, 12))."
+        Invoke-Native -FilePath 'git.exe' -Arguments @('merge', '--ff-only', $Gitlink) -WorkingDirectory $torrServerSubmodulePath
+        return
+    }
+
+    throw "История субмодуля разошлась с gitlink родителя ($($Gitlink.Substring(0, 12))). Сведите их вручную: сборка не выбирает за вас, какую сторону потерять."
+}
+
 function Assert-OfficialTorrServerTag {
     param([Parameter(Mandatory = $true)][string]$Tag)
 
@@ -94,36 +172,90 @@ function Resolve-TorrServerSource {
         throw "В .gitmodules не найден URL submodule '$expectedSubmodulePath'."
     }
 
-    Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'sync', '--recursive')
-    Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'update', '--init', '--recursive', '--', $expectedSubmodulePath)
+    $gitlink = Get-SubmoduleGitlink
+    Sync-TorrServerSubmodule -Gitlink $gitlink
 
     if (-not (Test-Path -LiteralPath (Join-Path $torrServerSubmodulePath 'server\go.mod'))) {
         throw "В submodule не найден server/go.mod: $torrServerSubmodulePath"
     }
 
-    $dirty = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'status', '--porcelain', '--untracked-files=no')
-    if (-not [string]::IsNullOrWhiteSpace($dirty)) {
-        throw "Рабочее дерево TorrServer загрязнено. Сборка разрешена только из чистого pinned submodule.`n$dirty"
-    }
-
     Invoke-Native -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'fetch', '--tags', 'origin')
+    $actualCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', 'HEAD')
+    $branch = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', '--abbrev-ref', 'HEAD')
+    $dirty = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'status', '--porcelain', '--untracked-files=no')
+    $isDirty = -not [string]::IsNullOrWhiteSpace($dirty)
+
     $resolvedTag = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'describe', '--tags', '--match', 'MatriX.*-TorrentMod.*', '--abbrev=0', 'HEAD')
     $tagMatch = [regex]::Match($resolvedTag, $torrServerReleaseTagPattern)
     if (-not $tagMatch.Success) {
         throw "Не удалось определить downstream-тег MatriX.*-TorrentMod.* из истории submodule."
     }
     if (-not [string]::IsNullOrWhiteSpace($TorrServerTag) -and $TorrServerTag -ne $resolvedTag) {
-        throw "Запрошен TorrServerTag '$TorrServerTag', но submodule закреплён на '$resolvedTag'."
+        throw "Запрошен TorrServerTag '$TorrServerTag', но ближайший тег submodule — '$resolvedTag'."
     }
     $upstreamTag = $tagMatch.Groups['upstream'].Value
     Assert-OfficialTorrServerTag -Tag $upstreamTag
-    $actualCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', 'HEAD')
+
+    # `describe --abbrev=0` называет ближайший тег и молчит о расстоянии до него, поэтому
+    # сборка на три коммита впереди 1.6 без этой проверки штампуется как ровно 1.6.
+    $distance = [int](Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-list', '--count', "$resolvedTag..HEAD"))
+    $devReasons = @()
+    if ($distance -gt 0) {
+        $where = if ($branch -eq 'HEAD') { 'субмодуль' } else { "ветка $branch" }
+        $devReasons += "$where впереди тега ${resolvedTag} на $distance коммит(ов)"
+    }
+    if ($isDirty) {
+        $devReasons += 'рабочее дерево субмодуля изменено и не соответствует ни одному коммиту'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($gitlink) -and $gitlink -ne $actualCommit) {
+        $devReasons += "gitlink родителя ещё указывает на $($gitlink.Substring(0, 12))"
+    }
+
+    $buildVersion = $resolvedTag
+    if ($devReasons.Count -gt 0) {
+        $buildVersion = "$resolvedTag-dev.$distance.g$($actualCommit.Substring(0, 7))"
+        if ($isDirty) {
+            $buildVersion += '.dirty'
+        }
+    }
+    if ($devReasons.Count -gt 0 -and $RequireRelease) {
+        throw "Запрошена релизная сборка, но источник TorrServer в дев-состоянии:`n  - $($devReasons -join "`n  - ")"
+    }
+
     return [pscustomobject]@{
         ReleaseTag = $resolvedTag
+        BuildVersion = $buildVersion
         UpstreamTag = $upstreamTag
         Commit = $actualCommit
+        Branch = $branch
         Repository = $submoduleUrl
+        IsDev = $devReasons.Count -gt 0
+        DevReasons = $devReasons
+        DirtyFiles = $dirty
     }
+}
+
+function Write-BuildStateBanner {
+    param([Parameter(Mandatory = $true)][psobject]$Source)
+
+    if (-not $Source.IsDev) {
+        Write-Host "Релизная сборка TorrServer $($Source.ReleaseTag)." -ForegroundColor Green
+        return
+    }
+
+    Write-Host ''
+    Write-Host '  ДЕВ-СБОРКА TorrServer — не релиз  ' -ForegroundColor Black -BackgroundColor Yellow
+    foreach ($reason in $Source.DevReasons) {
+        Write-Host "  - $reason" -ForegroundColor Yellow
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Source.DirtyFiles)) {
+        foreach ($line in ($Source.DirtyFiles -split "`n")) {
+            Write-Host "      $($line.Trim())" -ForegroundColor DarkYellow
+        }
+    }
+    Write-Host "  Версия бинарника: $($Source.BuildVersion)" -ForegroundColor Yellow
+    Write-Host '  Релиз требует тега на HEAD, чистого дерева и обновлённого gitlink; ключ -RequireRelease это проверяет.' -ForegroundColor Yellow
+    Write-Host ''
 }
 
 function Get-GoExecutable {
@@ -191,7 +323,9 @@ function Resolve-GoVersion {
 
 $torrServerSource = Resolve-TorrServerSource
 $torrServerReleaseTag = $torrServerSource.ReleaseTag
+$torrServerBuildVersion = $torrServerSource.BuildVersion
 $torrServerVersion = $torrServerSource.UpstreamTag
+Write-BuildStateBanner -Source $torrServerSource
 $sourceRoot = Join-Path $buildRoot "TorrServer-$torrServerReleaseTag-$($torrServerSource.Commit.Substring(0, 12))"
 $serverModule = Join-Path $sourceRoot 'server'
 if (Test-Path -LiteralPath $sourceRoot) {
@@ -217,7 +351,7 @@ if (-not $SkipTests) {
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $serverOutput = Join-Path $outputRoot 'TorrServer.exe'
-$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$torrServerReleaseTag"
+$ldflags = "-s -w -checklinkname=0 -X server/version.Version=$torrServerBuildVersion"
 Invoke-Native -FilePath $go -Arguments @('build', '-tags=nosqlite,gst', '-trimpath', "-ldflags=$ldflags", '-o', $serverOutput, './cmd') -WorkingDirectory $serverModule
 
 $managerArguments = @('publish', 'TorrServerManager.csproj', '-c', 'Release', '-o', $outputRoot)
@@ -227,8 +361,9 @@ Write-Host ""
 Write-Host "Готово:" -ForegroundColor Green
 Write-Host "  Manager:   $(Join-Path $outputRoot 'TorrServerManager.exe')"
 Write-Host "  TorrServer: $serverOutput"
-Write-Host "  Version:    $torrServerReleaseTag"
+Write-Host "  Version:    $torrServerBuildVersion" -ForegroundColor $(if ($torrServerSource.IsDev) { 'Yellow' } else { 'Green' })
 Write-Host "  Upstream:   $torrServerVersion"
 Write-Host "  Release:    $torrServerReleaseTag"
-Write-Host "  Source:     $($torrServerSource.Repository)@$($torrServerSource.Commit)"
+Write-Host "  Source:     $($torrServerSource.Repository)@$($torrServerSource.Commit) ($($torrServerSource.Branch))"
 Write-Host "  Go:         $goVersion"
+Write-BuildStateBanner -Source $torrServerSource

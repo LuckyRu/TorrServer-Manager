@@ -45,6 +45,18 @@ npm run test:plugin
 curl -s -X POST -H "Content-Length: 0" http://127.0.0.1:8095/api/plugins/refresh
 ```
 
+## Если менялся TorrServer
+
+Порядок обратный привычному: сначала тег в форке, потом gitlink в родителе. До второго коммита
+субмодуль опережает gitlink, и сборка честно помечает себя дев-сборкой
+(`…-TorrentMod.1.6-dev.2.g1a2b3c4` вместо голого тега). Это нормальное состояние в работе, но
+выпускать такое нельзя: релизный прогон —
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -RequireRelease
+```
+Он падает, если HEAD субмодуля не на теге, дерево грязное или gitlink ещё не обновлён. Подробности
+и таблица состояний — в [`rebuild-patched-torrserver.md`](rebuild-patched-torrserver.md).
+
 ## Если менялся только JS-плагин
 
 Полный цикл (build → publish → deploy) не обязателен для итерации — см.

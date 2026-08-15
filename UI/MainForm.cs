@@ -1007,9 +1007,18 @@ internal sealed class MainForm : Form
                 installedBuild = build;
                 availableUpstreamRelease = null;
                 SetButtonEnabled(updateButton, false);
-                updateText.Text = $"База {build.UpstreamTag} актуальна";
+                updateText.Text = build.IsDev
+                    ? $"База {build.UpstreamTag} актуальна\nДев-сборка, не релиз"
+                    : $"База {build.UpstreamTag} актуальна";
                 if (showUpToDateMessage)
-                    MessageBox.Show(this, "Сборка актуальна относительно upstream.", "Состояние сборки", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(
+                        this,
+                        build.IsDev
+                            ? $"Сборка актуальна относительно upstream.\n\nЭто дев-сборка {build.FullTag}: она собрана из рабочей ветки, а не из релизного тега."
+                            : "Сборка актуальна относительно upstream.",
+                        "Состояние сборки",
+                        MessageBoxButtons.OK,
+                        build.IsDev ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             }
         }
         catch (Exception exception)

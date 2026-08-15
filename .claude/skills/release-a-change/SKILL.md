@@ -25,3 +25,8 @@ For JS-only iteration that doesn't need this full cycle, see
 
 `TorrServer.exe`/`JackettConsole.exe` are independent processes — no restart needed for a manager-only
 deploy.
+
+If TorrServer itself changed, the release build is `scripts\build-all.ps1 -RequireRelease` — it fails
+unless the submodule HEAD is on a downstream tag, its tree is clean, and the parent gitlink already
+points at it. Without the switch the script builds happily from the working branch and stamps the
+binary `…-dev.<n>.g<sha>`; that is a dev build, not a release.

@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace TorrServerManager.Services;
 
 internal sealed record ReleaseInfo(string Version, string HtmlUrl);
-internal sealed record InstalledBuildInfo(string FullTag, string UpstreamTag, bool IsDownstream);
+internal sealed record InstalledBuildInfo(string FullTag, string UpstreamTag, bool IsDownstream, bool IsDev);
 
 internal sealed partial class UpdateService : IDisposable
 {
@@ -47,7 +47,8 @@ internal sealed partial class UpdateService : IDisposable
         build = new InstalledBuildInfo(
             match.Value,
             match.Groups["upstream"].Value,
-            match.Groups["downstream"].Success);
+            match.Groups["downstream"].Success,
+            match.Groups["dev"].Success);
         return true;
     }
 
@@ -74,7 +75,7 @@ internal sealed partial class UpdateService : IDisposable
             : [];
     }
 
-    [GeneratedRegex(@"^(?<upstream>MatriX(?:\.\d+)+)(?<downstream>-TorrentMod(?:\.\d+)+)?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(?<upstream>MatriX(?:\.\d+)+)(?<downstream>-TorrentMod(?:\.\d+)+)?(?<dev>-dev\.\d+\.g[0-9a-f]+(?:\.dirty)?)?$", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();
 
     public void Dispose() => httpClient.Dispose();

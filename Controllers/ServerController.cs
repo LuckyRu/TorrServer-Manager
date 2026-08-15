@@ -203,7 +203,9 @@ internal sealed partial class ServerController : IDisposable
         }
     }
 
-    [GeneratedRegex(@"MatriX(?:\.\d+)+(?:-TorrentMod(?:\.\d+)+)?", RegexOptions.IgnoreCase)]
+    // The -dev suffix is what build-all.ps1 stamps when the submodule is ahead of its release tag;
+    // dropping it here would show a dev build as the release it is merely descended from.
+    [GeneratedRegex(@"MatriX(?:\.\d+)+(?:-TorrentMod(?:\.\d+)+)?(?:-dev\.\d+\.g[0-9a-f]+(?:\.dirty)?)?", RegexOptions.IgnoreCase)]
     private static partial Regex VersionRegex();
 
     public void Dispose() => httpClient.Dispose();
