@@ -61,6 +61,10 @@ ADR/system-design/reference там, где одно объясняет друг�
   [`system-design/three-identities-client-pipeline-torrent.md`](system-design/three-identities-client-pipeline-torrent.md)
   — и пошаговый план работ к нему:
   [`system-design/three-identities-implementation-plan.md`](system-design/three-identities-implementation-plan.md)
+- **Один торрент — несколько потоков: конкурентность** (что делят одновременные воспроизведения
+  одной раздачи: подтверждённые гонки закрытые и оставшиеся, проход вытеснения, который меняет то,
+  что измеряет, гейт торрента, выключающийся под нагрузкой) →
+  [`system-design/one-torrent-many-streams-concurrency.md`](system-design/one-torrent-many-streams-concurrency.md)
 - **Формула оценки раздач Torrent Mod** (гейт, скоринг, сегодняшний фикс шумного поиска по названию) →
   [`reference/torrent-mod-scoring-model.md`](reference/torrent-mod-scoring-model.md)
 - **Справочник по граблям JS/API Torrent Mod** (кириллица в регэкспах, `Component.create`,
