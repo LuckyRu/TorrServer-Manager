@@ -22,6 +22,7 @@ import { createResultsProjectionCache } from '../domain/results-projections.js';
 import { createRenderScheduler } from '../ui/render-scheduler.js';
 import { reconcileKeyedChildren } from '../ui/keyed-dom.js';
 import { MODE_SERIES } from '../shared/state.js';
+import { mergeReleases } from '../shared/release-identity.js';
 
 const runner = createRunner();
 const BASELINE = process.env.PERF_BASELINE === '1' || process.argv.includes('--baseline');
@@ -254,7 +255,7 @@ function runSearch() {
     const turn = turnAwareCounter(counters);
     const scope = instrumentedScope(turn);
     const countingParse = (title, profile) => { turn.countParse(); return parseSeriesRelease(title, profile); };
-    const pool = [];
+    let pool = [];
 
     const restoreConsole = spyConsole(counters);
     return new Promise((resolve) => {
@@ -263,7 +264,8 @@ function runSearch() {
             (entry) => {
                 counters.indexerCallbacks++;
                 counters.deliveredItemsVolume += entry.items.length;
-                if (entry.done) entry.items.forEach((item) => pool.push(item));
+                // Пул собирается ровно так же, как его собирает домен, — слиянием каждой доставки.
+                pool = mergeReleases(pool, entry.items);
             },
             () => {
                 restoreConsole();

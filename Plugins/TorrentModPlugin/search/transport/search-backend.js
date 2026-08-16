@@ -330,7 +330,11 @@
                 state.completedQueries >= state.scheduledQueries && !fallbackDecisionPending();
         }
 
-        function trackerUpdate(state, query) {
+        // items — дельта с прошлой доставки, а не всё накопленное. Получатель прогоняет каждый
+        // доставленный элемент через слияние по всему пулу, поэтому переотправка накопленного
+        // делала стоимость квадратичной по числу трекеров. Накопленный размер отдаётся отдельным
+        // числом: он нужен диагностике, но не требует копирования массива.
+        function trackerUpdate(state, query, delta) {
             var done = trackerDone(state);
             if (done && state.terminalReported) return;
             if (done) state.terminalReported = true;
@@ -340,7 +344,8 @@
                 // параллельным запросам завышала бы реальное время в несколько раз.
                 elapsedMs: state.startedAt ? Date.now() - state.startedAt : state.queryElapsedMs,
                 queryElapsedMs: state.queryElapsedMs,
-                items: state.items.slice(), query: query || state.lastQuery || '',
+                items: delta || [], totalItems: state.items.length,
+                query: query || state.lastQuery || '',
                 done: done,
                 completedQueries: state.completedQueries,
                 totalQueries: state.scheduledQueries,
@@ -383,8 +388,15 @@
             return indexerState[entry.id];
         }
 
+        // Возвращает то, что реально изменилось: добавленные раздачи и вытеснившие их варианты
+        // (mergeReleases кладёт на место победителя другой объект). Сравнение по ссылке, без
+        // повторного вычисления releaseIdentity.
         function mergeItems(state, items) {
-            state.items = mergeReleases(state.items, items);
+            var before = state.items;
+            state.items = mergeReleases(before, items);
+            if (state.items === before) return [];
+            var previous = new Set(before);
+            return state.items.filter(function (item) { return !previous.has(item); });
         }
 
         function addStats(state, stats) {
@@ -450,9 +462,9 @@
                         anyOk = anyOk || entry.ok;
                         var acceptedBefore = acceptedTotal;
                         acceptedTotal += mapped.length;
-                        mergeItems(state, mapped);
+                        var delta = mergeItems(state, mapped);
                         addStats(state, mapped.stats);
-                        trackerUpdate(state, plan.query);
+                        trackerUpdate(state, plan.query, delta);
                         // Первый принятый кандидат окончательно отменяет if-empty волну. Уже
                         // завершившиеся трекеры теперь можно честно перевести в terminal.
                         if (!acceptedBefore && acceptedTotal) flushTrackerUpdates();

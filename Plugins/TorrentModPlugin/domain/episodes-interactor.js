@@ -149,13 +149,14 @@
                 if (entry.done) {
                     log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" завершил полный цикл ' +
                         entry.completedQueries + '/' + entry.totalQueries + ' запросов за ' + entry.elapsedMs +
-                        'мс, всего принято ' + entry.items.length + (entry.ok ? '' : ', ошибка: ' + entry.error));
+                        'мс, всего принято ' + entry.totalItems + (entry.ok ? '' : ', ошибка: ' + entry.error));
                 } else {
                     // Query-level ответы остаются в verbose diagnostics, потому что по ним
                     // разбирается конкретное название. В UI это всё ещё одна pending-задача трекера.
                     debug('episodes', 'loadAllTorrents: промежуточный ответ трекера "' + entry.name +
                         '" по запросу "' + (entry.query || '') + '", прогресс ' +
-                        entry.completedQueries + '/' + entry.totalQueries + ', принято ' + entry.items.length);
+                        entry.completedQueries + '/' + entry.totalQueries + ', новых ' + entry.items.length +
+                        ', всего ' + entry.totalItems);
                 }
                 // Один медленный индексатор держит poolStatus в «загружается» и после того, как
                 // показывать уже есть что. Прогрессивная выдача это скрывает, поэтому отмечаем
