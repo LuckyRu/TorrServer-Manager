@@ -76,7 +76,7 @@ summary:
 | Search & matching | Whole season searched once in background ([ADR-0005](docs/adr/0005-search-whole-season-once.md)); parallel per-indexer Jackett fetch; matchScore-as-gate then quality+availability ranking; strict word-count title matching + TMDB English-title fetch | [`scoring-model.md`](docs/reference/torrent-mod-scoring-model.md), [`parallel-search.md`](docs/system-design/torrent-mod-parallel-search.md), [`search-architecture.md`](docs/system-design/torrent-mod-search-architecture.md) (архитектура + замеры), [`tracker-formats.md`](docs/reference/torrent-mod-tracker-formats.md) (трекеры, форматы, порядок разбора) |
 | Domain | Store/State/Interactors, `shared/core/` primitives (result/generation-guard/lifecycle), View/Domain boundary rule (UI timers live in the View, not the domain) | [`domain-architecture.md`](docs/system-design/torrent-mod-domain-architecture.md) |
 | UI/navigation | `Lampa.Explorer` chrome + real `Lampa.Filter` toolbar ([ADR-0004](docs/adr/0004-lampa-filter-not-handbuilt-chips.md)); 10 documented Controller/Activity/Select/Scroll bugs | [`lampa-navigation-contract.md`](docs/system-design/lampa-navigation-contract.md) |
-| Playback | GST-first, no `url_reserve`, no global player patching ([ADR-0003](docs/adr/0003-no-global-player-patching.md), historical chain in [ADR-0006](docs/adr/0006-native-player-fallback-not-ffprobe-gate.md)) | [`lampa-player-api.md`](docs/reference/lampa-player-api.md) |
+| Playback | GST-first, no `url_reserve`, no global player patching ([ADR-0003](docs/adr/0003-no-global-player-patching.md), historical chain in [ADR-0006](docs/adr/0006-native-player-fallback-not-ffprobe-gate.md)) | [`lampa-player-api.md`](docs/reference/lampa-player-api.md), [`gstreamer-seek-accuracy.md`](docs/system-design/gstreamer-seek-accuracy.md) (перемотка: индекс ≠ точность, флаги, точки обрезки) |
 | Dev workflow | `npm run dev:plugin` writes a dev-override the built-in loader checks first — **delete it before a real deploy** or the `.exe` silently serves stale JS | [`iterate-on-a-plugin-without-rebuilding.md`](docs/how-to/iterate-on-a-plugin-without-rebuilding.md) |
 
 **Gotchas that cause real regressions if forgotten** (full detail behind each link):
@@ -93,6 +93,10 @@ summary:
   and still corrupt a stream by acting in the wrong order. The cache sweep moving a reader that was
   mid-read was silent under `-race` and needed a deterministic rendezvous test
   ([§5.1](docs/system-design/one-torrent-many-streams-concurrency.md)).
+- GStreamer seek flags are not additive: `ACCURATE` asks for the exact position, `KEY_UNIT|SNAP_AFTER`
+  for the next keyframe after it. Set together, the latter wins and `ACCURATE` silently does nothing —
+  the log even says `accurate=true` while the position is seconds off
+  ([seek-accuracy](docs/system-design/gstreamer-seek-accuracy.md)).
 
 Full list with root cause and fix: [`docs/reference/torrent-mod-gotchas.md`](docs/reference/torrent-mod-gotchas.md).
 
