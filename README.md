@@ -76,10 +76,11 @@ GST/HLS-поток TorrServer. Перед стартом плагин получ
   (`ServerController.StartAsync` иначе бросает `FileNotFoundException`). Обновления
   патченного бинарника собираются из исходников.
 - **Jackett** нужно один раз положить (portable-версия, без установки службы) в
-  `%ProgramData%\Jackett\App\JackettConsole.exe` — дальше менеджер запускает его
-  как обычный дочерний процесс (`-z --DataFolder … -p 9117 --NoUpdates`), точно так
-  же, как TorrServer: без службы Windows, без UAC на старт/стоп/перезапуск и с
-  обновлением в один клик из самого менеджера, а не через встроенный апдейтер Jackett.
+  `%ProgramData%\Jackett\App\JackettConsole.exe` — либо взять собранный fork-артефакт из
+  `publish\Jackett\App` после `scripts\build-all.ps1`. Дальше менеджер запускает его как обычный
+  дочерний процесс (`-z --DataFolder … -p 9117 --NoUpdates`), без службы Windows и без UAC на
+  старт/стоп/перезапуск. Схема source-release описана в
+  [`docs/how-to/rebuild-patched-jackett.md`](docs/how-to/rebuild-patched-jackett.md).
 - **FlareSolverr** нужно один раз распаковать в `%ProgramData%\FlareSolverr\flaresolverr\flaresolverr.exe`.
   Менеджер запускает официальный Windows x64-бинарник на `127.0.0.1:8191` перед Jackett и сам
   прописывает `FlareSolverrUrl` в `ServerConfig.json`. FlareSolverr нужен индексаторам, которые
