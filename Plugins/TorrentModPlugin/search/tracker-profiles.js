@@ -158,7 +158,10 @@ export function registerTrackerRules(rules) {
         var next = { id: id };
         Object.keys(DEFAULT_PROFILE).forEach(function (key) {
             if (key === 'strip') return;
-            if (rule[key] !== undefined) next[key] = rule[key];
+            // null в JSON означает «поле не указано»: сериализатор пишет его для всех
+            // незаполненных полей, и без этой проверки правка одного поля сбрасывала бы
+            // остальные — например, группу аниме-трекера обратно в general.
+            if (rule[key] !== undefined && rule[key] !== null) next[key] = rule[key];
             else if (existing && existing[key] !== undefined) next[key] = existing[key];
         });
         // strip приходит строками — регэкспы из файла не принимаем, чтобы правка данных не

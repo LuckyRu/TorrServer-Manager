@@ -405,6 +405,12 @@ test('правила трекера можно переопределить фа
     // Коды перестали читаться там, где пользователь это запретил.
     assert.deepEqual(parseRelease('Фильм / Movie (2024) WEB-DL 1080p | D, P', profileFor('megapeer')).voiceTypes, []);
 
+    // Сериализатор менеджера пишет незаполненные поля как null — они не должны сбрасывать
+    // встроенные значения: правка одного поля у аниме-трекера не может выкинуть его из группы.
+    registerTrackerRules([{ id: 'anidub', studioSlots: 'tail', group: null, year: null }]);
+    assert.equal(profileFor('anidub').group, 'anime');
+    assert.equal(profileFor('anidub').year, 'never');
+
     registerTrackerRules([{ id: 'новый-аниме-трекер', group: 'anime', studioDefault: 'NewFansub' }]);
     assert.ok(indexersInGroup('anime').indexOf('новый-аниме-трекер') >= 0);
     assert.deepEqual(parseRelease('Аниме [1080p]', profileFor('новый-аниме-трекер')).translators, ['NewFansub']);
