@@ -1,4 +1,4 @@
-import { buildQueries, buildAnimeQueries, isAnimeTarget } from './query-building.js';
+import { buildQueries, buildAnimeQueries, isAnimeTarget, queryNames, searchNames, normalizedTitleKey } from './query-building.js';
 import { unique } from '../shared/utils.js';
 import { indexersInGroup } from './tracker-profiles.js';
 
@@ -13,9 +13,34 @@ function planKey(plan) {
     return plan.query + '|' + include + '|' + exclude;
 }
 
+// Названия, не попавшие в первую волну. Уходят только при пустом результате: угадать нужное имя
+// с первого раза нельзя — parse_lang у пользователя может дать оригинал, которого нет в индексе
+// русских трекеров, а то же аниме лежит там под русским названием. Постоянный второй запрос
+// стоил бы отдельного job на каждый трекер со своими ретраями, поэтому он отложенный.
+function escalationPlans(target, usedQueries, excludeIndexerIds, candidates) {
+    var used = {};
+    (usedQueries || []).forEach(function (query) { used[normalizedTitleKey(query)] = true; });
+    return (candidates || queryNames(target))
+        .filter(function (name) {
+            // Запасной запрос уходит на общие трекеры: письмо, которого нет в их индексе,
+            // там бесполезно — оно вернёт случайную свежую выдачу, а не пустой ответ.
+            return name && !used[normalizedTitleKey(name)] && /[a-zа-яё]/i.test(name);
+        })
+        .slice(0, 1)
+        .map(function (name) {
+            var plan = { query: name, when: 'if-empty' };
+            if (excludeIndexerIds) plan.excludeIndexerIds = excludeIndexerIds;
+            return plan;
+        });
+}
+
 export function buildSearchPlan(target, queries) {
     queries = Array.isArray(queries) ? queries : [];
-    if (!isAnimeTarget(target)) return queries.map(function (query) { return { query: query }; });
+
+    if (!isAnimeTarget(target)) {
+        var general = queries.map(function (query) { return { query: query }; });
+        return unique(general.concat(escalationPlans(target, queries)), planKey);
+    }
 
     var animeQueries = buildAnimeQueries(target).slice(0, 3);
     var standardQueries = buildQueries(target).slice(0, 1);
@@ -27,5 +52,7 @@ export function buildSearchPlan(target, queries) {
         plans.push({ query: query, excludeIndexerIds: animeIndexerIds() });
     });
 
-    return unique(plans, planKey);
+    // У аниме запасное имя берётся из alias-набора: на общих трекерах то же произведение
+    // лежит под русским названием, которое в первую волну не попало.
+    return unique(plans.concat(escalationPlans(target, standardQueries, animeIndexerIds(), searchNames(target))), planKey);
 }

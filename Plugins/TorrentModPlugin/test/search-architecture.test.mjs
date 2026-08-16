@@ -16,6 +16,7 @@ import { workFamily, isAnimeTarget } from '../search/work-profile.js';
 import { buildQueries } from '../search/query-building.js';
 import { buildMovieQueries } from '../search/movie-query-building.js';
 import { buildSeriesQueries } from '../search/series-query-building.js';
+import { buildSearchPlan } from '../search/indexer-search-strategies.js';
 
 let passed = 0;
 let failed = 0;
@@ -414,6 +415,37 @@ test('правила трекера можно переопределить фа
     registerTrackerRules([{ id: 'новый-аниме-трекер', group: 'anime', studioDefault: 'NewFansub' }]);
     assert.ok(indexersInGroup('anime').indexOf('новый-аниме-трекер') >= 0);
     assert.deepEqual(parseRelease('Аниме [1080p]', profileFor('новый-аниме-трекер')).translators, ['NewFansub']);
+});
+
+// ---------- эскалация запросов ----------
+
+test('запасное название не уходит сразу, а помечается «если пусто»', () => {
+    const movie = { name: 'Атака титанов', original_name: '進撃の巨人', genre_ids: [16], original_language: 'ja' };
+    const target = { mode: 'series', season: 0, movie, englishTitle: 'Attack on Titan' };
+    const plan = buildSearchPlan(target, buildSeriesQueries(target));
+
+    const immediate = plan.filter((entry) => entry.when !== 'if-empty');
+    const deferred = plan.filter((entry) => entry.when === 'if-empty');
+
+    assert.ok(immediate.length > 0);
+    assert.equal(deferred.length, 1, JSON.stringify(plan));
+    // Запасной запрос идёт на общие трекеры — аниме-группа из него исключена. Сравниваем с
+    // текущим составом группы: другие тесты в этом файле её пополняют.
+    assert.deepEqual(deferred[0].excludeIndexerIds, indexersInGroup('anime'));
+    assert.ok(deferred[0].excludeIndexerIds.indexOf('anidub') >= 0);
+    // Русское название в первой волне уходит только на аниме-трекеры; на общие оно попадает
+    // именно запасным запросом — маршрут другой, поэтому совпадение текста здесь не дубль.
+    assert.ok(!immediate.some((entry) => entry.query === deferred[0].query && entry.excludeIndexerIds),
+        'запасной запрос дублирует первую волну: ' + JSON.stringify(plan));
+    assert.ok(immediate.some((entry) => entry.query === deferred[0].query && entry.indexerIds),
+        'русское название должно уходить на аниме-трекеры сразу: ' + JSON.stringify(plan));
+});
+
+test('эскалация не выдумывает запрос, когда все названия уже использованы', () => {
+    const movie = { name: 'The Boys', original_name: 'The Boys', origin_country: ['US'] };
+    const target = { mode: 'series', season: 0, movie, englishTitle: 'The Boys' };
+    const plan = buildSearchPlan(target, buildSeriesQueries(target));
+    assert.equal(plan.filter((entry) => entry.when === 'if-empty').length, 0, JSON.stringify(plan));
 });
 
 // ---------- случаи из живого лога ----------

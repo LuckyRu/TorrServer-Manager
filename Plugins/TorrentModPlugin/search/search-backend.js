@@ -235,15 +235,35 @@
             })
         });
         var handles = [];
-        var completedQueries = 0;
         var anyOk = false;
         var indexerState = {};
         var configuredIndexers = {};
         var pendingMappings = 0;
         var completionSent = false;
+        var acceptedTotal = 0;
+
+        // План делится на волны. Отложенные запросы («если пусто») уходят, только когда первая
+        // волна не дала ни одной прошедшей гейт раздачи. Так дополнительное название стоит
+        // ничего в обычном случае и спасает recall там, где угадать имя с первого раза нельзя:
+        // parse_lang у пользователя может дать оригинал, которого нет в индексе русских трекеров.
+        var immediate = planned.filter(function (plan) { return plan.when !== 'if-empty'; });
+        var deferred = planned.filter(function (plan) { return plan.when === 'if-empty'; });
+        var wave = immediate.length ? immediate : deferred;
+        if (!immediate.length) deferred = [];
+        var completedQueries = 0;
+        var escalated = false;
 
         function completeWhenReady() {
-            if (completionSent || completedQueries < planned.length || pendingMappings > 0) return;
+            if (completionSent || completedQueries < wave.length || pendingMappings > 0) return;
+            if (!acceptedTotal && deferred.length && !escalated) {
+                escalated = true;
+                var next = deferred;
+                deferred = [];
+                log('search', 'ничего не найдено первой волной — эскалация: ' +
+                    next.map(function (plan) { return '"' + plan.query + '"'; }).join(', '));
+                startWave(next);
+                return;
+            }
             completionSent = true;
             onDone(!anyOk);
         }
@@ -266,45 +286,52 @@
             if (onIndexerList) onIndexerList(Object.keys(configuredIndexers).map(function (id) { return configuredIndexers[id]; }));
         }
 
-        planned.forEach(function (plan) {
-            handles.push(startParallelSearch(plan.query, function (entry) {
-                var state = stateFor(entry);
-                pendingMappings++;
-                deferWork(function () {
-                    return entry.ok
-                        ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query,
-                            { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) })
-                        : [];
-                }, scope).then(function (mapped) {
-                    state.ok = state.ok || entry.ok;
-                    state.error = state.ok ? null : entry.error;
-                    state.elapsedMs += Number(entry.elapsedMs) || 0;
-                    anyOk = anyOk || entry.ok;
-                    mergeItems(state, mapped);
-                    onIndexerResult({
-                        id: entry.id, name: state.name, ok: state.ok, error: state.error,
-                        elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
+        function startWave(plans) {
+            wave = plans;
+            completedQueries = 0;
+            plans.forEach(function (plan) {
+                handles.push(startParallelSearch(plan.query, function (entry) {
+                    var state = stateFor(entry);
+                    pendingMappings++;
+                    deferWork(function () {
+                        return entry.ok
+                            ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query,
+                                { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) })
+                            : [];
+                    }, scope).then(function (mapped) {
+                        state.ok = state.ok || entry.ok;
+                        state.error = state.ok ? null : entry.error;
+                        state.elapsedMs += Number(entry.elapsedMs) || 0;
+                        anyOk = anyOk || entry.ok;
+                        acceptedTotal += mapped.length;
+                        mergeItems(state, mapped);
+                        onIndexerResult({
+                            id: entry.id, name: state.name, ok: state.ok, error: state.error,
+                            elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
+                        });
+                    }, function (error) {
+                        state.error = String(error && error.message || error);
+                        warn('search', 'Ошибка обработки ответа ' + entry.name + ': ' + state.error);
+                        onIndexerResult({
+                            id: entry.id, name: state.name, ok: state.ok, error: state.error,
+                            elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
+                        });
+                    }).then(function () {
+                        pendingMappings--;
+                        completeWhenReady();
+                    }, function (error) {
+                        pendingMappings--;
+                        warn('search', 'Ошибка доставки результата ' + entry.name + ': ' + String(error && error.message || error));
+                        completeWhenReady();
                     });
-                }, function (error) {
-                    state.error = String(error && error.message || error);
-                    warn('search', 'Ошибка обработки ответа ' + entry.name + ': ' + state.error);
-                    onIndexerResult({
-                        id: entry.id, name: state.name, ok: state.ok, error: state.error,
-                        elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
-                    });
-                }).then(function () {
-                    pendingMappings--;
+                }, function (failed) {
+                    completedQueries++;
                     completeWhenReady();
-                }, function (error) {
-                    pendingMappings--;
-                    warn('search', 'Ошибка доставки результата ' + entry.name + ': ' + String(error && error.message || error));
-                    completeWhenReady();
-                });
-            }, function (failed) {
-                completedQueries++;
-                completeWhenReady();
-            }, scope, reportIndexerList, plan));
-        });
+                }, scope, reportIndexerList, plan));
+            });
+        }
+
+        startWave(wave);
 
         return { cancel: function () { handles.forEach(function (handle) { handle.cancel(); }); } };
     }
