@@ -523,11 +523,14 @@
             var updatedCount = 0;
             Object.keys(episodeRows).forEach(function (key) {
                 var entry = badgeMap[key];
-                var el = episodeRows[key].find('.torrent-mod-row__badge');
-                var action = episodeRows[key].find('.torrent-mod-row__action');
+                var row = episodeRows[key];
                 var signature = [(entry && entry.text) || '', !!(entry && entry.loading), !!(entry && entry.canPick)].join('|');
-                if (episodeRows[key].attr('data-badge-signature') === signature) return;
-                episodeRows[key].attr('data-badge-signature', signature);
+                // Поиск по DOM — только после того, как выяснилось, что писать действительно есть
+                // что: иначе неизменившийся кадр всё равно обходил дерево по каждой строке.
+                if (row.attr('data-badge-signature') === signature) return;
+                row.attr('data-badge-signature', signature);
+                var el = row.find('.torrent-mod-row__badge');
+                var action = row.find('.torrent-mod-row__action');
                 updatedCount++;
                 if (entry && entry.loading) el.html('<span class="torrent-mod-row__badge--shimmer"></span>');
                 else el.text((entry && entry.text) || '');

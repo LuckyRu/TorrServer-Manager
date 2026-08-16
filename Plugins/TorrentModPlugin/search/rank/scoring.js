@@ -220,9 +220,6 @@
         return passesTitleGate(item, target);
     }
 
-    function passesMatchGate(item, target) {
-        return evaluateIdentityGate(item, target).passes;
-    }
 
     export function createCandidateScoreBase(item, target) {
         var release = item.release;
@@ -253,7 +250,7 @@
     export function scoreCandidateFromBase(item, target, base) {
         var release = item.release;
         var identity = evaluateIdentityGate(item, target);
-        var passes = passesMatchGate(item, target);
+        var passes = identity.passes;
         var coverageMatch = identity.details && identity.details.coverageMatch;
         var matchScore = base.titleScore +
             (release.explicitSeason && release.seasons.indexOf(target.season) >= 0 ? 20 : 0) +
@@ -319,7 +316,9 @@
         return items.map(function (item) { return item && item.title ? item.title : 'Без названия'; });
     }
 
-    function applyStateFiltersDetailed(pool, state, target) {
+    // collectRejected: сбор заголовков отсеянного — дополнительный полный проход по пулу на каждую
+    // включённую ступень. Нужен только диагностике; проекция бейджей их выбрасывает.
+    function applyStateFiltersDetailed(pool, state, target, collectRejected) {
         var current = pool || [];
         var stages = [];
         state = state || {};
@@ -340,7 +339,9 @@
                 // фильтром выглядело необъяснимым.
                 fallback: fallback,
                 wouldFilter: fallback ? current.length : 0,
-                rejectedTitles: fallback ? [] : titles(current.filter(function (item) { return !predicate(item); }))
+                rejectedTitles: (!collectRejected || fallback)
+                    ? []
+                    : titles(current.filter(function (item) { return !predicate(item); }))
             });
             current = next;
         }
@@ -361,11 +362,11 @@
 
     // State filters are narrowing filters, not gates — fall back to the previous pool if one would leave nothing.
     export function applyStateFilters(pool, state, target) {
-        return applyStateFiltersDetailed(pool, state, target).items;
+        return applyStateFiltersDetailed(pool, state, target, false).items;
     }
 
     export function evaluateCandidatePool(pool, target, state) {
-        var filtered = applyStateFiltersDetailed(pool, state, target);
+        var filtered = applyStateFiltersDetailed(pool, state, target, true);
         var rejectedByGate = [];
         var scoredItems = filtered.items.map(function (item) {
             var base = createCandidateScoreBase(item, target);

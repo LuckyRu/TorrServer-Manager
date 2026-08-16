@@ -49,11 +49,17 @@
         var poolFailed = state.poolStatus === 'error';
         var seasonFailed = !!(state.seasonLoads && state.seasonLoads[state.season] === 'error');
         var baseTarget = buildEpisodeTarget(object, state, 0);
+        var savedId = seasonDefault && seasonDefault.id;
+        // identity считается один раз на раздачу, а не на каждую пару «серия × раздача»:
+        // releaseIdentity — это три прохода регулярками по заголовку.
         var entries = applyStateFilters(state.pool, state, baseTarget).map(function (item) {
             if (metrics) metrics.baseScores = (metrics.baseScores || 0) + 1;
-            return { item: item, base: createCandidateScoreBase(item, baseTarget) };
+            return {
+                item: item,
+                base: createCandidateScoreBase(item, baseTarget),
+                saved: savedId ? candidateIdentity(item) === savedId : false
+            };
         });
-        var savedId = seasonDefault && seasonDefault.id;
         var map = {};
         (state.episodesCache || []).forEach(function (episode) {
             var number = parseInt(episode.episode_number, 10);
@@ -68,7 +74,7 @@
                 var score = scoreCandidateFromBase(entry.item, target, entry.base);
                 if (!score.passes) return;
                 count++;
-                if (savedId && candidateIdentity(entry.item) === savedId) savedItem = entry.item;
+                if (entry.saved) savedItem = entry.item;
                 if (!bestScore || score.value > bestScore.value ||
                     (score.value === bestScore.value && entry.item.seeders > bestItem.seeders)) {
                     bestItem = entry.item;
