@@ -75,76 +75,91 @@
         };
     }
 
-    function reasonCounts(decisions) {
-        var counts = {};
-        decisions.forEach(function (decision) {
-            if (decision.passes) return;
-            var reason = decision.reason || 'unknown';
-            counts[reason] = (counts[reason] || 0) + 1;
-        });
-        return counts;
-    }
-
-    function summarizeGate(stage, decisions) {
+    function createGateSummary(stage) {
+        var input = 0;
+        var rejected = 0;
+        var reasonCounts = {};
         var rejectedTitles = [];
         var rejectedDetails = [];
-        var rejected = 0;
-        decisions.forEach(function (decision) {
-            if (decision.passes) return;
-            rejected++;
-            if (rejectedTitles.length >= 100) return;
-            rejectedTitles.push(decision.title);
-            // Причина рядом с заголовком, а не только в общем счётчике: иначе на вопрос
-            // «почему отброшена именно эта раздача» ответить нечем.
-            rejectedDetails.push({ title: decision.title, reason: decision.reason, details: decision.details });
-        });
         return {
-            stage: stage,
-            input: decisions.length,
-            accepted: decisions.length - rejected,
-            filtered: rejected,
-            reasonCounts: reasonCounts(decisions),
-            rejectedTitles: rejectedTitles,
-            rejected: rejectedDetails
+            accepted: function () { return input - rejected; },
+            add: function (passes, title, reason, details) {
+                input++;
+                if (passes) return;
+                rejected++;
+                var key = reason || 'unknown';
+                reasonCounts[key] = (reasonCounts[key] || 0) + 1;
+                if (rejectedTitles.length >= 100) return;
+                rejectedTitles.push(title);
+                // Причина рядом с заголовком, а не только в общем счётчике: иначе на вопрос
+                // «почему отброшена именно эта раздача» ответить нечем.
+                rejectedDetails.push({ title: title, reason: reason, details: details });
+            },
+            done: function () {
+                return {
+                    stage: stage, input: input, accepted: input - rejected, filtered: rejected,
+                    reasonCounts: reasonCounts, rejectedTitles: rejectedTitles, rejected: rejectedDetails
+                };
+            }
         };
     }
 
-    function applyGate(items, evaluator, stage, target) {
-        var decisions = items.map(function (item) {
-            var decision = evaluator(item, target);
-            return {
-                item: item,
-                title: item.title,
-                passes: decision.passes,
-                reason: decision.reason,
-                details: decision.details
-            };
-        });
-        var summary = summarizeGate(stage, decisions);
-        return {
-            items: decisions.filter(function (decision) { return decision.passes; }).map(function (decision) { return decision.item; }),
-            summary: summary
-        };
+    // Ключ считается до разбора и потому смотрит только на сырые поля Jackett.
+    function rawIdentity(raw) {
+        if (!raw) return '';
+        var title = raw.Title || raw.title || '';
+        if (!title) return '';
+        return title + '|' + (raw.Size || raw.size || 0);
     }
 
-    function runSearchGates(rawResults, target, parseReleaseForMode, source, query, tracker) {
-        var parsedDecisions = rawResults.map(function (raw) { return mapTorrent(raw, parseReleaseForMode, tracker); });
-        var parseSummary = summarizeGate('parse', parsedDecisions);
-        var parsed = parsedDecisions.filter(function (decision) { return decision.passes; }).map(function (decision) { return decision.item; });
-        var media = applyGate(parsed, evaluateMediaTypeGate, 'media-type', target);
-        var title = applyGate(media.items, evaluateSearchTitleGate, 'title', target);
-        // Это transport boundary: только успешно прошедшие intake-гейты получают accepted
-        // selection metadata. Дальше UI не имеет права снова проверять строку заголовка.
-        title.items.forEach(function (item) {
-            item.selection = compileReleaseSelection(item, target, undefined, true);
+    // Один проход по сырой выдаче вместо четырёх: разбор и оба гейта — чистые поэлементные
+    // функции, поэтому слияние стадий не меняет результат, но снимает три промежуточных массива
+    // и позволяет отбросить дубль до самой дорогой работы. `seen` переживает запросы одного
+    // трекера, поэтому вторая формулировка запроса не разбирает ту же раздачу заново.
+    function runSearchGates(rawResults, target, parseReleaseForMode, source, query, tracker, seen) {
+        var duplicates = seen || Object.create(null);
+        var parseSummary = createGateSummary('parse');
+        var mediaSummary = createGateSummary('media-type');
+        var titleSummary = createGateSummary('title');
+        var accepted = [];
+        var considered = 0;
+
+        (rawResults || []).forEach(function (raw) {
+            var key = rawIdentity(raw);
+            if (key) {
+                if (duplicates[key]) return;
+                duplicates[key] = true;
+            }
+            considered++;
+
+            var parsed = mapTorrent(raw, parseReleaseForMode, tracker);
+            parseSummary.add(parsed.passes, parsed.title, parsed.reason, parsed.details);
+            if (!parsed.passes) return;
+
+            var item = parsed.item;
+            var media = evaluateMediaTypeGate(item, target);
+            mediaSummary.add(media.passes, item.title, media.reason, media.details);
+            if (!media.passes) return;
+
+            var title = evaluateSearchTitleGate(item, target);
+            titleSummary.add(title.passes, item.title, title.reason, title.details);
+            if (!title.passes) return;
+
+            // Это transport boundary: только успешно прошедшие intake-гейты получают accepted
+            // selection metadata. Дальше UI не имеет права снова проверять строку заголовка.
+            // Анализ названия переиспользуется из гейта, а не считается второй раз.
+            item.selection = compileReleaseSelection(item, target, title.details.analysis, true);
+            accepted.push(item);
         });
-        var stages = [parseSummary, media.summary, title.summary];
-        var filtered = rawResults.length - title.items.length;
+
+        var stages = [parseSummary.done(), mediaSummary.done(), titleSummary.done()];
+        var filtered = considered - accepted.length;
         var summary = {
             query: query || target.englishTitle || target.movie.title || target.movie.name || '',
             source: source,
-            input: rawResults.length,
-            accepted: title.items.length,
+            input: considered,
+            duplicates: (rawResults || []).length - considered,
+            accepted: accepted.length,
             filtered: filtered,
             reasonCounts: stages.reduce(function (all, stage) {
                 Object.keys(stage.reasonCounts).forEach(function (reason) {
@@ -155,22 +170,19 @@
             rejectedTitles: stages.reduce(function (all, stage) {
                 return all.concat(stage.rejectedTitles);
             }, []).slice(0, 100),
-            stages: stages.map(function (stage) {
-                return {
-                    stage: stage.stage, input: stage.input, accepted: stage.accepted,
-                    filtered: stage.filtered, reasonCounts: stage.reasonCounts, rejected: stage.rejected
-                };
-            })
+            stages: stages
         };
-        if (filtered) log('search', 'Фильтрация ' + source + ': принято ' + title.items.length + ' из ' + rawResults.length, summary);
+        if (filtered) log('search', 'Фильтрация ' + source + ': принято ' + accepted.length + ' из ' + considered, summary);
         else debug('search', 'Фильтрация ' + source + ': без отсева', summary);
         // Счётчики нужны не только логу: по ним экран отвечает на вопрос «почему пусто».
-        title.items.stats = {
-            raw: rawResults.length,
-            video: media.summary.accepted,
-            title: title.summary.accepted
+        // raw считает различные раздачи: повторы одного заголовка по разным запросам плана —
+        // это один и тот же релиз, а не две находки.
+        accepted.stats = {
+            raw: considered,
+            video: mediaSummary.accepted(),
+            title: titleSummary.accepted()
         };
-        return title.items;
+        return accepted;
     }
 
     function searchOneQuery(text, options) {
@@ -323,7 +335,9 @@
                 indexerState[entry.id] = {
                     id: entry.id, items: [], ok: false, error: null, queryElapsedMs: 0,
                     name: entry.name, startedAt: 0, scheduledQueries: 0, completedQueries: 0,
-                    terminalReported: false, lastQuery: ''
+                    terminalReported: false, lastQuery: '',
+                    // Живёт весь поиск: запросы плана возвращают в основном одну и ту же выдачу.
+                    seenRaw: Object.create(null)
                 };
             }
             return indexerState[entry.id];
@@ -384,7 +398,7 @@
                     deferWork(function () {
                         return entry.ok
                             ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query,
-                                { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) })
+                                { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) }, state.seenRaw)
                             : [];
                     }, scope).then(function (mapped) {
                         state.ok = state.ok || entry.ok;

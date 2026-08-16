@@ -252,7 +252,10 @@
         if (sibling && analysis.extended) {
             return { passes: false, reason: 'other-work-in-franchise', details: { sibling: sibling } };
         }
-        return { passes: true, reason: '', details: { similarity: analysis.similarity } };
+        // analysis отдаётся наружу, чтобы compileReleaseSelection не считал его второй раз:
+        // разбор названия — самый дорогой участок intake. Попадает только в успешное решение,
+        // поэтому в диагностические сводки (они собирают details отказов) не утекает.
+        return { passes: true, reason: '', details: { similarity: analysis.similarity, analysis: analysis } };
     }
 
     function videoEvidence(release) {
