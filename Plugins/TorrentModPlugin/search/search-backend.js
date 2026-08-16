@@ -3,6 +3,7 @@
     import { mergeReleases } from '../shared/release-identity.js';
     import { startParallelSearch } from './parallel-search.js';
     import { buildSearchPlan } from './indexer-search-strategies.js';
+    import { workFamily } from './work-profile.js';
     import { evaluateMediaTypeGate, evaluateSearchTitleGate } from './search-gates.js';
     import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
 
@@ -198,6 +199,23 @@
         if (!queries.length) { onDone(true); return { cancel: function () {} }; }
 
         var planned = buildSearchPlan(target, queries);
+        // Профиль произведения раньше не попадал в лог вообще: по прогону нельзя было понять,
+        // почему ушли именно эти запросы и именно на эти трекеры.
+        log('search', 'план поиска: ' + workFamily(target) + (target.ongoing ? ', онгоинг' : ''), {
+            family: workFamily(target),
+            mode: target.mode,
+            ongoing: !!target.ongoing,
+            aliases: (target.aliases || []).length,
+            season: target.season,
+            episode: target.episode,
+            plan: planned.map(function (plan) {
+                return {
+                    query: plan.query,
+                    include: plan.indexerIds || null,
+                    exclude: plan.excludeIndexerIds || null
+                };
+            })
+        });
         var handles = [];
         var completedQueries = 0;
         var anyOk = false;

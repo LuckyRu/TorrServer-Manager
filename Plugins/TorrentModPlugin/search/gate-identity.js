@@ -28,6 +28,31 @@ export function targetYear(target) {
     return yearOf(movie.first_air_date || movie.release_date);
 }
 
+// Аниме нумеруют серии сквозным счётом: у релиза «E892» никакого сезона в заголовке нет, а
+// TMDB держит ту же серию как сезон N, серия M. Сумма серий предыдущих сезонов даёт сквозной
+// номер — но она врёт на спецвыпусках и рекапах, поэтому такой номер может только **принять**
+// кандидата и никогда не служит основанием для отказа: сезон у релиза не назван, и ошибиться
+// в сторону лишнего кандидата дешевле, чем потерять единственный верный.
+function absoluteEpisode(target) {
+    var seasons = (target.movie && Array.isArray(target.movie.seasons)) ? target.movie.seasons : [];
+    if (!seasons.length || !target.season || target.season <= 1) return 0;
+    var offset = 0;
+    for (var i = 0; i < seasons.length; i++) {
+        var number = parseInt(seasons[i].season_number, 10);
+        var count = parseInt(seasons[i].episode_count, 10) || 0;
+        if (number > 0 && number < target.season) offset += count;
+    }
+    return offset > 0 ? offset + target.episode : 0;
+}
+
+function episodeNumbers(target, release) {
+    var numbers = [target.episode];
+    if (release.explicitSeason) return numbers;
+    var absolute = absoluteEpisode(target);
+    if (absolute && numbers.indexOf(absolute) < 0) numbers.push(absolute);
+    return numbers;
+}
+
 // Сезонный пак, попавший в поиск фильма. Одного «S1» мало — эта запись слишком легко возникает
 // из шума вроде «BDRip S1 5.1»; нужен второй сигнал: диапазон серий или слово «сезон».
 function looksLikeSeriesPack(item) {
@@ -50,13 +75,18 @@ export function evaluateIdentityGate(item, target) {
     if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) {
         return { passes: false, reason: 'season-mismatch', details: { seasons: release.seasons, wanted: target.season } };
     }
-    if (target.episode && release.explicitEpisode &&
-        !(target.episode >= release.episodeFrom && target.episode <= release.episodeTo)) {
-        return {
-            passes: false,
-            reason: 'episode-out-of-range',
-            details: { from: release.episodeFrom, to: release.episodeTo, wanted: target.episode }
-        };
+    if (target.episode && release.explicitEpisode) {
+        var wanted = episodeNumbers(target, release);
+        var covered = wanted.some(function (number) {
+            return number >= release.episodeFrom && number <= release.episodeTo;
+        });
+        if (!covered) {
+            return {
+                passes: false,
+                reason: 'episode-out-of-range',
+                details: { from: release.episodeFrom, to: release.episodeTo, wanted: wanted }
+            };
+        }
     }
     return { passes: true, reason: '', details: {} };
 }

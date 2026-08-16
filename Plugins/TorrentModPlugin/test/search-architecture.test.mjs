@@ -218,6 +218,31 @@ test('год и расширенное название отсеивают то�
     assert.equal(narrowToExactMatches([make('Оно 2 / It Chapter Two (2019) BDRip', true)], target).items.length, 1);
 });
 
+test('аниме со сквозной нумерацией: E27 покрывает второй сезон', () => {
+    const movie = {
+        seasons: [
+            { season_number: 1, episode_count: 26 },
+            { season_number: 2, episode_count: 25 }
+        ]
+    };
+    const target = { mode: 'series', season: 2, episode: 1, movie };
+    // Релиз без сезона, серии 27-39 — это серии 1-13 второго сезона.
+    const absolute = { title: 'Аниме E27-E39 [1080p]', release: parseRelease('Аниме E27-E39 [1080p]') };
+    assert.equal(evaluateIdentityGate(absolute, target).passes, true);
+
+    // Внутрисезонная нумерация продолжает работать.
+    const inSeason = { title: 'Аниме E01-E13 [1080p]', release: parseRelease('Аниме E01-E13 [1080p]') };
+    assert.equal(evaluateIdentityGate(inSeason, target).passes, true);
+
+    // Сквозной номер не спасает, если сезон в релизе назван явно и он чужой.
+    const wrongSeason = { title: 'Аниме S03E27-E39 [1080p]', release: parseRelease('Аниме S03E27-E39 [1080p]') };
+    assert.equal(evaluateIdentityGate(wrongSeason, target).reason, 'season-mismatch');
+
+    // И не превращает гейт в решето: серии 60-70 не покрывают ни 1, ни 27.
+    const other = { title: 'Аниме E60-E70 [1080p]', release: parseRelease('Аниме E60-E70 [1080p]') };
+    assert.equal(evaluateIdentityGate(other, target).reason, 'episode-out-of-range');
+});
+
 // ---------- профиль произведения ----------
 
 test('семейство произведения различает аниме, дунхуа, дораму и западную анимацию', () => {
