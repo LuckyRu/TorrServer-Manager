@@ -61,7 +61,12 @@ internal sealed partial class ServerController : IDisposable
             WorkingDirectory = AppPaths.InstallDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden
+            WindowStyle = ProcessWindowStyle.Hidden,
+            // Паника Go уходит в stderr и не попадает ни в --logpath, ни в дамп Windows: процесс
+            // просто исчезает, а supervisor видит только «process is not running». Без перехвата
+            // причина падения теряется целиком.
+            RedirectStandardError = true,
+            RedirectStandardOutput = true
         };
         startInfo.ArgumentList.Add("--path");
         startInfo.ArgumentList.Add(AppPaths.DataDirectory);
@@ -70,6 +75,9 @@ internal sealed partial class ServerController : IDisposable
 
         var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Не удалось запустить TorrServer.");
+        // Читать оба потока обязательно: перенаправленный и никем не вычитываемый пайп
+        // переполняется и вешает дочерний процесс.
+        AttachCrashCapture(process);
         AppLog.Write($"Started TorrServer, PID {process.Id}.");
 
         for (var attempt = 0; attempt < 20; attempt++)
@@ -83,6 +91,45 @@ internal sealed partial class ServerController : IDisposable
         }
 
         throw new TimeoutException("TorrServer запущен, но веб-интерфейс не ответил за 10 секунд.");
+    }
+
+    // Обычный вывод TorrServer уже идёт в --logpath, поэтому сюда попадает то, чего там нет:
+    // паника Go со стеком горутин и сообщения нативного слоя (GStreamer/GLib). Пишем в отдельный
+    // файл, чтобы не перемешивать с собственным логом сервера и не зависеть от его ротации.
+    private static void AttachCrashCapture(Process process)
+    {
+        var pid = process.Id;
+
+        void Capture(string stream, string? line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return;
+            try
+            {
+                File.AppendAllText(
+                    AppPaths.ServerCrashLog,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [pid {pid}] {stream}: {line}{Environment.NewLine}");
+            }
+            catch { /* Диагностика не должна ронять запуск сервера. */ }
+        }
+
+        process.EnableRaisingEvents = true;
+        process.ErrorDataReceived += (_, args) => Capture("stderr", args.Data);
+        process.OutputDataReceived += (_, args) => Capture("stdout", args.Data);
+        process.Exited += (_, _) =>
+        {
+            try { Capture("exit", $"процесс завершился, код {process.ExitCode}"); }
+            catch { /* ExitCode недоступен, если хендл уже освобождён. */ }
+        };
+
+        try
+        {
+            process.BeginErrorReadLine();
+            process.BeginOutputReadLine();
+        }
+        catch (InvalidOperationException)
+        {
+            // Процесс успел завершиться до подписки — терять из-за этого запуск нельзя.
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
