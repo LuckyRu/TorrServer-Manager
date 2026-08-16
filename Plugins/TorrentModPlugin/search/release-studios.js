@@ -9,15 +9,27 @@ var KNOWN_STUDIOS = [
     'ViruseProject', 'START', 'ПКино', 'ProFilms', 'RuDub', 'Vodnerilo'
 ];
 
-// Слоты, в которых трекеры пишут студию. Каждый — своя грамматика, общий парсер остаётся один.
-var STUDIO_SLOTS = [
-    // rutracker/tapochek: «2x Dub + 5 x MVO (LostFilm, TVShows)»
-    /(?:^|[\s\]|+])(?:\d+\s*[xх×]\s*)?(?:Dub|MVO|DVO|AVO|VO)\s*\(([^)]{2,90})\)/gi,
+// Слоты, в которых трекеры пишут студию. Каждый — своя грамматика, общий парсер остаётся один;
+// профиль трекера лишь выбирает, какие слоты вообще смотреть.
+var SLOTS = {
+    // rutracker: «2x Dub + 5 x MVO (LostFilm, TVShows)»
+    parens: /(?:^|[\s\]|+])(?:\d+\s*[xх×]\s*)?(?:Dub|MVO|DVO|AVO|VO)\s*\(([^)]{2,90})\)/gi,
     // tapochek: «[MVO|LostFilm]», «[Dub|Red Head Sound]»
-    /\[(?:Dub|MVO|DVO|AVO|VO)\s*\|([^\]]{2,60})\]/gi,
+    brackets: /\[(?:Dub|MVO|DVO|AVO|VO)\s*\|([^\]]{2,60})\]/gi,
     // rutor/megapeer/noname: «от Jaskier», «от R.G. Механики»
-    /(?:^|[\s|(])от\s+([^\s|,()]+(?:\s+[^\s|,()]+)?)/gi
-];
+    from: /(?:^|[\s|(])от\s+([^\s|,()]+(?:\s+[^\s|,()]+)?)/gi,
+    // bigfangroup: «… WEB-DL 1080p | Продубляж» — студия последним полем, часто обрезанным.
+    tail: /\|\s*([^|]{2,40})\s*$/g
+};
+
+var SLOTS_BY_MODE = {
+    any: ['parens', 'brackets', 'from'],
+    parens: ['parens', 'from'],
+    brackets: ['brackets', 'parens'],
+    from: ['from'],
+    tail: ['tail', 'from'],
+    none: []
+};
 
 // То, что стоит в слоте студии, но студией не является: языки, пометки и сами типы перевода.
 var NOT_A_STUDIO = {};
@@ -102,7 +114,7 @@ function splitList(value) {
     return String(value).split(/[,;]|\s\+\s/);
 }
 
-export function extractStudios(source) {
+export function extractStudios(source, profile) {
     var text = String(source || '');
     var found = [];
     var seen = {};
@@ -117,7 +129,10 @@ export function extractStudios(source) {
         found.push({ name: studio, index: index });
     }
 
-    STUDIO_SLOTS.forEach(function (slot) {
+    var mode = (profile && profile.studioSlots) || 'any';
+    (SLOTS_BY_MODE[mode] || SLOTS_BY_MODE.any).forEach(function (name) {
+        var slot = SLOTS[name];
+        if (!slot) return;
         slot.lastIndex = 0;
         var match;
         while ((match = slot.exec(text))) {
@@ -134,5 +149,8 @@ export function extractStudios(source) {
     });
 
     found.sort(function (left, right) { return left.index - right.index; });
-    return found.map(function (item) { return item.name; });
+    var names = found.map(function (item) { return item.name; });
+    // У аниме-трекеров студия — сам трекер: в заголовке её нет и искать нечего.
+    if (!names.length && profile && profile.studioDefault) names.push(profile.studioDefault);
+    return names;
 }

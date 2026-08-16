@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { parseRelease, parseSignals } from '../search/release-parsing.js';
 import { parseYear, yearMatches } from '../search/release-year.js';
 import { extractStudios, registerStudioRules } from '../search/release-studios.js';
-import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate } from '../search/search-gates.js';
+import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments } from '../search/search-gates.js';
+import { profileFor, indexersInGroup, registerTrackerRules } from '../search/tracker-profiles.js';
 import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gate-identity.js';
 import { workFamily, isAnimeTarget } from '../search/work-profile.js';
 import { buildQueries } from '../search/query-building.js';
@@ -347,6 +348,66 @@ test('послабление для вариантного перевода не
     assert.equal(passesSearchTitleGate(
         { title: 'Парни в лодке / The Boys in the Boat (Джордж Клуни) [2023, драма, WEB-DL 1080p]' },
         { mode: 'series', movie: boys, englishTitle: 'The Boys' }), false);
+});
+
+// ---------- правила трекеров ----------
+
+test('вертикальная черта — название у одних трекеров и поле метаданных у других', () => {
+    const title = 'Дюна: Часть вторая / Dune: Part Two (2024) BDRip 1080p от селезень | D';
+    // rutor: черта отделяет метаданные, поэтому «D» не должно стать сегментом названия.
+    assert.deepEqual(extractSearchTitleSegments(title, profileFor('rutor')),
+        ['Дюна: Часть вторая', 'Dune: Part Two']);
+    // exkinoray: черта разделяет и названия тоже.
+    assert.ok(extractSearchTitleSegments('Дюна | Dune | 2024 | WEB-DL', profileFor('exkinoray')).indexOf('Dune') >= 0);
+});
+
+test('техническая приставка аниме-трекера срезается до разбора', () => {
+    const title = 'Не издевайся, Нагаторо / E01-E12 Ijiranaide, Nagatoro-san - AniLiberty.TOP [WEBRip 1080p][HEVC][1-12]';
+    const segments = extractSearchTitleSegments(title, profileFor('anilibria'));
+    assert.ok(segments.some((segment) => /Ijiranaide/.test(segment)), JSON.stringify(segments));
+    assert.ok(!segments.some((segment) => /AniLiberty/.test(segment)), JSON.stringify(segments));
+});
+
+test('однобуквенные коды перевода читаются только там, где трекер ими пользуется', () => {
+    const title = 'Дюна: Пророчество / Dune: Prophecy [S01] (2024) WEB-DL 1080p | D, P, L';
+    assert.deepEqual(parseRelease(title, profileFor('rutor')).voiceTypes, ['Дубляж', 'Многоголосый']);
+    // На rutracker коды не значат перевод — там он написан словами.
+    assert.deepEqual(parseRelease(title, profileFor('rutracker')).voiceTypes, []);
+});
+
+test('у аниме-трекеров студия — сам трекер, а года нет вовсе', () => {
+    const anidub = parseRelease('Атака титанов: финал [RUS] [HDTV 1080p]', profileFor('anidub'));
+    assert.deepEqual(anidub.translators, ['AniDUB']);
+    assert.equal(anidub.year.value, null);
+    assert.equal(anidub.year.from, 'tracker-has-no-year');
+
+    const anilibria = parseRelease('Название - AniLiberty.TOP [WEBRip 1080p][HEVC][1-12]', profileFor('anilibria'));
+    assert.deepEqual(anilibria.translators, ['AniLibria']);
+});
+
+test('слот студии выбирается по трекеру', () => {
+    // rutor пишет «от X», rutracker — в скобках после типа перевода.
+    assert.deepEqual(parseRelease('Дюна / Dune (2024) WEB-DL 1080p от Scarabey | D', profileFor('rutor')).translators, ['Scarabey']);
+    assert.deepEqual(parseRelease('Сериал S01E01 (2024) 1080p] MVO (TVShows)', profileFor('rutracker')).translators, ['TVShows']);
+});
+
+test('неизвестный индексатор получает общий профиль и не ломает поиск', () => {
+    const unknown = profileFor('какой-то-новый-трекер');
+    assert.equal(unknown.group, 'general');
+    assert.equal(unknown.titleSeparators, 'slash-pipe');
+    assert.equal(parseRelease('Фильм / Movie (2024) BDRip 1080p', unknown).year.value, 2024);
+    // Маршрутизация аниме берётся из группы реестра, а не из списка в коде.
+    assert.deepEqual(indexersInGroup('anime'), ['anidub', 'anilibria']);
+});
+
+test('правила трекера можно переопределить файлом, не трогая код', () => {
+    registerTrackerRules([{ id: 'megapeer', voices: 'text' }]);
+    // Коды перестали читаться там, где пользователь это запретил.
+    assert.deepEqual(parseRelease('Фильм / Movie (2024) WEB-DL 1080p | D, P', profileFor('megapeer')).voiceTypes, []);
+
+    registerTrackerRules([{ id: 'новый-аниме-трекер', group: 'anime', studioDefault: 'NewFansub' }]);
+    assert.ok(indexersInGroup('anime').indexOf('новый-аниме-трекер') >= 0);
+    assert.deepEqual(parseRelease('Аниме [1080p]', profileFor('новый-аниме-трекер')).translators, ['NewFansub']);
 });
 
 // ---------- живой корпус ----------

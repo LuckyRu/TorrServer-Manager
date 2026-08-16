@@ -1,4 +1,5 @@
     import { baseTitles, normalizedTitleKey } from './query-building.js';
+    import { profileFor } from './tracker-profiles.js';
 
     var MIN_TITLE_SIMILARITY = 0.34;
     var STOPWORDS = {};
@@ -25,8 +26,17 @@
         return segment.replace(/[,:;\s-]+$/g, '').trim();
     }
 
-    export function extractSearchTitleSegments(rawTitle) {
-        return decodeEntities(rawTitle).split(/[\/|]/).map(cleanTitleSegment).filter(Boolean);
+    // У rutor и megapeer вертикальная черта разделяет поля метаданных, а не названия: без
+    // профиля трекера код дубляжа «D» становился отдельным «названием» раздачи.
+    export function extractSearchTitleSegments(rawTitle, profile) {
+        var separators = (profile && profile.titleSeparators === 'slash') ? /\// : /[\/|]/;
+        var text = decodeEntities(rawTitle);
+        ((profile && profile.strip) || []).forEach(function (pattern) { text = text.replace(pattern, ' '); });
+        return text.split(separators).map(cleanTitleSegment).filter(Boolean);
+    }
+
+    function profileOf(item) {
+        return profileFor(item && item.trackerId, item && item.tracker);
     }
 
     function significantTokens(value) {
@@ -89,8 +99,8 @@
         return segmentMatch(segment, name).score;
     }
 
-    function titleAnalysis(title, movie, englishTitle, aliases) {
-        var segments = extractSearchTitleSegments(title);
+    function titleAnalysis(title, movie, englishTitle, aliases, profile) {
+        var segments = extractSearchTitleSegments(title, profile);
         var names = baseTitles(movie || {}, englishTitle, aliases);
         var matches = segments.map(function (segment) {
             var best = { score: 0, extended: false };
@@ -117,7 +127,7 @@
     // Совпало ли название точно, или только с добавленными словами. Пул использует это, чтобы
     // не показывать спин-офф, когда само произведение найдено.
     export function evaluateTitleMatch(item, target) {
-        return titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases);
+        return titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases, profileOf(item));
     }
 
     export function titleSimilarity(title, movie, englishTitle, aliases) {
@@ -149,7 +159,7 @@
     }
 
     export function evaluateSearchTitleGate(item, target) {
-        var analysis = titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases);
+        var analysis = titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases, profileOf(item));
         if (analysis.similarity < MIN_TITLE_SIMILARITY) {
             return { passes: false, reason: 'title-mismatch', details: { segments: analysis.segments, similarity: analysis.similarity } };
         }

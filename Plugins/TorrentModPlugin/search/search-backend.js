@@ -4,6 +4,7 @@
     import { startParallelSearch } from './parallel-search.js';
     import { buildSearchPlan } from './indexer-search-strategies.js';
     import { workFamily } from './work-profile.js';
+    import { profileFor } from './tracker-profiles.js';
     import { evaluateMediaTypeGate, evaluateSearchTitleGate } from './search-gates.js';
     import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
 
@@ -18,7 +19,7 @@
         });
     }
 
-    function mapTorrent(raw, parseReleaseForMode) {
+    function mapTorrent(raw, parseReleaseForMode, tracker) {
         if (!raw) {
             return { item: null, title: 'Без названия', passes: false, reason: 'empty-record', details: {} };
         }
@@ -31,7 +32,7 @@
         var parseError = '';
         if (parseReleaseForMode) {
             try {
-                release = parseReleaseForMode(title);
+                release = parseReleaseForMode(title, tracker && tracker.profile);
             } catch (error) {
                 parseError = String(error && error.message || error);
             }
@@ -40,7 +41,12 @@
         var leechers = parseInt(rawLeechers, 10) || 0;
         var item = {
             title: title,
-            tracker: raw.Tracker || raw.indexer || '',
+            // tracker остаётся тем, что прислал Jackett: это поле входит в releaseIdentity, по
+            // которой схлопывается пул и хранится сохранённый выбор пользователя (ADR-0005).
+            tracker: raw.Tracker || raw.indexer || (tracker && tracker.name) || '',
+            // id индексатора — ключ правил трекера. Отображаемое имя для этого не годится:
+            // пользователь переименовывает индексаторы в UI Jackett.
+            trackerId: (tracker && tracker.id) || '',
             size: raw.Size || raw.size || 0,
             seeders: parseInt(raw.Seeders || raw.Seed || raw.seeders, 10) || 0,
             leechers: leechers,
@@ -121,8 +127,8 @@
         };
     }
 
-    function runSearchGates(rawResults, target, parseReleaseForMode, source, query) {
-        var parsedDecisions = rawResults.map(function (raw) { return mapTorrent(raw, parseReleaseForMode); });
+    function runSearchGates(rawResults, target, parseReleaseForMode, source, query, tracker) {
+        var parsedDecisions = rawResults.map(function (raw) { return mapTorrent(raw, parseReleaseForMode, tracker); });
         var parseSummary = summarizeGate('parse', parsedDecisions);
         var parsed = parsedDecisions.filter(function (decision) { return decision.passes; }).map(function (decision) { return decision.item; });
         var media = applyGate(parsed, evaluateMediaTypeGate, 'media-type', target);
@@ -164,7 +170,10 @@
             startParallelSearch(text, function (entry) {
                 anyOk = anyOk || entry.ok;
                 indexers.push({ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs });
-                if (entry.ok) (entry.results || []).forEach(function (raw) { rawResults.push(raw); });
+                // Сырые записи запоминают свой индексатор: правила трекера применяются при разборе.
+                if (entry.ok) (entry.results || []).forEach(function (raw) {
+                    rawResults.push({ raw: raw, id: entry.id, name: entry.name });
+                });
             }, function (failed) {
                 resolve({ rawResults: rawResults, indexers: indexers, failed: failed || !anyOk });
             }, undefined, undefined, options);
@@ -180,15 +189,24 @@
             var ok = responses.filter(function (response) { return !response.failed; });
             if (!ok.length) return { results: [], indexers: [], failed: true };
 
-            var allRaw = [];
+            var byTracker = {};
             var indexers = [];
             ok.forEach(function (response) {
-                response.rawResults.forEach(function (raw) { allRaw.push(raw); });
+                response.rawResults.forEach(function (entry) {
+                    var bucket = byTracker[entry.id] || (byTracker[entry.id] = { id: entry.id, name: entry.name, raw: [] });
+                    bucket.raw.push(entry.raw);
+                });
                 indexers = indexers.concat(response.indexers);
             });
 
             return deferWork(function () {
-                var mapped = runSearchGates(allRaw, target, parseReleaseForMode, 'searchTorrentMod', queries.join(' | '));
+                var mapped = [];
+                Object.keys(byTracker).forEach(function (id) {
+                    var bucket = byTracker[id];
+                    mapped = mapped.concat(runSearchGates(bucket.raw, target, parseReleaseForMode,
+                        bucket.name, queries.join(' | '),
+                        { id: bucket.id, name: bucket.name, profile: profileFor(bucket.id, bucket.name) }));
+                });
                 return { results: mergeReleases([], mapped), indexers: indexers, failed: false };
             });
         });
@@ -254,7 +272,8 @@
                 pendingMappings++;
                 deferWork(function () {
                     return entry.ok
-                        ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query)
+                        ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query,
+                            { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) })
                         : [];
                 }, scope).then(function (mapped) {
                     state.ok = state.ok || entry.ok;

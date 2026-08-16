@@ -6,6 +6,7 @@
 import { hubBase } from '../shared/state.js';
 import { request } from '../shared/utils.js';
 import { registerStudioRules } from './release-studios.js';
+import { registerTrackerRules } from './tracker-profiles.js';
 import { log, warn } from '../shared/core/log.js';
 
 var KNOWN_SCHEMA = 1;
@@ -24,6 +25,11 @@ function apply(data) {
     if (studios.length) {
         registerStudioRules(studios);
         log('search', 'search-rules: применено студий — ' + studios.length);
+    }
+    var trackers = Array.isArray(data.trackers) ? data.trackers : [];
+    if (trackers.length) {
+        registerTrackerRules(trackers);
+        log('search', 'search-rules: применено правил трекеров — ' + trackers.length);
     }
     return true;
 }

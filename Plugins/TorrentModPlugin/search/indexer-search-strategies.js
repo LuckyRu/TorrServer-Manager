@@ -1,7 +1,11 @@
 import { buildQueries, buildAnimeQueries, isAnimeTarget } from './query-building.js';
 import { unique } from '../shared/utils.js';
+import { indexersInGroup } from './tracker-profiles.js';
 
-export const ANIME_INDEXER_IDS = ['anidub', 'anilibria'];
+// Список аниме-трекеров больше не хардкод: он выводится из группы в реестре профилей,
+// поэтому добавить третий аниме-трекер — это правка данных, а не кода.
+export function animeIndexerIds() { return indexersInGroup('anime'); }
+export const ANIME_INDEXER_IDS = animeIndexerIds();
 
 function planKey(plan) {
     var include = (plan.indexerIds || []).join(',');
@@ -16,11 +20,11 @@ export function buildSearchPlan(target, queries) {
     var animeQueries = buildAnimeQueries(target).slice(0, 3);
     var standardQueries = buildQueries(target).slice(0, 1);
     var plans = animeQueries.map(function (query) {
-        return { query: query, indexerIds: ANIME_INDEXER_IDS.slice() };
+        return { query: query, indexerIds: animeIndexerIds() };
     });
 
     standardQueries.forEach(function (query) {
-        plans.push({ query: query, excludeIndexerIds: ANIME_INDEXER_IDS.slice() });
+        plans.push({ query: query, excludeIndexerIds: animeIndexerIds() });
     });
 
     return unique(plans, planKey);

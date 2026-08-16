@@ -39,15 +39,28 @@
         return found;
     }
 
-    function extractVoiceTypes(source) {
+    function extractVoiceTypes(source, profile) {
         var found = [];
         VOICE_MARKERS.forEach(function (marker) {
             if (marker[0].test(source) && found.indexOf(marker[1]) < 0) found.push(marker[1]);
         });
-        voiceCodes(source).forEach(function (name) {
-            if (found.indexOf(name) < 0) found.push(name);
-        });
+        // Однобуквенные коды разбираем только там, где трекер ими действительно пользуется:
+        // одиночная буква — слишком дешёвое совпадение, чтобы искать её везде.
+        if (!profile || profile.voices !== 'text') {
+            voiceCodes(source).forEach(function (name) {
+                if (found.indexOf(name) < 0) found.push(name);
+            });
+        }
         return found;
+    }
+
+    var ABSENT_YEAR = { value: null, to: null, isRange: false, from: 'tracker-has-no-year', confidence: 'none' };
+
+    function stripByProfile(source, profile) {
+        var patterns = (profile && profile.strip) || [];
+        var text = source;
+        patterns.forEach(function (pattern) { text = text.replace(pattern, ' '); });
+        return patterns.length ? text.replace(/\s{2,}/g, ' ').trim() : text;
     }
 
     function extractAudioTracks(source) {
@@ -57,10 +70,13 @@
         return match ? parseInt(match[1], 10) || 0 : 0;
     }
 
-    export function parseRelease(title) {
-        var source = String(title || '');
+    // profile — правила оформления конкретного трекера (search/tracker-profiles.js). Он решает
+    // только три вопроса: что срезать до разбора, какие слоты смотреть и чем заполнить молчание
+    // заголовка. Всё остальное разбирается одинаково для всех трекеров.
+    export function parseRelease(title, profile) {
+        var source = stripByProfile(String(title || ''), profile);
         var signals = parseSignals(source);
-        var voiceTypes = extractVoiceTypes(source);
+        var voiceTypes = extractVoiceTypes(source, profile);
         var release = {
             seasons: signals.seasons,
             episodeFrom: signals.episodeFrom,
@@ -92,8 +108,8 @@
             // voiceType остаётся первым по приоритету значением — бейджи и старые фильтры
             // читают одно значение, множество живёт рядом в voiceTypes.
             voiceType: voiceTypes[0] || '',
-            translators: extractStudios(source),
-            year: parseYear(source),
+            translators: extractStudios(source, profile),
+            year: (profile && profile.year === 'never') ? ABSENT_YEAR : parseYear(source),
             subtitles: /\bsub\b|\bsubs\b|субтитр/i.test(source),
             videoCodec: matchOne(source, [
                 [/\bav1\b/i, 'AV1'],

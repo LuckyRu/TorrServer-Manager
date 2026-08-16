@@ -1,7 +1,7 @@
 import { parseRelease } from './release-parsing.js';
 
-export function parseMovieRelease(title) {
-    var release = parseRelease(title);
+export function parseMovieRelease(title, profile) {
+    var release = parseRelease(title, profile);
     release.explicitSeason = false;
     release.seasons = [];
     release.explicitEpisode = false;

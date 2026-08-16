@@ -1631,7 +1631,11 @@ internal sealed class PluginHub : IDisposable
 
     private sealed record SearchRulesStudio(string Name, string[]? Aliases, bool Disabled);
 
-    private sealed record SearchRulesFile(SearchRulesStudio[]? Studios);
+    private sealed record SearchRulesTracker(
+        string Id, string? Group, string? TitleSeparators, string? Year, string? Voices,
+        string? StudioSlots, string? StudioDefault, string[]? Strip);
+
+    private sealed record SearchRulesFile(SearchRulesStudio[]? Studios, SearchRulesTracker[]? Trackers);
 
     private readonly object searchRulesLock = new();
     private DateTime searchRulesStamp;
@@ -1659,7 +1663,7 @@ internal sealed class PluginHub : IDisposable
     {
         if (!File.Exists(AppPaths.SearchRulesFile))
         {
-            return new { schema = 1, studios = Array.Empty<object>(), warnings = Array.Empty<string>() };
+            return new { schema = 1, studios = Array.Empty<object>(), trackers = Array.Empty<object>(), warnings = Array.Empty<string>() };
         }
 
         try
@@ -1683,7 +1687,26 @@ internal sealed class PluginHub : IDisposable
                 })
                 .ToArray();
 
-            return new { schema = 1, studios, warnings = Array.Empty<string>() };
+            var trackers = (parsed?.Trackers ?? Array.Empty<SearchRulesTracker>())
+                .Where(tracker => !string.IsNullOrWhiteSpace(tracker.Id))
+                .Take(200)
+                .Select(tracker => new
+                {
+                    id = tracker.Id.Trim().ToLowerInvariant(),
+                    group = tracker.Group,
+                    titleSeparators = tracker.TitleSeparators,
+                    year = tracker.Year,
+                    voices = tracker.Voices,
+                    studioSlots = tracker.StudioSlots,
+                    studioDefault = tracker.StudioDefault,
+                    strip = (tracker.Strip ?? Array.Empty<string>())
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Take(10)
+                        .ToArray()
+                })
+                .ToArray();
+
+            return new { schema = 1, studios, trackers, warnings = Array.Empty<string>() };
         }
         catch (Exception error)
         {
@@ -1692,6 +1715,7 @@ internal sealed class PluginHub : IDisposable
             {
                 schema = 1,
                 studios = Array.Empty<object>(),
+                trackers = Array.Empty<object>(),
                 warnings = new[] { $"search-rules.json не разобран: {error.Message}" }
             };
         }

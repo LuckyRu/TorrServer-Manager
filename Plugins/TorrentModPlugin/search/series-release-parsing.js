@@ -1,5 +1,5 @@
 import { parseRelease } from './release-parsing.js';
 
-export function parseSeriesRelease(title) {
-    return parseRelease(title);
+export function parseSeriesRelease(title, profile) {
+    return parseRelease(title, profile);
 }
