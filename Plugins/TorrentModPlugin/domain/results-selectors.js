@@ -158,18 +158,13 @@
         var target = buildEpisodeTarget(object, state, episode);
         var evaluation = evaluateCandidatePool(state.pool, target, state);
         var items = evaluation.items;
-        // The picker is the first place where the user can compare a particular episode.
-        // Keep a compact always-on breadcrumb and a verbose structured snapshot for the
-        // diagnostics buffer, including every candidate's gate decision and score.
-        log('selection', 'picker: сезон ' + state.season + ', серия ' + episode + ', кандидатов=' + items.length, {
-            pool: evaluation.inputCount,
-            afterStateFilters: evaluation.afterStateFilters,
-            gateFiltered: evaluation.gateFilteredCount,
-            candidates: items.slice(0, 30).map(function (item) {
-                return { title: item.title, tracker: item.tracker, seeders: item.seeders };
-            }),
-            rejected: evaluation.rejectedTitles.slice(0, 30)
-        });
+        // Проекция пикера пересчитывается на каждую ревизию пула, поэтому хлебная крошка —
+        // только строка: сборка списков кандидатов и отказов ради console стоила бы дороже
+        // самой проекции. Структурный снимок целиком уходит в verbose ниже.
+        log('selection', 'picker: сезон ' + state.season + ', серия ' + episode +
+            ', кандидатов=' + items.length + ', пул=' + evaluation.inputCount +
+            ', после фильтров=' + evaluation.afterStateFilters +
+            ', отсеяно гейтом=' + evaluation.gateFilteredCount);
         if (debugEnabled()) {
             debug('selection', 'picker: разбор кандидатов серии', {
                 season: state.season,

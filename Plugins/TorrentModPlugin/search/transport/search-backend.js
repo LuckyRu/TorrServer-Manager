@@ -36,7 +36,7 @@
         });
     }
 
-    function mapTorrent(raw, parseReleaseForMode, tracker) {
+    function mapTorrent(raw, parseReleaseForMode, tracker, verbose) {
         if (!raw) {
             return { item: null, title: 'Без названия', passes: false, reason: 'empty-record', details: {} };
         }
@@ -75,7 +75,7 @@
         };
         var rejectedReason = !magnet && !link ? 'missing-download-link' : (parseError ? 'metadata-parse-error' : '');
         if (parseError) warn('search', 'Не удалось разобрать метаданные раздачи "' + title + '": ' + parseError);
-        if (debugEnabled()) {
+        if (verbose) {
             debug('search', 'metadata-parse', {
                 parsed: !rejectedReason, rejectedReason: rejectedReason, title: title, tracker: item.tracker,
                 hasMagnet: Boolean(magnet), hasLink: Boolean(link), size: item.size,
@@ -92,7 +92,9 @@
         };
     }
 
-    function createGateSummary(stage) {
+    // collectRejected собирает заголовки и детали каждого отказа — до 300 объектов на ответ
+    // трекера. Счётчики причин дёшевы и нужны экрану всегда, детали — только диагностике.
+    function createGateSummary(stage, collectRejected) {
         var input = 0;
         var rejected = 0;
         var reasonCounts = {};
@@ -106,7 +108,7 @@
                 rejected++;
                 var key = reason || 'unknown';
                 reasonCounts[key] = (reasonCounts[key] || 0) + 1;
-                if (rejectedTitles.length >= 100) return;
+                if (!collectRejected || rejectedTitles.length >= 100) return;
                 rejectedTitles.push(title);
                 // Причина рядом с заголовком, а не только в общем счётчике: иначе на вопрос
                 // «почему отброшена именно эта раздача» ответить нечем.
@@ -135,9 +137,11 @@
     // трекера, поэтому вторая формулировка запроса не разбирает ту же раздачу заново.
     function runSearchGates(rawResults, target, parseReleaseForMode, source, query, tracker, seen, scope) {
         var duplicates = seen || Object.create(null);
-        var parseSummary = createGateSummary('parse');
-        var mediaSummary = createGateSummary('media-type');
-        var titleSummary = createGateSummary('title');
+        // Флаг читается один раз на ответ трекера, а не на каждую раздачу.
+        var verbose = debugEnabled();
+        var parseSummary = createGateSummary('parse', verbose);
+        var mediaSummary = createGateSummary('media-type', verbose);
+        var titleSummary = createGateSummary('title', verbose);
         var accepted = [];
         var considered = 0;
         var list = rawResults || [];
@@ -151,7 +155,7 @@
             }
             considered++;
 
-            var parsed = mapTorrent(raw, parseReleaseForMode, tracker);
+            var parsed = mapTorrent(raw, parseReleaseForMode, tracker, verbose);
             parseSummary.add(parsed.passes, parsed.title, parsed.reason, parsed.details);
             if (!parsed.passes) return;
 
@@ -206,8 +210,15 @@
             }, []).slice(0, 100),
             stages: stages
         };
-        if (filtered) log('search', 'Фильтрация ' + source + ': принято ' + accepted.length + ' из ' + considered, summary);
-        else debug('search', 'Фильтрация ' + source + ': без отсева', summary);
+        // Счётчики причин — маленький объект и главное, что нужно для «почему пусто». Полная
+        // сводка с заголовками отказов уходит только в диагностический буфер.
+        if (filtered) {
+            log('search', 'Фильтрация ' + source + ': принято ' + accepted.length + ' из ' + considered,
+                summary.reasonCounts);
+            debug('search', 'Фильтрация ' + source + ': подробности', summary);
+        } else {
+            debug('search', 'Фильтрация ' + source + ': без отсева', summary);
+        }
         // Счётчики нужны не только логу: по ним экран отвечает на вопрос «почему пусто».
         // raw считает различные раздачи: повторы одного заголовка по разным запросам плана —
         // это один и тот же релиз, а не две находки.

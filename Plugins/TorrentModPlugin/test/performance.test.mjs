@@ -55,6 +55,10 @@ const BUDGETS = {
     selectionReadsPerItemEpisode: 7,
     movieSeasonsReadsPerItem: 1.5,
 
+    // Проекция пикера пересчитывается на каждую ревизию пула. Сборка списков ради console
+    // стоила бы дороже самой проекции, поэтому объектов в консоль здесь быть не должно.
+    consoleObjectsPerPickerProjection: 0,
+
     // --- UI: планировщик кадра и keyed-реконсиляция ---
     flushesPerBurst: 1,
     mutationsOnUnchangedProjection: 0
@@ -413,6 +417,34 @@ runner.test('проекция бейджей: константа цикла «с
         `бюджет ${BUDGETS.selectionReadsPerItemEpisode}`);
     assert.ok(perItem <= BUDGETS.movieSeasonsReadsPerItem,
         `пересборок карты сезонов на раздачу ${perItem.toFixed(2)}, бюджет ${BUDGETS.movieSeasonsReadsPerItem}`);
+});
+
+runner.test('проекция пикера: в консоль не уходят построенные списки', () => {
+    const counters = { selectionReads: 0, movieSeasonsReads: 0 };
+    const instrumentedMovie = countingMovie(movie, counters);
+    const pool = countingPool(search.pool, counters);
+    const projections = createResultsProjectionCache(
+        { movie: instrumentedMovie, season: SEASON }, instrumentedMovie, true, () => null
+    );
+    const state = Object.assign(baseState(instrumentedMovie), {
+        pool, poolStatus: 'ready', poolRevision: 1, picker: { open: true, episode: 3 }
+    });
+
+    // Считаем не вызовы, а переданные объекты: хлебная крошка строкой стоит копейки, а сборка
+    // списка кандидатов ради console повторяет работу проекции.
+    let objectArguments = 0;
+    const original = { log: console.log, warn: console.warn };
+    console.log = (...args) => { objectArguments += args.filter((a) => a && typeof a === 'object').length; };
+    console.warn = console.log;
+    try {
+        projections.pickerData(state);
+    } finally {
+        Object.assign(console, original);
+    }
+
+    observed.consoleObjectsPerPickerProjection = objectArguments;
+    assert.ok(objectArguments <= BUDGETS.consoleObjectsPerPickerProjection,
+        `в консоль ушло ${objectArguments} объектов, бюджет ${BUDGETS.consoleObjectsPerPickerProjection}`);
 });
 
 runner.test('планировщик: девять патчей за кадр дают один визуальный коммит', () => {

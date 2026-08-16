@@ -8,8 +8,14 @@
         if (typeof diagnostics.verbose !== 'boolean') diagnostics.verbose = false;
         if (typeof diagnostics.consoleOutput !== 'boolean') diagnostics.consoleOutput = false;
         if (!isFinite(diagnostics.maxEntries) || diagnostics.maxEntries < 1) diagnostics.maxEntries = 500;
-        diagnostics.clear = function () { diagnostics.entries.length = 0; };
-        diagnostics.snapshot = function () { return diagnostics.entries.slice(); };
+        // Замыкания ставятся один раз: debugEnabled() зовётся на каждую сырую раздачу, и
+        // пересоздание их здесь означало две аллокации на запись выдачи.
+        if (typeof diagnostics.clear !== 'function') {
+            diagnostics.clear = function () { diagnostics.entries.length = 0; };
+        }
+        if (typeof diagnostics.snapshot !== 'function') {
+            diagnostics.snapshot = function () { return diagnostics.entries.slice(); };
+        }
         window.TorrentModDiagnostics = diagnostics;
         return diagnostics;
     }
