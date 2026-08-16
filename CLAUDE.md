@@ -100,6 +100,9 @@ Full list with root cause and fix: [`docs/reference/torrent-mod-gotchas.md`](doc
 - Commit messages: Russian, Conventional Commits (`тип(область): суть`), short — no line-by-line diff recap.
 - Bump `<Version>` in `TorrServerManager.csproj` (SemVer2) on every user-visible change; it must show in
   the main window and the tray tooltip, not just assembly metadata.
+- The plugin carries its **own** version — `VERSION` in `Plugins/TorrentModPlugin/shared/state.js`, shown
+  on the card button and in every plugin log line. Touching `Plugins/TorrentModPlugin/` means bumping it
+  too; the manager version in the csproj does not cover it.
 
 ## Agent workflow and comments
 

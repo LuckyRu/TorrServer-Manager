@@ -10,7 +10,10 @@ For JS-only iteration that doesn't need this full cycle, see
 [`docs/how-to/iterate-on-a-plugin-without-rebuilding.md`](../../../docs/how-to/iterate-on-a-plugin-without-rebuilding.md) instead.
 
 1. Bump `<Version>` in `TorrServerManager.csproj` (SemVer2, every user-visible change).
-2. If `Plugins/TorrentModPlugin/` changed: `npm run test:plugin` must pass first.
+2. If `Plugins/TorrentModPlugin/` changed: **bump `VERSION` in `Plugins/TorrentModPlugin/shared/state.js`
+   too** — it is a separate number, shown to the user on the card button and stamped on every plugin
+   log line, and it silently stays behind because bumping the manager version feels like enough.
+   Then `npm run test:plugin` must pass.
 3. `git commit` — Russian, Conventional Commits, short.
 4. `dotnet publish TorrServerManager.csproj -c Release` (bundles the JS plugin automatically).
 5. **If a JS dev-override exists at `%LocalAppData%\TorrServer\dev-plugins\TorrentModPlugin.js`, delete
