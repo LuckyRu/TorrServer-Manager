@@ -35,6 +35,8 @@
             lastEpisode: 0,
             activeEpisode: 0,
             englishTitle: null,
+            titleAliases: [],
+            ongoing: false,
 
             picker: {
                 open: false,

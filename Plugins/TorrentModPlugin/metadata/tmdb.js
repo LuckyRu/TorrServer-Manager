@@ -77,11 +77,44 @@
         });
     }
 
-    export function fetchEnglishTitle(movie, mode) {
+    // Локализованные названия онгоингов расходятся: пока произведение выходит, устоявшегося
+    // русского названия нет, и каждая студия переводит его по-своему. TMDB держит эти варианты
+    // в alternative_titles — они нужны и в запросе, и в гейте по названию, иначе раздача с чужим
+    // вариантом перевода не совпадёт ни с чем.
+    var ALIAS_COUNTRIES = { RU: true, UA: true, BY: true, US: true, GB: true };
+    var MAX_ALIASES = 12;
+
+    function collectAliases(data) {
+        var alternatives = (data && data.alternative_titles) || {};
+        var list = Array.isArray(alternatives.results) ? alternatives.results
+            : (Array.isArray(alternatives.titles) ? alternatives.titles : []);
+        return list.filter(function (entry) {
+            return entry && entry.title && ALIAS_COUNTRIES[String(entry.iso_3166_1 || '').toUpperCase()];
+        }).map(function (entry) { return String(entry.title); }).slice(0, MAX_ALIASES);
+    }
+
+    function isOngoing(data) {
+        if (!data) return false;
+        if (data.in_production === true) return true;
+        return /returning series|in production/i.test(String(data.status || ''));
+    }
+
+    export function fetchWorkTitles(movie, mode) {
         var kind = mode === MODE_MOVIE ? 'movie' : 'tv';
-        var path = kind + '/' + movie.id + '?api_key=' + Lampa.TMDB.key() + '&language=en-US';
+        var path = kind + '/' + movie.id + '?api_key=' + Lampa.TMDB.key() +
+            '&language=en-US&append_to_response=alternative_titles';
         return request(Lampa.TMDB.api(path), 15000).then(function (data) {
-            if (!data) return ok('');
-            return ok(String(data.name || data.title || ''));
+            if (data === null) return ok({ english: '', aliases: [], ongoing: false });
+            return ok({
+                english: String(data.name || data.title || ''),
+                aliases: collectAliases(data),
+                ongoing: isOngoing(data)
+            });
+        });
+    }
+
+    export function fetchEnglishTitle(movie, mode) {
+        return fetchWorkTitles(movie, mode).then(function (result) {
+            return result.ok ? ok(result.value.english) : result;
         });
     }

@@ -89,9 +89,9 @@
         return segmentMatch(segment, name).score;
     }
 
-    function titleAnalysis(title, movie, englishTitle) {
+    function titleAnalysis(title, movie, englishTitle, aliases) {
         var segments = extractSearchTitleSegments(title);
-        var names = baseTitles(movie || {}, englishTitle);
+        var names = baseTitles(movie || {}, englishTitle, aliases);
         var matches = segments.map(function (segment) {
             var best = { score: 0, extended: false };
             names.forEach(function (name) {
@@ -107,6 +107,7 @@
         }, { score: 0, extended: false });
         return {
             segments: segments,
+            matches: matches,
             scores: matches.map(function (match) { return match.score; }),
             similarity: winner.score,
             extended: winner.score > 0 && winner.extended
@@ -116,15 +117,30 @@
     // Совпало ли название точно, или только с добавленными словами. Пул использует это, чтобы
     // не показывать спин-офф, когда само произведение найдено.
     export function evaluateTitleMatch(item, target) {
-        return titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle);
+        return titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases);
     }
 
-    export function titleSimilarity(title, movie, englishTitle) {
-        return titleAnalysis(title, movie, englishTitle).similarity;
+    export function titleSimilarity(title, movie, englishTitle, aliases) {
+        return titleAnalysis(title, movie, englishTitle, aliases).similarity;
     }
 
-    function looksLikeConflictingTitle(segment, names) {
+    function scriptOf(value) {
+        var text = String(value || '');
+        if (CJK.test(text)) return 'cjk';
+        if (/[а-яё]/i.test(text)) return 'cyr';
+        if (/[a-z]/i.test(text)) return 'lat';
+        return '';
+    }
+
+    function looksLikeConflictingTitle(segment, names, matchedSegment, exactMatch) {
         if (/(?:lostfilm|alexfilm|newstudio|release|tracker|rip|group|team|studio)/i.test(segment)) return false;
+        // «Локализованное / Оригинальное» — обычная раскладка заголовка, а не два разных
+        // произведения. У онгоингов локализованное название ещё не устоялось и в карточке TMDB
+        // его может не быть вовсе; отвергать такую раздачу нельзя, раз оригинал в ней совпал.
+        // Признак настоящего конфликта («Настоящая война / Игра престолов») — оба заголовка на
+        // одном языке.
+        var segmentScript = scriptOf(segment);
+        if (exactMatch && segmentScript && segmentScript !== scriptOf(matchedSegment)) return false;
         var segmentTokens = significantTokens(segment);
         if (segmentTokens.some(function (token) {
             return names.some(function (name) { return significantTokens(name).indexOf(token) >= 0; });
@@ -133,7 +149,7 @@
     }
 
     export function evaluateSearchTitleGate(item, target) {
-        var analysis = titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle);
+        var analysis = titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases);
         if (analysis.similarity < MIN_TITLE_SIMILARITY) {
             return { passes: false, reason: 'title-mismatch', details: { segments: analysis.segments, similarity: analysis.similarity } };
         }
@@ -143,7 +159,7 @@
             if (analysis.scores[matchIndex] >= MIN_TITLE_SIMILARITY) { firstMatch = matchIndex; break; }
         }
         for (var i = 0; i < firstMatch; i++) {
-            if (analysis.scores[i] < MIN_TITLE_SIMILARITY && looksLikeConflictingTitle(analysis.segments[i], baseTitles((target && target.movie) || {}, target && target.englishTitle))) {
+            if (analysis.scores[i] < MIN_TITLE_SIMILARITY && looksLikeConflictingTitle(analysis.segments[i], baseTitles((target && target.movie) || {}, target && target.englishTitle, target && target.aliases), analysis.segments[firstMatch], analysis.matches[firstMatch].score === 1 && !analysis.matches[firstMatch].extended)) {
                 return {
                     passes: false,
                     reason: 'conflicting-title',
@@ -166,7 +182,7 @@
     }
 
     function targetContains(target, pattern) {
-        return baseTitles((target && target.movie) || {}, target && target.englishTitle).some(function (title) {
+        return baseTitles((target && target.movie) || {}, target && target.englishTitle, target && target.aliases).some(function (title) {
             return pattern.test(title);
         });
     }

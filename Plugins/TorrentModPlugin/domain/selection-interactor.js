@@ -231,7 +231,9 @@
                 seasonEpisodeCount: 0,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
                 episodes: [],
-                englishTitle: state.englishTitle
+                englishTitle: state.englishTitle,
+                aliases: state.titleAliases,
+                ongoing: state.ongoing
             };
         }
 
@@ -252,7 +254,9 @@
                 seasonEpisodeCount: state.seasonEpisodeCount,
                 avgRuntimeMinutes: state.avgRuntimeMinutes,
                 episodes: state.episodesCache || [],
-                englishTitle: state.englishTitle
+                englishTitle: state.englishTitle,
+                aliases: state.titleAliases,
+                ongoing: state.ongoing
             };
             store.patch({ lastEpisode: episode });
             saveLastEpisode(object.movie, state.season, episode);

@@ -268,6 +268,47 @@ test('произведение с непоисковым оригиналом н
     assert.ok(chinese.some((query) => /Неукротимый/.test(query)), JSON.stringify(chinese));
 });
 
+// ---------- онгоинги: вариативный перевод названия ----------
+
+test('у онгоинга оригинальное название идёт вторым запросом, у завершённого — нет', () => {
+    const movie = { name: 'Целитель', original_name: 'The Healer', origin_country: ['US'], genre_ids: [18] };
+    const ongoing = buildQueries({ mode: 'series', season: 0, movie, englishTitle: 'The Healer', ongoing: true });
+    const finished = buildQueries({ mode: 'series', season: 0, movie, englishTitle: 'The Healer', ongoing: false });
+
+    assert.ok(ongoing.some((query) => /Целитель/.test(query)), JSON.stringify(ongoing));
+    assert.ok(ongoing.some((query) => /The Healer/.test(query)), JSON.stringify(ongoing));
+    // Завершённому второй запрос не нужен: каждый рецепт — это job на каждый трекер.
+    assert.equal(finished.length, 1, JSON.stringify(finished));
+});
+
+test('раздача с чужим вариантом перевода совпадает через alternative_titles', () => {
+    const movie = { name: 'Целитель', original_name: 'The Healer' };
+    const target = { mode: 'series', movie, englishTitle: 'The Healer' };
+    const release = { title: 'Врачеватель душ / The Healer / S01E01-E08 [2026, WEB-DL 1080p]' };
+
+    // Английский сегмент спасает, пока он в заголовке есть.
+    assert.equal(passesSearchTitleGate(release, target), true);
+
+    // А если трекер дал только свой перевод — без вариантов названия совпадать нечему.
+    const russianOnly = { title: 'Врачеватель душ [RUS] [WEB-DL 1080p]' };
+    assert.equal(passesSearchTitleGate(russianOnly, target), false);
+    assert.equal(passesSearchTitleGate(russianOnly, Object.assign({}, target, { aliases: ['Врачеватель душ'] })), true);
+});
+
+test('послабление для вариантного перевода не открывает дорогу чужим произведениям', () => {
+    // Оба заголовка на одном языке — это по-прежнему конфликт, а не перевод.
+    const got = { name: 'Игра престолов', original_name: 'Game of Thrones' };
+    assert.equal(passesSearchTitleGate(
+        { title: 'Настоящая война / Игра престолов [2019, документальный, WEB-DL 1080p]' },
+        { mode: 'series', movie: got, englishTitle: 'Game of Thrones' }), false);
+
+    // Оригинал совпал лишь как расширение — послабление не применяется.
+    const boys = { name: 'The Boys', original_name: 'The Boys' };
+    assert.equal(passesSearchTitleGate(
+        { title: 'Парни в лодке / The Boys in the Boat (Джордж Клуни) [2023, драма, WEB-DL 1080p]' },
+        { mode: 'series', movie: boys, englishTitle: 'The Boys' }), false);
+});
+
 // ---------- живой корпус ----------
 
 const corpus = JSON.parse(fs.readFileSync(

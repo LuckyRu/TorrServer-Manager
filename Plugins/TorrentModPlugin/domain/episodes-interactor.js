@@ -1,4 +1,4 @@
-    import { fetchSeason, fetchEnglishTitle, episodeCounts } from '../metadata/tmdb.js';
+    import { fetchSeason, fetchWorkTitles, episodeCounts } from '../metadata/tmdb.js';
     import { searchMovieTorrents, searchMovieTorrentsProgressive } from '../search/movie-search.js';
     import { searchSeriesTorrents, searchSeriesTorrentsProgressive } from '../search/series-search.js';
     import { notify } from '../shared/utils.js';
@@ -37,12 +37,16 @@
             var state = store.get();
             if (state.englishTitle !== null) return Promise.resolve(state.englishTitle);
             if (englishTitleFetch) return englishTitleFetch;
-            englishTitleFetch = fetchEnglishTitle(object.movie, hasSeasons ? MODE_SERIES : MODE_MOVIE).then(function (result) {
+            englishTitleFetch = fetchWorkTitles(object.movie, hasSeasons ? MODE_SERIES : MODE_MOVIE).then(function (result) {
                 englishTitleFetch = null;
-                var title = result.ok ? result.value : '';
-                log('episodes', 'ensureEnglishTitle: "' + title + '"');
-                if (!isDestroyed()) store.patch({ englishTitle: title });
-                return title;
+                var titles = result.ok ? result.value : { english: '', aliases: [], ongoing: false };
+                log('episodes', 'ensureEnglishTitle: "' + titles.english + '"' +
+                    (titles.aliases.length ? ', вариантов названия ' + titles.aliases.length : '') +
+                    (titles.ongoing ? ', онгоинг' : ''));
+                if (!isDestroyed()) {
+                    store.patch({ englishTitle: titles.english, titleAliases: titles.aliases, ongoing: titles.ongoing });
+                }
+                return titles.english;
             });
             return englishTitleFetch;
         }
@@ -109,12 +113,15 @@
                 var englishTitle = results[0];
                 // Re-check staleness after the async englishTitle wait before firing the real search.
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
+                var titles = store.get();
                 var target = {
                     movie: object.movie,
                     mode: hasSeasons ? MODE_SERIES : MODE_MOVIE,
                     season: 0,
                     episode: 0,
-                    englishTitle: englishTitle
+                    englishTitle: englishTitle,
+                    aliases: titles.titleAliases,
+                    ongoing: titles.ongoing
                 };
                 var search = hasSeasons ? searchSeriesTorrentsProgressive : searchMovieTorrentsProgressive;
                 poolSearchHandle = search(target, function (entry) {
@@ -210,7 +217,11 @@
         }
 
         function runSeasonSearchWith(season, generation, englishTitle) {
-            var target = { movie: object.movie, mode: MODE_SERIES, season: season, episode: 0, englishTitle: englishTitle };
+            var titles = store.get();
+            var target = {
+                movie: object.movie, mode: MODE_SERIES, season: season, episode: 0,
+                englishTitle: englishTitle, aliases: titles.titleAliases, ongoing: titles.ongoing
+            };
             searchSeriesTorrents(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {
                     log('episodes', 'ensureSeasonLoaded(' + season + ') отброшен как устаревший');

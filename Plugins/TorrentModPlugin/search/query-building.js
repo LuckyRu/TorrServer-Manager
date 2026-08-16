@@ -8,12 +8,15 @@
         return source.toLowerCase().replace(/[^a-z0-9а-яё\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+/gi, ' ').trim();
     }
 
-    export function baseTitles(movie, englishTitle) {
+    // aliases — варианты названия из TMDB alternative_titles. У онгоингов устоявшегося русского
+    // названия ещё нет, и трекер вполне может назвать раздачу переводом, которого нет в карточке;
+    // без вариантов такая раздача не совпадёт ни с одним известным нам названием.
+    export function baseTitles(movie, englishTitle, aliases) {
         return unique([
             movie.title || movie.name,
             movie.original_title || movie.original_name,
             englishTitle
-        ].filter(Boolean), normalizedTitleKey);
+        ].concat(Array.isArray(aliases) ? aliases : []).filter(Boolean), normalizedTitleKey);
     }
 
     export { isAnimeTarget } from './work-profile.js';
@@ -21,11 +24,13 @@
     export function searchNames(target) {
         target = target || {};
         var movie = target.movie || {};
+        // Варианты названия идут последними: у аниме-онгоингов русское название у каждой студии
+        // своё, но общий лимит запросов важнее полноты — сюда попадёт только то, что влезло.
         return unique([
             movie.title || movie.name,
             movie.original_title || movie.original_name,
             target.englishTitle
-        ].filter(Boolean), normalizedTitleKey).slice(0, 4);
+        ].concat(Array.isArray(target.aliases) ? target.aliases : []).filter(Boolean), normalizedTitleKey).slice(0, 4);
     }
 
     export function defaultSearchName(movie, englishTitle, includeYear) {
@@ -62,10 +67,22 @@
     export function queryNames(target) {
         var movie = (target && target.movie) || {};
         var local = movie.title || movie.name || '';
-        var preferred = defaultSearchName(movie, target && target.englishTitle, target && target.includeYear);
-        var ordered = prefersLocalTitle(workFamily(target))
-            ? [local, target && target.englishTitle, preferred]
-            : [preferred, hasSearchableLetters(preferred) ? '' : local, hasSearchableLetters(preferred) ? '' : (target && target.englishTitle)];
+        var english = (target && target.englishTitle) || '';
+        var preferred = defaultSearchName(movie, english, target && target.includeYear);
+        var ordered;
+
+        if (prefersLocalTitle(workFamily(target))) {
+            ordered = [local, english, preferred];
+        } else if (!hasSearchableLetters(preferred)) {
+            ordered = [preferred, local, english];
+        } else if (target && target.ongoing) {
+            // Пока произведение выходит, русское название ещё не устоялось: студии переводят
+            // его по-своему, и запрос по названию из карточки может не найти ничего. Оригинал
+            // при этом стабилен, поэтому у онгоингов он идёт вторым запросом.
+            ordered = [preferred, english, local];
+        } else {
+            ordered = [preferred];
+        }
         return unique(ordered.filter(Boolean), normalizedTitleKey);
     }
 
