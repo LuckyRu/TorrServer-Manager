@@ -1,5 +1,6 @@
     // ---------- query building ----------
     import { enabled, pad, unique } from '../shared/utils.js';
+    import { MODE_MOVIE } from '../shared/state.js';
     import { workFamily, prefersLocalTitle } from './work-profile.js';
 
     export function normalizedTitleKey(value) {
@@ -8,12 +9,23 @@
         return source.toLowerCase().replace(/[^a-z0-9а-яё\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+/gi, ' ').trim();
     }
 
+    // Lampa дописывает в карточку оба поля, и у сериала title — это заглушка («Фильм не найден»),
+    // а настоящее название лежит в name. Идиома «title || name» брала заглушку и отправляла её
+    // в поисковый запрос; для сериала правильный порядок обратный.
+    export function localTitle(movie, mode) {
+        movie = movie || {};
+        return mode === MODE_MOVIE
+            ? (movie.title || movie.name || '')
+            : (movie.name || movie.title || '');
+    }
+
     // aliases — варианты названия из TMDB alternative_titles. У онгоингов устоявшегося русского
     // названия ещё нет, и трекер вполне может назвать раздачу переводом, которого нет в карточке;
     // без вариантов такая раздача не совпадёт ни с одним известным нам названием.
     export function baseTitles(movie, englishTitle, aliases) {
         return unique([
-            movie.title || movie.name,
+            movie.name,
+            movie.title,
             movie.original_title || movie.original_name,
             englishTitle
         ].concat(Array.isArray(aliases) ? aliases : []).filter(Boolean), normalizedTitleKey);
@@ -27,17 +39,17 @@
         // Варианты названия идут последними: у аниме-онгоингов русское название у каждой студии
         // своё, но общий лимит запросов важнее полноты — сюда попадёт только то, что влезло.
         return unique([
-            movie.title || movie.name,
+            localTitle(movie, target.mode),
             movie.original_title || movie.original_name,
             target.englishTitle
         ].concat(Array.isArray(target.aliases) ? target.aliases : []).filter(Boolean), normalizedTitleKey).slice(0, 4);
     }
 
-    export function defaultSearchName(movie, englishTitle, includeYear) {
+    export function defaultSearchName(movie, englishTitle, includeYear, mode) {
         try {
             var format = Lampa.Storage.field('parse_lang') || 'df';
             if (includeYear === false) format = format.replace(/_year$/, '');
-            var title = movie.title || movie.name || '';
+            var title = localTitle(movie, mode);
             var original = englishTitle || movie.original_title || movie.original_name || '';
             var year = String(movie.first_air_date || movie.release_date || '0000').slice(0, 4);
             var combos = {
@@ -53,7 +65,7 @@
             var value = String(combos[format] || '').trim();
             return value || title;
         } catch (e) {
-            return movie.title || movie.name || '';
+            return localTitle(movie, mode);
         }
     }
 
@@ -66,9 +78,9 @@
 
     export function queryNames(target) {
         var movie = (target && target.movie) || {};
-        var local = movie.title || movie.name || '';
+        var local = localTitle(movie, target && target.mode);
         var english = (target && target.englishTitle) || '';
-        var preferred = defaultSearchName(movie, english, target && target.includeYear);
+        var preferred = defaultSearchName(movie, english, target && target.includeYear, target && target.mode);
         var ordered;
 
         if (prefersLocalTitle(workFamily(target))) {

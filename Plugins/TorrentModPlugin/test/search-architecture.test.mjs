@@ -238,6 +238,21 @@ test('семейство произведения различает аниме,
 
 // ---------- запросы ----------
 
+test('заглушка Lampa в поле title не уходит в поисковый запрос', () => {
+    // Живой прогон: открывая карточку сериала, Lampa дописывает title='Фильм не найден',
+    // а настоящее название держит в name.
+    const movie = {
+        name: 'Королева слёз', title: 'Фильм не найден', original_name: '눈물의 여왕',
+        origin_country: ['KR'], genres: [{ id: 18 }]
+    };
+    const queries = buildSeriesQueries({ mode: 'series', season: 0, movie, englishTitle: 'Queen of Tears' });
+    assert.ok(queries.length > 0);
+    queries.forEach((query) => {
+        assert.ok(!/не найден/i.test(query), 'заглушка ушла в запрос: ' + JSON.stringify(queries));
+    });
+    assert.ok(/Королева слёз/.test(queries[0]), JSON.stringify(queries));
+});
+
 test('запрос по дораме начинается с локального названия', () => {
     const queries = buildSeriesQueries({
         mode: 'series',

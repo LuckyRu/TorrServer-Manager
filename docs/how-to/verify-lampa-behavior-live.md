@@ -72,3 +72,38 @@ curl -s http://127.0.0.1:8095/api/config
 curl -s -X POST http://127.0.0.1:8095/api/plugins/refresh -d ""
 curl -s -D - -o /dev/null "http://127.0.0.1:8095/plugins/<hash>.js" | grep -i cache-control
 ```
+
+## Скрытая панель браузера: пустой экран, здоровый домен
+
+Если панель браузера не отображается, страница не рисует кадры: `document.hidden === true`, а
+`requestAnimationFrame` **не вызывается никогда**. Рендер результатов батчится через rAF
+(`ui/render-scheduler.js`), поэтому DOM остаётся пустым, хотя домен отработал полностью — в логе
+видно и загрузку серий, и наполнение пула. Это артефакт харнесса, а не баг плагина.
+
+Отличить одно от другого — одной проверкой:
+
+```js
+new Promise(function (resolve) {
+    var fired = false;
+    requestAnimationFrame(function () { fired = true; });
+    setTimeout(function () { resolve({ rafFired: fired, hidden: document.hidden }); }, 1000);
+});
+```
+
+Чтобы проверить настоящий код View, не дожидаясь показа панели, достаточно подменить планировщик:
+
+```js
+window.requestAnimationFrame = function (fn) { return setTimeout(function () { fn(Date.now()); }, 0); };
+```
+
+## Карточку в Activity надо класть так же, как это делает плагин
+
+`Lampa.Activity.push({component: 'torrent_mod', movie: card})` без `season` даёт сезон 0 и пустой
+список — настоящая точка входа (`metadata/season-picker.js`, `openTarget`) передаёт ещё `season`,
+`title` и `back_controller`. Проверять надо тем же вызовом, иначе половина расхождений — свои
+собственные.
+
+Отдельно: у карточки сериала Lampa дописывает `title` со значением-заглушкой («Фильм не найден»),
+а настоящее название держит в `name`. Идиома `movie.title || movie.name` на сериале берёт заглушку —
+именно так она однажды уехала в поисковый запрос. Живой прогон это показывает сразу, синтетический
+объект из теста — никогда.
