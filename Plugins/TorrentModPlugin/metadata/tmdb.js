@@ -99,16 +99,33 @@
         return /returning series|in production/i.test(String(data.status || ''));
     }
 
+    // Соседние работы франшизы — «Дюна: Пророчество» при цели «Дюна», «Игра в кальмара: Вызов»
+    // при цели «Игра в кальмара». Их названия работают как негативные: если сегмент заголовка
+    // совпал с ними лучше, чем с целью, это чужое произведение, а не наше под длинным именем.
+    function fetchCollectionTitles(data) {
+        var collection = data && data.belongs_to_collection;
+        if (!collection || !collection.id) return Promise.resolve([]);
+        var path = 'collection/' + collection.id + '?api_key=' + Lampa.TMDB.key() + '&language=ru';
+        return request(Lampa.TMDB.api(path), 15000).then(function (details) {
+            var parts = (details && Array.isArray(details.parts)) ? details.parts : [];
+            return parts.map(function (part) { return String(part.title || part.name || ''); })
+                .filter(Boolean).slice(0, 20);
+        });
+    }
+
     export function fetchWorkTitles(movie, mode) {
         var kind = mode === MODE_MOVIE ? 'movie' : 'tv';
         var path = kind + '/' + movie.id + '?api_key=' + Lampa.TMDB.key() +
             '&language=en-US&append_to_response=alternative_titles';
         return request(Lampa.TMDB.api(path), 15000).then(function (data) {
-            if (data === null) return ok({ english: '', aliases: [], ongoing: false });
-            return ok({
-                english: String(data.name || data.title || ''),
-                aliases: collectAliases(data),
-                ongoing: isOngoing(data)
+            if (data === null) return ok({ english: '', aliases: [], negativeAliases: [], ongoing: false });
+            return fetchCollectionTitles(data).then(function (siblings) {
+                return ok({
+                    english: String(data.name || data.title || ''),
+                    aliases: collectAliases(data),
+                    negativeAliases: siblings,
+                    ongoing: isOngoing(data)
+                });
             });
         });
     }

@@ -233,6 +233,7 @@
                 episodes: [],
                 englishTitle: state.englishTitle,
                 aliases: state.titleAliases,
+                negativeAliases: state.negativeAliases,
                 ongoing: state.ongoing
             };
         }
@@ -256,6 +257,7 @@
                 episodes: state.episodesCache || [],
                 englishTitle: state.englishTitle,
                 aliases: state.titleAliases,
+                negativeAliases: state.negativeAliases,
                 ongoing: state.ongoing
             };
             store.patch({ lastEpisode: episode });

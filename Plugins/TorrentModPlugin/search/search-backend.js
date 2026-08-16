@@ -159,6 +159,12 @@
         };
         if (filtered) log('search', 'Фильтрация ' + source + ': принято ' + title.items.length + ' из ' + rawResults.length, summary);
         else debug('search', 'Фильтрация ' + source + ': без отсева', summary);
+        // Счётчики нужны не только логу: по ним экран отвечает на вопрос «почему пусто».
+        title.items.stats = {
+            raw: rawResults.length,
+            video: media.summary.accepted,
+            title: title.summary.accepted
+        };
         return title.items;
     }
 
@@ -282,6 +288,13 @@
             state.items = mergeReleases(state.items, items);
         }
 
+        function addStats(state, stats) {
+            if (!stats) return;
+            state.raw = (state.raw || 0) + stats.raw;
+            state.video = (state.video || 0) + stats.video;
+            state.title = (state.title || 0) + stats.title;
+        }
+
         function reportIndexerList(indexerList) {
             (indexerList || []).forEach(function (entry) {
                 configuredIndexers[entry.id] = { id: entry.id, name: entry.name };
@@ -308,9 +321,11 @@
                         anyOk = anyOk || entry.ok;
                         acceptedTotal += mapped.length;
                         mergeItems(state, mapped);
+                        addStats(state, mapped.stats);
                         onIndexerResult({
                             id: entry.id, name: state.name, ok: state.ok, error: state.error,
-                            elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
+                            elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query,
+                            stats: { raw: state.raw, video: state.video, title: state.title }
                         });
                     }, function (error) {
                         state.error = String(error && error.message || error);

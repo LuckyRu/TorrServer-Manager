@@ -9,6 +9,21 @@
     import { log, warn } from '../shared/core/log.js';
 
     var PER_MOVIE_CACHE_MAX = 200;
+    var SLOW_INDEXER_MS = 15000;
+
+    // Воронка поиска: сколько раздач вернули трекеры, сколько из них видео, сколько относится к
+    // этому произведению и сколько дошло до пула. Без неё «ничего не найдено» и «всё отсеяли
+    // фильтры» выглядят одинаково.
+    function sumFunnel(indexers, pool) {
+        var funnel = { raw: 0, video: 0, title: 0, pool: (pool || []).length };
+        (indexers || []).forEach(function (indexer) {
+            if (!indexer.stats) return;
+            funnel.raw += indexer.stats.raw || 0;
+            funnel.video += indexer.stats.video || 0;
+            funnel.title += indexer.stats.title || 0;
+        });
+        return funnel;
+    }
 
     function rememberSeason(movie, season) {
         try {
@@ -39,12 +54,15 @@
             if (englishTitleFetch) return englishTitleFetch;
             englishTitleFetch = fetchWorkTitles(object.movie, hasSeasons ? MODE_SERIES : MODE_MOVIE).then(function (result) {
                 englishTitleFetch = null;
-                var titles = result.ok ? result.value : { english: '', aliases: [], ongoing: false };
+                var titles = result.ok ? result.value : { english: '', aliases: [], negativeAliases: [], ongoing: false };
                 log('episodes', 'ensureEnglishTitle: "' + titles.english + '"' +
                     (titles.aliases.length ? ', вариантов названия ' + titles.aliases.length : '') +
                     (titles.ongoing ? ', онгоинг' : ''));
                 if (!isDestroyed()) {
-                    store.patch({ englishTitle: titles.english, titleAliases: titles.aliases, ongoing: titles.ongoing });
+                    store.patch({
+                        englishTitle: titles.english, titleAliases: titles.aliases,
+                        negativeAliases: titles.negativeAliases || [], ongoing: titles.ongoing
+                    });
                 }
                 return titles.english;
             });
@@ -121,6 +139,7 @@
                     episode: 0,
                     englishTitle: englishTitle,
                     aliases: titles.titleAliases,
+                    negativeAliases: titles.negativeAliases,
                     ongoing: titles.ongoing
                 };
                 var search = hasSeasons ? searchSeriesTorrentsProgressive : searchMovieTorrentsProgressive;
@@ -129,10 +148,20 @@
                 var current = store.get();
                 log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" ' +
                     (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, +' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
+                // Один медленный индексатор держит poolStatus в «загружается» и после того, как
+                // показывать уже есть что. Прогрессивная выдача это скрывает, поэтому отмечаем
+                // явно: иначе разбирать «почему поиск шёл минуту» не по чему.
+                if (entry.elapsedMs > SLOW_INDEXER_MS) {
+                    warn('episodes', 'трекер "' + entry.name + '" отвечал ' +
+                        Math.round(entry.elapsedMs / 1000) + ' с — он и задерживает завершение поиска');
+                }
                 var merged = mergePools(current.pool, entry.items);
                 var indexers = current.poolIndexers.filter(function (indexer) { return indexer.id !== entry.id; });
-                indexers.push({ id: entry.id, name: entry.name, ok: entry.ok, error: entry.error, elapsedMs: entry.elapsedMs, reportedAt: Date.now() });
-                store.patch({ pool: merged, poolIndexers: indexers });
+                indexers.push({
+                    id: entry.id, name: entry.name, ok: entry.ok, error: entry.error,
+                    elapsedMs: entry.elapsedMs, reportedAt: Date.now(), stats: entry.stats || null
+                });
+                store.patch({ pool: merged, poolIndexers: indexers, funnel: sumFunnel(indexers, merged) });
             }, function (startFailed) {
                 poolSearchHandle = null;
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
@@ -220,7 +249,8 @@
             var titles = store.get();
             var target = {
                 movie: object.movie, mode: MODE_SERIES, season: season, episode: 0,
-                englishTitle: englishTitle, aliases: titles.titleAliases, ongoing: titles.ongoing
+                englishTitle: englishTitle, aliases: titles.titleAliases,
+                negativeAliases: titles.negativeAliases, ongoing: titles.ongoing
             };
             searchSeriesTorrents(target).then(function (response) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) {

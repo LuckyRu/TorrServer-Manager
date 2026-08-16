@@ -17,6 +17,7 @@ import { buildQueries } from '../search/query-building.js';
 import { buildMovieQueries } from '../search/movie-query-building.js';
 import { buildSeriesQueries } from '../search/series-query-building.js';
 import { buildSearchPlan } from '../search/indexer-search-strategies.js';
+import { funnelText, buildFilterItems } from '../domain/results-core.js';
 
 let passed = 0;
 let failed = 0;
@@ -415,6 +416,56 @@ test('правила трекера можно переопределить фа
     registerTrackerRules([{ id: 'новый-аниме-трекер', group: 'anime', studioDefault: 'NewFansub' }]);
     assert.ok(indexersInGroup('anime').indexOf('новый-аниме-трекер') >= 0);
     assert.deepEqual(parseRelease('Аниме [1080p]', profileFor('новый-аниме-трекер')).translators, ['NewFansub']);
+});
+
+// ---------- cours и соседние работы франшизы ----------
+
+test('аниме называет сезон словом: «3rd Season» и «The Final Season»', () => {
+    assert.deepEqual(parseSignals('Attack on Titan 3rd Season [TV] [E22 of 22]').seasons, [3]);
+    assert.deepEqual(parseSignals('Jujutsu Kaisen 2nd Season [TV]').seasons, [2]);
+
+    const final = parseSignals('Shingeki no Kyojin: The Final Season - Kanketsu-hen | Атака титанов');
+    assert.equal(final.finalSeason, true);
+    assert.deepEqual(final.seasons, [], 'номер сезона из слова «финальный» не выводится');
+
+    // «Часть вторая» в названии фильма сезоном не является.
+    assert.equal(parseSignals('Дюна: Часть вторая / Dune: Part Two (2024)').finalSeason, false);
+});
+
+test('финальный сезон сопоставляется с последним сезоном по TMDB', () => {
+    const movie = { seasons: [{ season_number: 1 }, { season_number: 2 }, { season_number: 3 }, { season_number: 4 }] };
+    const item = { title: 'Аниме The Final Season [1080p]', release: parseRelease('Аниме The Final Season [1080p]') };
+
+    assert.equal(evaluateIdentityGate(item, { mode: 'series', season: 4, movie }).passes, true);
+    assert.equal(evaluateIdentityGate(item, { mode: 'series', season: 2, movie }).reason, 'season-mismatch');
+    // Когда сезоны неизвестны, отказывать не за что.
+    assert.equal(evaluateIdentityGate(item, { mode: 'series', season: 2, movie: {} }).passes, true);
+});
+
+test('соседняя работа франшизы не подменяет произведение', () => {
+    const target = {
+        mode: 'movie', movie: { title: 'Дюна', original_title: 'Dune' }, englishTitle: 'Dune',
+        negativeAliases: ['Дюна: Пророчество', 'Дюна: Часть вторая']
+    };
+    assert.equal(passesSearchTitleGate({ title: 'Дюна: Пророчество / Dune: Prophecy [2024] WEB-DL 1080p' }, target), false);
+    // Само произведение проходит по-прежнему.
+    assert.equal(passesSearchTitleGate({ title: 'Дюна / Dune (2021) BDRip 1080p' }, target), true);
+    // Без списка соседних работ поведение прежнее — гейт их не выдумывает.
+    assert.equal(passesSearchTitleGate({ title: 'Дюна: Пророчество / Dune: Prophecy [2024] WEB-DL 1080p' },
+        { mode: 'movie', movie: { title: 'Дюна', original_title: 'Dune' }, englishTitle: 'Dune' }), true);
+});
+
+test('воронка поиска считается по стадиям', () => {
+    assert.equal(funnelText({ funnel: null }), '');
+    assert.equal(funnelText({ funnel: { raw: 412, video: 380, title: 96, pool: 74 } }),
+        'Найдено 412 → видео 380 → это произведение 96 → в списке 74');
+
+    const items = buildFilterItems({ number_of_seasons: 1 }, true,
+        { pool: [], filters: {}, season: 1, funnel: { raw: 10, video: 8, title: 3, pool: 3 } });
+    assert.ok(items.some((item) => item.kind === 'diagnostics'), JSON.stringify(items.map((i) => i.title)));
+    // Без данных строка не появляется — пустой пункт меню хуже, чем его отсутствие.
+    assert.ok(!buildFilterItems({ number_of_seasons: 1 }, true, { pool: [], filters: {}, season: 1 })
+        .some((item) => item.kind === 'diagnostics'));
 });
 
 // ---------- эскалация запросов ----------

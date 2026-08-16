@@ -53,6 +53,16 @@ function episodeNumbers(target, release) {
     return numbers;
 }
 
+function lastSeasonNumber(target) {
+    var seasons = (target.movie && Array.isArray(target.movie.seasons)) ? target.movie.seasons : [];
+    var last = 0;
+    seasons.forEach(function (season) {
+        var number = parseInt(season.season_number, 10);
+        if (number > last) last = number;
+    });
+    return last;
+}
+
 // Сезонный пак, попавший в поиск фильма. Одного «S1» мало — эта запись слишком легко возникает
 // из шума вроде «BDRip S1 5.1»; нужен второй сигнал: диапазон серий или слово «сезон».
 function looksLikeSeriesPack(item) {
@@ -74,6 +84,14 @@ export function evaluateIdentityGate(item, target) {
 
     if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) {
         return { passes: false, reason: 'season-mismatch', details: { seasons: release.seasons, wanted: target.season } };
+    }
+    // «Финальный сезон» без номера: какой он по счёту, знает только TMDB. Если последний сезон
+    // известен и это не он — раздача не о нём. Если неизвестен, отказывать не за что.
+    if (!release.explicitSeason && release.finalSeason) {
+        var last = lastSeasonNumber(target);
+        if (last && target.season && target.season !== last) {
+            return { passes: false, reason: 'season-mismatch', details: { finalSeason: last, wanted: target.season } };
+        }
     }
     if (target.episode && release.explicitEpisode) {
         var wanted = episodeNumbers(target, release);

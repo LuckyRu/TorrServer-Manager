@@ -179,6 +179,23 @@
         return segmentTokens.length >= 2;
     }
 
+    // Названия соседних работ франшизы из TMDB-коллекции. Совпадение с ними сильнее, чем с
+    // целью, означает, что раздача про соседнюю работу: «Дюна: Пророчество» при цели «Дюна».
+    function matchesSiblingWork(segments, target) {
+        var negatives = (target && target.negativeAliases) || [];
+        if (!negatives.length) return null;
+        var ownKeys = {};
+        baseTitles((target && target.movie) || {}, target && target.englishTitle, target && target.aliases)
+            .forEach(function (name) { ownKeys[normalizedTitleKey(name)] = true; });
+        for (var i = 0; i < segments.length; i++) {
+            for (var j = 0; j < negatives.length; j++) {
+                if (ownKeys[normalizedTitleKey(negatives[j])]) continue;
+                if (segmentMatch(segments[i], negatives[j]).score === 1) return negatives[j];
+            }
+        }
+        return null;
+    }
+
     export function evaluateSearchTitleGate(item, target) {
         var analysis = titleAnalysis(item && item.title, target && target.movie, target && target.englishTitle, target && target.aliases, profileOf(item));
         if (analysis.similarity < MIN_TITLE_SIMILARITY) {
@@ -197,6 +214,10 @@
                     details: { segment: analysis.segments[i], matchedSegment: analysis.segments[firstMatch] }
                 };
             }
+        }
+        var sibling = matchesSiblingWork(analysis.segments, target);
+        if (sibling && analysis.extended) {
+            return { passes: false, reason: 'other-work-in-franchise', details: { sibling: sibling } };
         }
         return { passes: true, reason: '', details: { similarity: analysis.similarity } };
     }

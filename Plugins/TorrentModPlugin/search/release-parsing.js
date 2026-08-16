@@ -83,6 +83,7 @@
             episodeTo: signals.episodeTo,
             explicitSeason: signals.explicitSeason,
             explicitEpisode: signals.explicitEpisode,
+            finalSeason: signals.finalSeason,
             resolution: matchOne(source, [
                 [/\b(2160p|4k|uhd)\b/i, '2160p'],
                 [/\b1080p\b/i, '1080p'],

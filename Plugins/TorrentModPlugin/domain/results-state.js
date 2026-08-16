@@ -36,6 +36,8 @@
             activeEpisode: 0,
             englishTitle: null,
             titleAliases: [],
+            negativeAliases: [],
+            funnel: null,
             ongoing: false,
 
             picker: {

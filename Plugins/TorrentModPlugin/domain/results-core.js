@@ -70,9 +70,20 @@
         return found ? found.title : ('Сезон ' + state.season);
     }
 
+    // Воронка одной строкой: где именно исчезли раздачи. Без неё «пусто» одинаково выглядит и
+    // когда трекеры ничего не дали, и когда всё съел фильтр по студии.
+    export function funnelText(state) {
+        var funnel = state && state.funnel;
+        if (!funnel || !funnel.raw) return '';
+        return 'Найдено ' + funnel.raw + ' → видео ' + funnel.video +
+            ' → это произведение ' + funnel.title + ' → в списке ' + funnel.pool;
+    }
+
     export function buildFilterItems(movie, hasSeasons, state) {
         var filters = filtersOf(state);
         var select = [{ title: 'Сбросить фильтр', reset: true }];
+        var funnel = funnelText(state);
+        if (funnel) select.push({ title: 'Диагностика поиска', subtitle: funnel, kind: 'diagnostics' });
 
         if (hasSeasons) {
             select.push({
