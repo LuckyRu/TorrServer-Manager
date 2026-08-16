@@ -618,7 +618,9 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
     }
 
     // All playable files of the pack, mirroring native torrent.js:415-429 — this is what powers "next episode" via Video.ended -> Playlist.next().
-    function buildPlaylist(session) {
+    // Экспортируется ради регрессионного теста: Lampa опрашивает статистику по torrent_hash того
+    // элемента, который сейчас играет, и однажды это поле здесь уже теряли.
+    export function buildPlaylist(session) {
         var hash = session.hash;
         var movie = (session.target && session.target.movie) || {};
         var files = session.files || [];
