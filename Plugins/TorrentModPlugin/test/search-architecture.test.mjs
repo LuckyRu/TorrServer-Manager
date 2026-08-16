@@ -468,6 +468,44 @@ test('воронка поиска считается по стадиям', () =>
         .some((item) => item.kind === 'diagnostics'));
 });
 
+// ---------- формат аниме-трекеров ----------
+
+test('тип релиза аниме читается отдельно от нумерации', () => {
+    const type = (title) => parseSignals(title).releaseType;
+    assert.equal(type('Твоё имя / Kimi no Na wa - AniLiberty.TOP [BDRip 1080p][HEVC][Фильм]'), 'movie');
+    assert.equal(type('Баскетбол Куроко / Kuroko no Basket - AniLiberty.TOP [BDRip 1080p][AVC][П-ф]'), 'movie');
+    assert.equal(type('Волейбол!! / Haikyuu!! Movie- Gomisuteba no Kessen - AniLiberty.TOP [WEB-DLRip]'), 'movie');
+    assert.equal(type('Мастера меча / Gekijouban Sword Art Online [RUS] [BDRip 1080p]'), 'movie');
+    assert.equal(type('Аниме [OVA] [1080p]'), 'ova');
+    assert.equal(type('Аниме [TV] [1-12 из 12] 1080p'), 'tv');
+    assert.equal(type('Дюна / Dune: Part Two (2024) BDRip'), '');
+});
+
+test('полнометражка не может быть кандидатом на конкретную серию', () => {
+    const title = 'Твоё имя / Kimi no Na wa - AniLiberty.TOP [BDRip 1080p][HEVC][Фильм]';
+    const item = { title: title, release: parseRelease(title, profileFor('anilibria')) };
+    const target = { mode: 'series', season: 1, movie: {} };
+
+    assert.equal(evaluateIdentityGate(item, Object.assign({}, target, { episode: 3 })).reason, 'movie-release-for-episode');
+    // В общем пуле произведения место ей есть — отказ только при запросе конкретной серии.
+    assert.equal(evaluateIdentityGate(item, target).passes, true);
+});
+
+test('аниме-трекер объявляет тип перевода профилем, раз не пишет его в заголовке', () => {
+    // На 211 живых заголовках anilibria и anidub тип перевода не разобрался ни разу.
+    const anilibria = parseRelease('Название - AniLiberty.TOP [WEB-DL 1080p][HEVC][1-12]', profileFor('anilibria'));
+    assert.deepEqual(anilibria.voiceTypes, ['Многоголосый']);
+
+    const anidub = parseRelease('Атака титанов: финал [RUS] [HDTV 1080p]', profileFor('anidub'));
+    assert.deepEqual(anidub.voiceTypes, ['Многоголосый']);
+
+    // Явно названный перевод сильнее умолчания трекера.
+    const explicit = parseRelease('Название [Дубляж] - AniLiberty.TOP [1080p]', profileFor('anilibria'));
+    assert.deepEqual(explicit.voiceTypes, ['Дубляж']);
+    // На общих трекерах умолчания нет — там перевод пишут словами.
+    assert.deepEqual(parseRelease('Фильм / Movie (2024) BDRip 1080p', profileFor('rutracker')).voiceTypes, []);
+});
+
 // ---------- эскалация запросов ----------
 
 test('запасное название не уходит сразу, а помечается «если пусто»', () => {

@@ -1,7 +1,21 @@
 
+    // Аниме-трекеры помечают тип релиза отдельно от нумерации: «[Фильм]», «[П-ф]», «Movie-»,
+    // «Gekijouban» (театральная версия), «[OVA]», «[ТВ]». Без этого полнометражка неотличима от
+    // серии, у которой просто не разобрался номер, — и попадает в кандидаты на серию сериала.
+    function releaseTypeOf(source) {
+        if (/\[(?:ova|ona)\]/i.test(source)) return 'ova';
+        if (/\[(?:спешл|special)s?\]/i.test(source)) return 'special';
+        if (/\[(?:фильм|movie)\]|\[П-ф\]|\bgekijouban\b|\bmovie\s*[-–]/i.test(source)) return 'movie';
+        if (/(?:^|[\s(\[])(?:TV|ТВ)(?:[\s)\]]|$)/i.test(source)) return 'tv';
+        return '';
+    }
+
     export function parseSignals(title) {
         var source = String(title || '').replace(/_/g, ' ');
-        var result = { seasons: [], episodeFrom: 0, episodeTo: 0, explicitEpisode: false, explicitSeason: false, finalSeason: false };
+        var result = {
+            seasons: [], episodeFrom: 0, episodeTo: 0, explicitEpisode: false, explicitSeason: false,
+            finalSeason: false, releaseType: releaseTypeOf(source)
+        };
         var match;
 
         match = source.match(/\bS(\d{1,2})\s*[-–]\s*S?(\d{1,2})\s*E(\d{1,3})(?:\s*[-–]\s*E?(\d{1,3}))?/i);

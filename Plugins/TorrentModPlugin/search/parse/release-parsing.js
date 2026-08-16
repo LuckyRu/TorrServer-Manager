@@ -51,6 +51,9 @@
                 if (found.indexOf(name) < 0) found.push(name);
             });
         }
+        // Трекер, который не пишет тип перевода вовсе, объявляет его профилем — иначе фильтр
+        // «Перевод» на нём слеп, а не просто неполон.
+        if (!found.length && profile && profile.voiceDefault) found.push(profile.voiceDefault);
         return found;
     }
 
@@ -84,6 +87,7 @@
             explicitSeason: signals.explicitSeason,
             explicitEpisode: signals.explicitEpisode,
             finalSeason: signals.finalSeason,
+            releaseType: signals.releaseType,
             resolution: matchOne(source, [
                 [/\b(2160p|4k|uhd)\b/i, '2160p'],
                 [/\b1080p\b/i, '1080p'],

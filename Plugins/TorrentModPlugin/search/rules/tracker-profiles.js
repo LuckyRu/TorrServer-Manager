@@ -17,6 +17,7 @@ var DEFAULT_PROFILE = {
     voices: 'any',
     studioSlots: 'any',
     studioDefault: '',
+    voiceDefault: '',
     query: { supportsSeasonMarker: true, supportsYear: true, preferBareTitle: false }
 };
 
@@ -96,6 +97,9 @@ var PROFILES = [
         voices: 'any',
         studioSlots: 'none',
         studioDefault: 'AniDUB',
+        // Свои релизы оба трекера выпускают многоголосой озвучкой, но в заголовке этого не
+        // пишут: на 211 живых заголовках тип перевода не разобрался ни разу.
+        voiceDefault: 'Многоголосый',
         query: { supportsSeasonMarker: false, supportsYear: false, preferBareTitle: true }
     },
     {
@@ -108,6 +112,7 @@ var PROFILES = [
         voices: 'any',
         studioSlots: 'none',
         studioDefault: 'AniLibria',
+        voiceDefault: 'Многоголосый',
         query: { supportsSeasonMarker: false, supportsYear: false, preferBareTitle: true }
     }
 ];

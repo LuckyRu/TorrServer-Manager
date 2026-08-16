@@ -93,6 +93,12 @@ export function evaluateIdentityGate(item, target) {
             return { passes: false, reason: 'season-mismatch', details: { finalSeason: last, wanted: target.season } };
         }
     }
+    // Полнометражка аниме — не серия. Отказ только когда спрашивают конкретную серию: в общем
+    // пуле произведения фильму по франшизе место есть, а кандидатом на третий эпизод он быть
+    // не может, сколько бы у него ни было сидов.
+    if (target.episode && release.releaseType === 'movie' && !release.explicitEpisode) {
+        return { passes: false, reason: 'movie-release-for-episode', details: { releaseType: release.releaseType } };
+    }
     if (target.episode && release.explicitEpisode) {
         var wanted = episodeNumbers(target, release);
         var covered = wanted.some(function (number) {
