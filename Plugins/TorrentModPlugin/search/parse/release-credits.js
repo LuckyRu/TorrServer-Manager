@@ -45,7 +45,9 @@ var NOT_A_CREDIT = {};
  'd', 'p', 'l', 'a', 'o', 'p1', 'p2', 'l1', 'l2', 'd1', 'd2', 'р',
  'hevc', 'avc', 'dl', 'web', 'ts', 'sdr', 'hdr', 'dolbyvision', 'complete', 'official',
  'кпк', 'фильм', 'movie', 'чистый звук', 'расширенная версия', 'режиссёрская версия',
- 'режиссерская версия', 'локализованный видеоряд', '60 fps'].forEach(function (word) {
+ 'режиссерская версия', 'локализованный видеоряд', '60 fps',
+ // Способ изготовления раздачи, а не её автор: на живой выдаче «Steam-Rip» стоял в слоте студии.
+ 'steam-rip', 'steamrip', 'repack', 'rip', 'рип'].forEach(function (word) {
     NOT_A_CREDIT[word] = true;
 });
 

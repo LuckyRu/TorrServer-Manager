@@ -503,6 +503,43 @@ test('воронка поиска считается по стадиям', () =>
         .some((item) => item.kind === 'diagnostics'));
 });
 
+test('меню «Релиз-группа» появляется только там, где группы есть', () => {
+    const movie = { number_of_seasons: 1 };
+    const poolItem = (release) => ({ title: 'Раздача', tracker: 'rutor', size: 1, release: release });
+
+    const withGroups = buildFilterItems(movie, false, {
+        filters: {},
+        pool: [poolItem({ translators: ['Red Head Sound'], releaseGroups: ['Scarabey'], resolution: '1080p' })]
+    });
+    const groupMenu = withGroups.filter((item) => item.kind === 'release-group')[0];
+    assert.ok(groupMenu, 'меню релиз-группы не построено');
+    assert.deepEqual(groupMenu.items.map((item) => item.value), ['any', 'Scarabey']);
+    // Студия и группа стоят в разных меню, а не в одном списке.
+    const studioMenu = withGroups.filter((item) => item.kind === 'translator')[0];
+    assert.deepEqual(studioMenu.items.map((item) => item.value), ['any', 'Red Head Sound']);
+
+    // Трекеры без сборщика в заголовке не получают пустое меню.
+    assert.ok(!buildFilterItems(movie, false, {
+        filters: {},
+        pool: [poolItem({ translators: ['AniLibria'], releaseGroups: [], resolution: '1080p' })]
+    }).some((item) => item.kind === 'release-group'));
+});
+
+test('оценка из правил поднимает студию в меню и подписывает её', () => {
+    registerCredits([{ name: 'Оценённая', rating: 9.5, votes: 10, voice: 'Дубляж', profanity: true }], CREDIT_KINDS.STUDIO);
+    const menu = buildFilterItems({}, false, {
+        filters: {},
+        pool: [
+            { title: 'a', tracker: 't', size: 1, release: { translators: ['Безоценочная'], releaseGroups: [] } },
+            { title: 'b', tracker: 't', size: 2, release: { translators: ['Оценённая'], releaseGroups: [] } }
+        ]
+    }).filter((item) => item.kind === 'translator')[0];
+    assert.deepEqual(menu.items.map((item) => item.value), ['any', 'Оценённая', 'Безоценочная']);
+    assert.equal(menu.items[1].subtitle, 'Дубляж · мат · ★ 9.5 (10)');
+    // О чём реестр молчит — то и в подписи молчит.
+    assert.equal(menu.items[2].subtitle, '');
+});
+
 // ---------- формат аниме-трекеров ----------
 
 test('тип релиза аниме читается отдельно от нумерации', () => {
