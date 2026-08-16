@@ -48,6 +48,34 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "western-animation",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Amphibia",
+        "matchedTitleKey": "amphibia",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Amphibia"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "western-animation",
       "firstQuery": "Amphibia",

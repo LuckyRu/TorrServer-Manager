@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:megapeer:none:004:v5",
+  "id": "tracker:megapeer:general:004:v5",
   "axis": "tracker",
   "trackerId": "megapeer",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 4,
     "title": "Pulp Fiction",
@@ -52,6 +52,32 @@
       "container": "MKV",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "megapeer",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Pulp Fiction",
+        "matchedTitleKey": "pulp fiction",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Pulp Fiction"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -59,5 +85,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Pulp Fiction",
+      "name": "Pulp Fiction",
+      "original_title": "Pulp Fiction",
+      "original_name": "Pulp Fiction",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1994-01-01",
+      "first_air_date": "1994-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1994-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1994-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1994-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Pulp Fiction",
+    "aliases": [
+      "Pulp Fiction Alias"
+    ]
   }
 }

@@ -52,6 +52,39 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "donghua",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Outcast",
+        "matchedTitleKey": "the outcast",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Outcast"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1,
+              2,
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 24,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "donghua",
       "firstQuery": "The Outcast",

@@ -48,6 +48,44 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "donghua",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The First Order",
+        "matchedTitleKey": "the first order",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The First Order"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          },
+          {
+            "kind": "absolute",
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "medium",
+            "source": "anime-seasonless-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "donghua",
       "firstQuery": "The First Order",

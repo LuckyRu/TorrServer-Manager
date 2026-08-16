@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:tapochek:none:039:v3",
+  "id": "tracker:tapochek:general:039:v3",
   "axis": "tracker",
   "trackerId": "tapochek",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 39,
     "title": "The Mandalorian",
@@ -47,6 +47,34 @@
       "container": "TS",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Mandalorian",
+        "matchedTitleKey": "the mandalorian",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Mandalorian"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -54,5 +82,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "The Mandalorian",
+      "name": "The Mandalorian",
+      "original_title": "The Mandalorian",
+      "original_name": "The Mandalorian",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2019-01-01",
+      "first_air_date": "2019-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Mandalorian",
+    "aliases": [
+      "The Mandalorian Alias"
+    ]
   }
 }

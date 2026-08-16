@@ -50,6 +50,35 @@
       "compatibility": "risky",
       "compatibilityReason": "XviD"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "western-animation",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Avatar: The Last Airbender",
+        "matchedTitleKey": "avatar the last airbender",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Avatar: The Last Airbender"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "final-season",
+            "season": 3,
+            "episodeFrom": 1,
+            "episodeTo": 2,
+            "confidence": "high",
+            "source": "title-final-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "western-animation",
       "firstQuery": "Avatar: The Last Airbender",

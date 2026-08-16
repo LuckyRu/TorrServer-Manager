@@ -50,6 +50,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "donghua",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Fairies Albums",
+        "matchedTitleKey": "fairies albums",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Fairies Albums"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              2
+            ],
+            "episodeFrom": 3,
+            "episodeTo": 10,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "donghua",
       "firstQuery": "Fairies Albums",

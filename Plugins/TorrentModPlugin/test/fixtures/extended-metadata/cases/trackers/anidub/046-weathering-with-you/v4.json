@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:anidub:none:046:v4",
+  "id": "tracker:anidub:anime:046:v4",
   "axis": "tracker",
   "trackerId": "anidub",
-  "family": null,
+  "family": "anime",
   "work": {
     "rank": 46,
     "title": "Weathering with You",
@@ -52,6 +52,32 @@
       "container": "MKV",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Weathering with You",
+        "matchedTitleKey": "weathering with you",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Weathering with You"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -59,5 +85,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Weathering with You",
+      "name": "Weathering with You",
+      "original_title": "進撃作品 46",
+      "original_name": "進撃作品 46",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2019-01-01",
+      "first_air_date": "2019-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Weathering with You",
+    "aliases": [
+      "Weathering with You Alias"
+    ]
   }
 }

@@ -50,6 +50,35 @@
       "compatibility": "risky",
       "compatibilityReason": "XviD"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Hormones",
+        "matchedTitleKey": "hormones",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Hormones"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "final-season",
+            "season": 3,
+            "episodeFrom": 1,
+            "episodeTo": 2,
+            "confidence": "high",
+            "source": "title-final-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "Hormones",

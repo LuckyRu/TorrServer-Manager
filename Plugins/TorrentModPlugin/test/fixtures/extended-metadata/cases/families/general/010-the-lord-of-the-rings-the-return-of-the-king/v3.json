@@ -53,6 +53,32 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Lord of the Rings: The Return of the King",
+        "matchedTitleKey": "the lord of the rings the return of the king",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Lord of the Rings: The Return of the King"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "The Lord of the Rings: The Return of the King",

@@ -48,6 +48,37 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Itaewon Class",
+        "matchedTitleKey": "itaewon class",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Itaewon Class"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "Itaewon Class",

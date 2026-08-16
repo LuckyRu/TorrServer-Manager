@@ -49,6 +49,32 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "A Silent Voice",
+        "matchedTitleKey": "a silent voice",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "A Silent Voice"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "A Silent Voice",

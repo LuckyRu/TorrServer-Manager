@@ -50,6 +50,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "donghua",
+      "tracker": {
+        "id": "anilibria",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Big Brother",
+        "matchedTitleKey": "big brother",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Big Brother"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              2
+            ],
+            "episodeFrom": 3,
+            "episodeTo": 10,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "donghua",
       "firstQuery": "Big Brother",

@@ -49,6 +49,32 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Paprika",
+        "matchedTitleKey": "paprika",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Paprika"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "Paprika",

@@ -50,6 +50,35 @@
       "compatibility": "risky",
       "compatibilityReason": "XviD"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "exkinoray",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Descendants of the Sun",
+        "matchedTitleKey": "descendants of the sun",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Descendants of the Sun"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "final-season",
+            "season": 3,
+            "episodeFrom": 1,
+            "episodeTo": 2,
+            "confidence": "high",
+            "source": "title-final-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "Descendants of the Sun",

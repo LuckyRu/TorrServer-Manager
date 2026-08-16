@@ -50,6 +50,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Walking Dead",
+        "matchedTitleKey": "the walking dead",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Walking Dead"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              2
+            ],
+            "episodeFrom": 3,
+            "episodeTo": 10,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "The Walking Dead",

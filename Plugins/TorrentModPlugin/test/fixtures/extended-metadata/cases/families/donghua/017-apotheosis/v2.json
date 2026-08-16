@@ -50,6 +50,35 @@
       "compatibility": "risky",
       "compatibilityReason": "XviD"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "donghua",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Apotheosis",
+        "matchedTitleKey": "apotheosis",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Apotheosis"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "final-season",
+            "season": 3,
+            "episodeFrom": 1,
+            "episodeTo": 2,
+            "confidence": "high",
+            "source": "title-final-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "donghua",
       "firstQuery": "Apotheosis",

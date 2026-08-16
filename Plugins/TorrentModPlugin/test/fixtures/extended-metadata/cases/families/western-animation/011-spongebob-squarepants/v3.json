@@ -48,6 +48,34 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "western-animation",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "SpongeBob SquarePants",
+        "matchedTitleKey": "spongebob squarepants",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "SpongeBob SquarePants"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "western-animation",
       "firstQuery": "SpongeBob SquarePants",

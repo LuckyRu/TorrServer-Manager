@@ -49,6 +49,32 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Green Mile",
+        "matchedTitleKey": "the green mile",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Green Mile"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "The Green Mile",

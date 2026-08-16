@@ -53,6 +53,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Game of Thrones",
+        "matchedTitleKey": "game of thrones",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Game of Thrones"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              2
+            ],
+            "episodeFrom": 7,
+            "episodeTo": 7,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "Game of Thrones",

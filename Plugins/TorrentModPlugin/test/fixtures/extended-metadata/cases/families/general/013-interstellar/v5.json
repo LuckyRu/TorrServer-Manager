@@ -53,6 +53,32 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Interstellar",
+        "matchedTitleKey": "interstellar",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Interstellar"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "Interstellar",

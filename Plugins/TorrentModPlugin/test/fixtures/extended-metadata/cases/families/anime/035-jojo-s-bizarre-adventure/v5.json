@@ -48,6 +48,44 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "JoJo's Bizarre Adventure",
+        "matchedTitleKey": "jojo s bizarre adventure",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "JoJo's Bizarre Adventure"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          },
+          {
+            "kind": "absolute",
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "medium",
+            "source": "anime-seasonless-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "JoJo's Bizarre Adventure",

@@ -52,6 +52,39 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Dragon Ball Z",
+        "matchedTitleKey": "dragon ball z",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Dragon Ball Z"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1,
+              2,
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 24,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "Dragon Ball Z",

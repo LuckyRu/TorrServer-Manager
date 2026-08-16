@@ -48,6 +48,34 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Wire",
+        "matchedTitleKey": "the wire",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Wire"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "The Wire",

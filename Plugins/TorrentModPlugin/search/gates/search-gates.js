@@ -120,28 +120,57 @@
         return segmentMatch(segment, name).score;
     }
 
+    function titleNames(movie, englishTitle, aliases) {
+        movie = movie || {};
+        var canonical = [movie.name, movie.title, movie.original_title || movie.original_name, englishTitle];
+        var entries = [];
+        var seen = {};
+        canonical.concat(Array.isArray(aliases) ? aliases : []).forEach(function (name, index) {
+            var key = normalizedTitleKey(name);
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            entries.push({ name: name, key: key, kind: index < canonical.length ? 'canonical' : 'alias' });
+        });
+        return entries;
+    }
+
+    function betterTitleMatch(candidate, current) {
+        if (candidate.score !== current.score) return candidate.score > current.score;
+        if (candidate.extended !== current.extended) return current.extended && !candidate.extended;
+        return current.kind === 'alias' && candidate.kind === 'canonical';
+    }
+
     function titleAnalysis(title, movie, englishTitle, aliases, profile) {
         var segments = extractSearchTitleSegments(title, profile);
-        var names = baseTitles(movie || {}, englishTitle, aliases);
+        var names = titleNames(movie, englishTitle, aliases);
         var matches = segments.map(function (segment) {
-            var best = { score: 0, extended: false };
-            names.forEach(function (name) {
-                var match = segmentMatch(segment, name);
+            var best = { score: 0, extended: false, name: '', key: '', kind: '', segment: segment };
+            names.forEach(function (entry) {
+                var raw = segmentMatch(segment, entry.name);
+                var match = {
+                    score: raw.score, extended: raw.extended,
+                    name: entry.name, key: entry.key, kind: entry.kind, segment: segment
+                };
                 // При равном счёте точное совпадение вытесняет расширенное.
-                if (match.score > best.score || (match.score === best.score && best.extended && !match.extended)) best = match;
+                if (betterTitleMatch(match, best)) best = match;
             });
             return best;
         });
         var winner = matches.reduce(function (best, match) {
-            if (match.score > best.score || (match.score === best.score && best.extended && !match.extended)) return match;
+            if (betterTitleMatch(match, best)) return match;
             return best;
-        }, { score: 0, extended: false });
+        }, { score: 0, extended: false, name: '', key: '', kind: '', segment: '' });
         return {
             segments: segments,
             matches: matches,
             scores: matches.map(function (match) { return match.score; }),
             similarity: winner.score,
-            extended: winner.score > 0 && winner.extended
+            extended: winner.score > 0 && winner.extended,
+            matchedTitle: winner.name,
+            matchedTitleKey: winner.key,
+            matchedTitleKind: winner.kind,
+            matchedSegment: winner.segment,
+            matchKind: winner.score <= 0 ? 'none' : (winner.extended ? 'extension' : (winner.score === 1 ? 'exact' : 'partial'))
         };
     }
 

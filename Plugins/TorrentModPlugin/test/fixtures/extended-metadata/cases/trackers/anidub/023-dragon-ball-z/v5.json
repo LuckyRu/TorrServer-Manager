@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:anidub:none:023:v5",
+  "id": "tracker:anidub:anime:023:v5",
   "axis": "tracker",
   "trackerId": "anidub",
-  "family": null,
+  "family": "anime",
   "work": {
     "rank": 23,
     "title": "Dragon Ball Z",
@@ -51,6 +51,39 @@
       "container": "WebM",
       "compatibility": "risky",
       "compatibilityReason": "AV1"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Dragon Ball Z",
+        "matchedTitleKey": "dragon ball z",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Dragon Ball Z"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1,
+              2,
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 24,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -58,5 +91,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Dragon Ball Z",
+      "name": "Dragon Ball Z",
+      "original_title": "進撃作品 23",
+      "original_name": "進撃作品 23",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "1989-01-01",
+      "first_air_date": "1989-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1989-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1989-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1989-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Dragon Ball Z",
+    "aliases": [
+      "Dragon Ball Z Alias"
+    ]
   }
 }

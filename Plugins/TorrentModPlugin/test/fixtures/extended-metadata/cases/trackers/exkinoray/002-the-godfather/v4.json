@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:exkinoray:none:002:v4",
+  "id": "tracker:exkinoray:general:002:v4",
   "axis": "tracker",
   "trackerId": "exkinoray",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 2,
     "title": "The Godfather",
@@ -48,6 +48,32 @@
       "container": "MKV",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "exkinoray",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Godfather",
+        "matchedTitleKey": "the godfather",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Godfather"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -55,5 +81,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "The Godfather",
+      "name": "The Godfather",
+      "original_title": "The Godfather",
+      "original_name": "The Godfather",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1972-01-01",
+      "first_air_date": "1972-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1972-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1972-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1972-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Godfather",
+    "aliases": [
+      "The Godfather Alias"
+    ]
   }
 }

@@ -53,6 +53,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "exkinoray",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Sweet Home",
+        "matchedTitleKey": "sweet home",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Sweet Home"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              2
+            ],
+            "episodeFrom": 7,
+            "episodeTo": 7,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "Sweet Home",

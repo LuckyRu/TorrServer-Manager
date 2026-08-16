@@ -489,7 +489,7 @@ runner.test('titleSimilarity (через гейт): отсеивает шум д
     function passesFor(title) {
         const release = parseSeriesRelease(title);
         const item = { title, tracker: 'x', size: 2_000_000_000, seeders: 5, peers: 2, publishedAt: 0, magnet: 'magnet:?x', link: '', release };
-        return scoreCandidate(item, boysTarget).passes;
+        return passesSearchTitleGate(item, boysTarget);
     }
     const noise = [
         'Ведьмак: Сирены глубин /  The Witcher- Sirens of the Deep - AniLiberty.TOP [WEB-DLRip 1080p][AVC][Фильм]',

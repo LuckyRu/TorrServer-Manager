@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:rutor:none:009:v4",
+  "id": "tracker:rutor:general:009:v4",
   "axis": "tracker",
   "trackerId": "rutor",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 9,
     "title": "The Lord of the Rings: The Fellowship of the Ring",
@@ -47,6 +47,32 @@
       "container": "FLV",
       "compatibility": "risky",
       "compatibilityReason": "H.263"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Lord of the Rings: The Fellowship of the Ring",
+        "matchedTitleKey": "the lord of the rings the fellowship of the ring",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Lord of the Rings: The Fellowship of the Ring"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -54,5 +80,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "The Lord of the Rings: The Fellowship of the Ring",
+      "name": "The Lord of the Rings: The Fellowship of the Ring",
+      "original_title": "The Lord of the Rings: The Fellowship of the Ring",
+      "original_name": "The Lord of the Rings: The Fellowship of the Ring",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2001-01-01",
+      "first_air_date": "2001-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2001-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2001-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2001-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Lord of the Rings: The Fellowship of the Ring",
+    "aliases": [
+      "The Lord of the Rings: The Fellowship of the Ring Alias"
+    ]
   }
 }

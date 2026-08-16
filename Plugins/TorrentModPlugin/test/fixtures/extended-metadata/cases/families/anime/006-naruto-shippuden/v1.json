@@ -53,6 +53,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anilibria",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Naruto: Shippuden",
+        "matchedTitleKey": "naruto shippuden",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Naruto: Shippuden"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              2
+            ],
+            "episodeFrom": 7,
+            "episodeTo": 7,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "Naruto: Shippuden",

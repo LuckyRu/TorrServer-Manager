@@ -1637,7 +1637,7 @@ internal sealed class PluginHub : IDisposable
 
     private sealed record SearchRulesTracker(
         string Id, string? Group, string? TitleSeparators, string? Year, string? Voices,
-        string? StudioSlots, string? StudioDefault, string[]? Strip);
+        string? StudioSlots, string? StudioDefault, int? SeasonlessSeason, string[]? Strip);
 
     private sealed record SearchRulesFile(
         SearchRulesCredit[]? Studios, SearchRulesCredit[]? ReleaseGroups, SearchRulesTracker[]? Trackers);
@@ -1699,6 +1699,9 @@ internal sealed class PluginHub : IDisposable
                     voices = tracker.Voices,
                     studioSlots = tracker.StudioSlots,
                     studioDefault = tracker.StudioDefault,
+                    seasonlessSeason = tracker.SeasonlessSeason is >= 0 and <= 99
+                        ? tracker.SeasonlessSeason
+                        : null,
                     strip = (tracker.Strip ?? Array.Empty<string>())
                         .Where(value => !string.IsNullOrWhiteSpace(value))
                         .Take(10)

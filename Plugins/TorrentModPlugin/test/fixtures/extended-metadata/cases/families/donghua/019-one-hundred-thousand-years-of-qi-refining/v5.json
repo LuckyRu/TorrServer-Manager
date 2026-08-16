@@ -46,6 +46,37 @@
       "compatibility": "risky",
       "compatibilityReason": "MPEG-2"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "donghua",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "One Hundred Thousand Years of Qi Refining",
+        "matchedTitleKey": "one hundred thousand years of qi refining",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "One Hundred Thousand Years of Qi Refining"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 12,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "donghua",
       "firstQuery": "One Hundred Thousand Years of Qi Refining",

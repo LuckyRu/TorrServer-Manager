@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:bigfangroup:none:040:v1",
+  "id": "tracker:bigfangroup:general:040:v1",
   "axis": "tracker",
   "trackerId": "bigfangroup",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 40,
     "title": "The Office",
@@ -45,6 +45,37 @@
       "container": "MPG",
       "compatibility": "risky",
       "compatibilityReason": "MPEG-2"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "bigfangroup",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Office",
+        "matchedTitleKey": "the office",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Office"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 12,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -52,5 +83,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 3,
+    "episode": 1,
+    "movie": {
+      "title": "The Office",
+      "name": "The Office",
+      "original_title": "The Office",
+      "original_name": "The Office",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2005-01-01",
+      "first_air_date": "2005-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2005-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2005-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2005-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Office",
+    "aliases": [
+      "The Office Alias"
+    ]
   }
 }

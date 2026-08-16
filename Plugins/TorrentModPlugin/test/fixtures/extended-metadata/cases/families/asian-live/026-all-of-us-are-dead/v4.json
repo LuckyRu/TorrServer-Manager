@@ -46,6 +46,37 @@
       "compatibility": "risky",
       "compatibilityReason": "MPEG-2"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "exkinoray",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "All of Us Are Dead",
+        "matchedTitleKey": "all of us are dead",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "All of Us Are Dead"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 12,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "All of Us Are Dead",

@@ -50,6 +50,35 @@
       "compatibility": "risky",
       "compatibilityReason": "XviD"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Longest Day in Chang'an",
+        "matchedTitleKey": "the longest day in chang an",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Longest Day in Chang'an"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "final-season",
+            "season": 3,
+            "episodeFrom": 1,
+            "episodeTo": 2,
+            "confidence": "high",
+            "source": "title-final-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "The Longest Day in Chang'an",

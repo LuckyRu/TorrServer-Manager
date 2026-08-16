@@ -48,6 +48,37 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "My Mister",
+        "matchedTitleKey": "my mister",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "My Mister"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "My Mister",

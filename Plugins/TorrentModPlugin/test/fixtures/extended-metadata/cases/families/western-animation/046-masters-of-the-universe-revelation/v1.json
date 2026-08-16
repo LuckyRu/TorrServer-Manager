@@ -48,6 +48,34 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "western-animation",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Masters of the Universe: Revelation",
+        "matchedTitleKey": "masters of the universe revelation",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Masters of the Universe: Revelation"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "western-animation",
       "firstQuery": "Masters of the Universe: Revelation",

@@ -48,6 +48,34 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Dexter",
+        "matchedTitleKey": "dexter",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Dexter"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "Dexter",

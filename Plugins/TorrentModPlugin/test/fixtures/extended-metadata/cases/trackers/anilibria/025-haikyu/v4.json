@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:anilibria:none:025:v4",
+  "id": "tracker:anilibria:anime:025:v4",
   "axis": "tracker",
   "trackerId": "anilibria",
-  "family": null,
+  "family": "anime",
   "work": {
     "rank": 25,
     "title": "Haikyu!!",
@@ -47,6 +47,44 @@
       "container": "TS",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anilibria",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Haikyu!!",
+        "matchedTitleKey": "haikyu",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Haikyu!!"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          },
+          {
+            "kind": "absolute",
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "medium",
+            "source": "anime-seasonless-episode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -54,5 +92,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Haikyu!!",
+      "name": "Haikyu!!",
+      "original_title": "進撃作品 25",
+      "original_name": "進撃作品 25",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2014-01-01",
+      "first_air_date": "2014-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2014-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2014-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2014-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Haikyu!!",
+    "aliases": [
+      "Haikyu!! Alias"
+    ]
   }
 }

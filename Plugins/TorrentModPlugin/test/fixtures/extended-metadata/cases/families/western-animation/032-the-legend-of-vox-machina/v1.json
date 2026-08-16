@@ -48,6 +48,34 @@
       "compatibility": "likely",
       "compatibilityReason": ""
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "western-animation",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Legend of Vox Machina",
+        "matchedTitleKey": "the legend of vox machina",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Legend of Vox Machina"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "seasonless-local",
+            "episodeFrom": 1,
+            "episodeTo": 16,
+            "confidence": "medium",
+            "source": "title-episode-without-season"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "western-animation",
       "firstQuery": "The Legend of Vox Machina",

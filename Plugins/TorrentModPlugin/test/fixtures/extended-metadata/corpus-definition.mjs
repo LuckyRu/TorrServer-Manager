@@ -273,10 +273,76 @@ export function targetFor(family, work, semantic) {
     };
 }
 
+function manualTitleKey(value) {
+    return String(value || '').toLowerCase()
+        .replace(/[^a-z0-9а-яё\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+/gi, ' ')
+        .trim();
+}
+
+// Ручной oracle нового слоя selection. Он строится только из таблицы SEMANTICS, семейства и
+// задокументированного профиля трекера; production compileReleaseSelection не импортируется.
+export function expectedSelection(family, tracker, work, semantic, target) {
+    var animeTracker = ANIME_TRACKERS[tracker] === true;
+    var claims = [];
+    if (work.mode === 'movie') {
+        claims.push({ kind: 'movie', confidence: 'high', source: 'work-mode' });
+    } else if (semantic.explicitSeason && semantic.seasons.length) {
+        claims.push({
+            kind: 'season-local', seasons: semantic.seasons.slice(),
+            episodeFrom: semantic.explicitEpisode ? semantic.episodeFrom : 0,
+            episodeTo: semantic.explicitEpisode ? semantic.episodeTo : 0,
+            confidence: 'high', source: 'title-season-episode'
+        });
+    } else if (semantic.finalSeason) {
+        claims.push({
+            kind: 'final-season', season: 3,
+            episodeFrom: semantic.explicitEpisode ? semantic.episodeFrom : 0,
+            episodeTo: semantic.explicitEpisode ? semantic.episodeTo : 0,
+            confidence: 'high', source: 'title-final-season'
+        });
+    } else if (semantic.explicitEpisode) {
+        var asian = family === 'anime' || family === 'donghua' || family === 'asian-live';
+        if (asian || animeTracker) {
+            claims.push({
+                kind: 'season-local', seasons: [1],
+                episodeFrom: semantic.episodeFrom, episodeTo: semantic.episodeTo,
+                confidence: 'high', source: 'tracker-default-season-1'
+            });
+        } else {
+            claims.push({
+                kind: 'seasonless-local', episodeFrom: semantic.episodeFrom, episodeTo: semantic.episodeTo,
+                confidence: 'medium', source: 'title-episode-without-season'
+            });
+        }
+        if (family === 'anime' || family === 'donghua' || animeTracker) {
+            claims.push({
+                kind: 'absolute', episodeFrom: semantic.episodeFrom, episodeTo: semantic.episodeTo,
+                confidence: 'medium', source: 'anime-seasonless-episode'
+            });
+        }
+    } else {
+        claims.push({ kind: 'unknown-series-coverage', confidence: 'low', source: 'title-no-season-episode' });
+    }
+    return {
+        version: 1,
+        family: family,
+        tracker: { id: tracker, group: animeTracker ? 'anime' : 'general' },
+        title: {
+            accepted: true, kind: 'exact', score: 1, matchedTitle: work.title,
+            matchedTitleKey: manualTitleKey(work.title), matchedTitleKind: 'canonical', matchedSegment: work.title
+        },
+        coverage: { claims: claims }
+    };
+}
+
 export function familyTracker(family, variant) {
     var anime = ['anilibria', 'anidub', 'rutracker', 'tapochek', 'noname-club'];
     var general = ['rutracker', 'tapochek', 'rutor', 'exkinoray', 'noname-club'];
     return (family === 'anime' || family === 'donghua' ? anime : general)[variant - 1];
+}
+
+export function trackerFamily(tracker) {
+    return ANIME_TRACKERS[tracker] ? 'anime' : 'general';
 }
 
 export function trackerCatalog(tracker) {

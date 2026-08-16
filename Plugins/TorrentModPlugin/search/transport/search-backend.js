@@ -4,6 +4,7 @@
     import { startParallelSearch } from './parallel-search.js';
     import { buildSearchPlan } from '../plan/indexer-search-strategies.js';
     import { workFamily } from '../profile/work-profile.js';
+    import { compileReleaseSelection } from '../profile/release-selection.js';
     import { profileFor } from '../rules/tracker-profiles.js';
     import { evaluateMediaTypeGate, evaluateSearchTitleGate } from '../gates/search-gates.js';
     import { log, warn, debug, debugEnabled } from '../../shared/core/log.js';
@@ -133,6 +134,11 @@
         var parsed = parsedDecisions.filter(function (decision) { return decision.passes; }).map(function (decision) { return decision.item; });
         var media = applyGate(parsed, evaluateMediaTypeGate, 'media-type', target);
         var title = applyGate(media.items, evaluateSearchTitleGate, 'title', target);
+        // Это transport boundary: только успешно прошедшие intake-гейты получают accepted
+        // selection metadata. Дальше UI не имеет права снова проверять строку заголовка.
+        title.items.forEach(function (item) {
+            item.selection = compileReleaseSelection(item, target, undefined, true);
+        });
         var stages = [parseSummary, media.summary, title.summary];
         var filtered = rawResults.length - title.items.length;
         var summary = {

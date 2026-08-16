@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:exkinoray:none:026:v5",
+  "id": "tracker:exkinoray:general:026:v5",
   "axis": "tracker",
   "trackerId": "exkinoray",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 26,
     "title": "Breaking Bad",
@@ -45,6 +45,37 @@
       "container": "MPG",
       "compatibility": "risky",
       "compatibilityReason": "MPEG-2"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "exkinoray",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Breaking Bad",
+        "matchedTitleKey": "breaking bad",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Breaking Bad"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 12,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -52,5 +83,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 3,
+    "episode": 1,
+    "movie": {
+      "title": "Breaking Bad",
+      "name": "Breaking Bad",
+      "original_title": "Breaking Bad",
+      "original_name": "Breaking Bad",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2008-01-01",
+      "first_air_date": "2008-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2008-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2008-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2008-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Breaking Bad",
+    "aliases": [
+      "Breaking Bad Alias"
+    ]
   }
 }

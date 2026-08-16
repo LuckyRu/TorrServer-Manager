@@ -48,6 +48,44 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Mob Psycho 100",
+        "matchedTitleKey": "mob psycho 100",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Mob Psycho 100"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          },
+          {
+            "kind": "absolute",
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "medium",
+            "source": "anime-seasonless-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "Mob Psycho 100",

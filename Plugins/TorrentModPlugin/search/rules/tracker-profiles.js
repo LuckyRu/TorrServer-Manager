@@ -18,6 +18,9 @@ var DEFAULT_PROFILE = {
     studioSlots: 'any',
     studioDefault: '',
     voiceDefault: '',
+    // 0 = заголовок без Sxx не привязан к сезону; anime-трекеры по своему формату опускают
+    // номер именно у первого сезона.
+    seasonlessSeason: 0,
     query: { supportsSeasonMarker: true, supportsYear: true, preferBareTitle: false }
 };
 
@@ -102,6 +105,7 @@ var PROFILES = [
         // Свои релизы оба трекера выпускают многоголосой озвучкой, но в заголовке этого не
         // пишут: на 211 живых заголовках тип перевода не разобрался ни разу.
         voiceDefault: 'Многоголосый',
+        seasonlessSeason: 1,
         query: { supportsSeasonMarker: false, supportsYear: false, preferBareTitle: true }
     },
     {
@@ -115,6 +119,7 @@ var PROFILES = [
         studioSlots: 'none',
         studioDefault: 'AniLibria',
         voiceDefault: 'Многоголосый',
+        seasonlessSeason: 1,
         query: { supportsSeasonMarker: false, supportsYear: false, preferBareTitle: true }
     }
 ];

@@ -1,4 +1,4 @@
-    import { titleSimilarity, passesSearchTitleGate as passesTitleGate, evaluateTitleMatch } from '../gates/search-gates.js';
+    import { passesSearchTitleGate as passesTitleGate } from '../gates/search-gates.js';
     import { evaluateIdentityGate, narrowToExactMatches } from '../gates/gate-identity.js';
     import { filtersOf } from '../../domain/filter-state.js';
 
@@ -220,19 +220,28 @@
         return passesTitleGate(item, target);
     }
 
-    function passesMatchGate(item, target, titlePasses) {
-        if (titlePasses === undefined ? !passesSearchTitleGate(item, target) : !titlePasses) return false;
+    function passesMatchGate(item, target) {
         return evaluateIdentityGate(item, target).passes;
     }
 
     export function createCandidateScoreBase(item, target) {
         var release = item.release;
         var payload = estimatePayload(item, target);
-        var titleMatch = evaluateTitleMatch(item, target);
+        var storedTitle = item.selection && item.selection.title;
+        // После intake UI работает только по метаданным. Даже compatibility path без selection
+        // не перечитывает item.title: это отображаемая строка, не источник решений selector-а.
+        var titleEvidence = Object.assign({}, storedTitle || {
+            accepted: false, kind: 'unknown', matchedTitle: '', matchedTitleKey: '',
+            matchedTitleKind: '', matchedSegment: '', score: 0
+        }, {
+            trackerGroup: (item.selection && item.selection.tracker && item.selection.tracker.group) || ''
+        });
+        var titleScore = Number(titleEvidence.score) || 0;
         return {
-            titlePasses: passesSearchTitleGate(item, target),
-            titleExtended: titleMatch.extended,
-            titleScore: Math.round(titleMatch.similarity * 40),
+            titlePasses: true,
+            titleExtended: titleEvidence.kind === 'extension',
+            titleEvidence: titleEvidence,
+            titleScore: Math.round(titleScore * 40),
             qualityScore: qualityScoreFor(release, payload),
             availabilityScore: availabilityScoreFor(item),
             streamingRiskPenalty: streamingRiskPenaltyFor(item, payload),
@@ -244,11 +253,12 @@
     export function scoreCandidateFromBase(item, target, base) {
         var release = item.release;
         var identity = evaluateIdentityGate(item, target);
-        var passes = passesMatchGate(item, target, base.titlePasses);
+        var passes = passesMatchGate(item, target);
+        var coverageMatch = identity.details && identity.details.coverageMatch;
         var matchScore = base.titleScore +
             (release.explicitSeason && release.seasons.indexOf(target.season) >= 0 ? 20 : 0) +
-            (target.episode && release.explicitEpisode &&
-                target.episode >= release.episodeFrom && target.episode <= release.episodeTo ? 40 : 0);
+            (target.episode && coverageMatch === 'exact' ? 40 : 0) +
+            (target.episode && coverageMatch === 'ambiguous' ? 10 : 0);
         var matchConfidenceScore = Math.max(0, Math.min(4, matchScore / 25));
 
         return {
@@ -361,8 +371,10 @@
             var base = createCandidateScoreBase(item, target);
             var scored = Object.assign({}, item, {
                 _score: scoreCandidateFromBase(item, target, base),
-                _titleExtended: base.titleExtended
+                _titleExtended: base.titleExtended,
+                _titleEvidence: base.titleEvidence
             });
+            scored._coverageMatch = (scored._score.identityDetails && scored._score.identityDetails.coverageMatch) || '';
             if (!scored._score.passes) rejectedByGate.push(scored);
             return scored;
         });

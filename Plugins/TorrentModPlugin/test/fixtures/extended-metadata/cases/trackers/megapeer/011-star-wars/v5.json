@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:megapeer:none:011:v5",
+  "id": "tracker:megapeer:general:011:v5",
   "axis": "tracker",
   "trackerId": "megapeer",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 11,
     "title": "Star Wars",
@@ -48,6 +48,32 @@
       "container": "MKV",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "megapeer",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Star Wars",
+        "matchedTitleKey": "star wars",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Star Wars"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -55,5 +81,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Star Wars",
+      "name": "Star Wars",
+      "original_title": "Star Wars",
+      "original_name": "Star Wars",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1977-01-01",
+      "first_air_date": "1977-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1977-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1977-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1977-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Star Wars",
+    "aliases": [
+      "Star Wars Alias"
+    ]
   }
 }

@@ -48,6 +48,32 @@
       "compatibility": "risky",
       "compatibilityReason": "H.263"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "exkinoray",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Barbie",
+        "matchedTitleKey": "barbie",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Barbie"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "Barbie",

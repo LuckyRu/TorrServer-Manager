@@ -13,7 +13,9 @@ import { registerCredits, creditInfo, CREDIT_KINDS } from '../search/parse/credi
 import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments, evaluateMediaTypeGate } from '../search/gates/search-gates.js';
 import { profileFor, indexersInGroup, registerTrackerRules } from '../search/rules/tracker-profiles.js';
 import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gates/gate-identity.js';
+import { evaluateCandidatePool } from '../search/rank/scoring.js';
 import { workFamily, isAnimeTarget } from '../search/profile/work-profile.js';
+import { compileReleaseSelection, coverageDecision } from '../search/profile/release-selection.js';
 import { buildQueries } from '../search/plan/query-building.js';
 import { buildMovieQueries } from '../search/plan/movie-query-building.js';
 import { buildSeriesQueries } from '../search/plan/series-query-building.js';
@@ -258,6 +260,7 @@ test('год и расширенное название отсеивают то�
 
 test('аниме со сквозной нумерацией: E27 покрывает второй сезон', () => {
     const movie = {
+        genre_ids: [16], original_language: 'ja',
         seasons: [
             { season_number: 1, episode_count: 26 },
             { season_number: 2, episode_count: 25 }
@@ -268,17 +271,162 @@ test('аниме со сквозной нумерацией: E27 покрыва�
     const absolute = { title: 'Аниме E27-E39 [1080p]', release: parseRelease('Аниме E27-E39 [1080p]') };
     assert.equal(evaluateIdentityGate(absolute, target).passes, true);
 
-    // Внутрисезонная нумерация продолжает работать.
+    // На азиатском релизе без сезона локальная E01-E13 означает первый сезон, не второй.
     const inSeason = { title: 'Аниме E01-E13 [1080p]', release: parseRelease('Аниме E01-E13 [1080p]') };
-    assert.equal(evaluateIdentityGate(inSeason, target).passes, true);
+    assert.equal(evaluateIdentityGate(inSeason, target).reason, 'season-mismatch');
 
     // Сквозной номер не спасает, если сезон в релизе назван явно и он чужой.
     const wrongSeason = { title: 'Аниме S03E27-E39 [1080p]', release: parseRelease('Аниме S03E27-E39 [1080p]') };
     assert.equal(evaluateIdentityGate(wrongSeason, target).reason, 'season-mismatch');
 
-    // И не превращает гейт в решето: серии 60-70 не покрывают ни 1, ни 27.
+    // И не превращает гейт в решето: серии 60-70 не покрывают сквозную серию 27, а local claim — S1.
     const other = { title: 'Аниме E60-E70 [1080p]', release: parseRelease('Аниме E60-E70 [1080p]') };
-    assert.equal(evaluateIdentityGate(other, target).reason, 'episode-out-of-range');
+    assert.equal(evaluateIdentityGate(other, target).reason, 'season-mismatch');
+});
+
+test('selection metadata хранит coverage отдельно от сырого release', () => {
+    const target = {
+        mode: 'series', season: 0, episode: 0,
+        movie: {
+            genre_ids: [16], original_language: 'ja', name: 'Тестовое аниме', original_name: 'Test Anime',
+            seasons: [{ season_number: 1, episode_count: 12 }, { season_number: 2, episode_count: 13 }]
+        },
+        englishTitle: 'Test Anime'
+    };
+    const title = 'Тестовое аниме / E01-E12 Test Anime - AniLiberty.TOP [WEBRip 1080p][HEVC]';
+    const item = { title, tracker: 'Anilibria', trackerId: 'anilibria', release: parseRelease(title) };
+    item.selection = compileReleaseSelection(item, target, undefined, true);
+
+    assert.equal(item.selection.family, 'anime');
+    assert.equal(item.selection.tracker.group, 'anime');
+    assert.deepEqual(item.selection.coverage.claims.map((claim) => claim.kind), ['season-local', 'absolute']);
+    assert.equal(item.selection.coverage.claims[0].confidence, 'high');
+    assert.equal(item.selection.coverage.claims[0].seasons[0], 1);
+    assert.equal(coverageDecision(item, { ...target, season: 1, episode: 1 }).match, 'exact');
+    assert.equal(coverageDecision(item, { ...target, season: 2, episode: 1 }).match, 'none');
+    const absoluteTitle = 'Тестовое аниме / E13-E25 Test Anime - AniLiberty.TOP [WEBRip 1080p][HEVC]';
+    const absoluteItem = { title: absoluteTitle, tracker: 'Anilibria', trackerId: 'anilibria', release: parseRelease(absoluteTitle) };
+    absoluteItem.selection = compileReleaseSelection(absoluteItem, target, undefined, true);
+    assert.equal(coverageDecision(absoluteItem, { ...target, season: 2, episode: 1 }).match, 'exact');
+    // Новый слой не меняет контракт ручной разметки parser-а.
+    assert.equal(Object.prototype.hasOwnProperty.call(item.release, 'coverage'), false);
+});
+
+test('на любом трекере seasonless азиатского семейства означает первый сезон', () => {
+    const families = [
+        { expected: 'anime', movie: { genre_ids: [16], original_language: 'ja' } },
+        { expected: 'donghua', movie: { genre_ids: [16], origin_country: ['CN'] } },
+        { expected: 'asian-live', movie: { genre_ids: [18], origin_country: ['KR'] } }
+    ];
+    families.forEach(({ expected, movie }) => {
+        const target = {
+            mode: 'series', season: 0, episode: 0,
+            movie: { ...movie, name: 'Азиатский сериал', original_name: 'Asian Series' },
+            englishTitle: 'Asian Series'
+        };
+        const title = 'Азиатский сериал / Asian Series E01-E12 1080p WEB-DL';
+        const item = { title, tracker: 'RuTracker.org', trackerId: 'rutracker', release: parseRelease(title) };
+        item.selection = compileReleaseSelection(item, target, undefined, true);
+        assert.equal(item.selection.family, expected);
+        assert.deepEqual(item.selection.coverage.claims[0].seasons, [1]);
+        assert.equal(item.selection.coverage.claims[0].confidence, 'high');
+        assert.equal(coverageDecision(item, { ...target, season: 2, episode: 1 }).match, 'none');
+    });
+
+    const generalTarget = {
+        mode: 'series', season: 0, episode: 0,
+        movie: { genre_ids: [18], origin_country: ['US'], name: 'Series' }
+    };
+    const generalTitle = 'Series E01-E12 1080p WEB-DL';
+    const generalItem = { title: generalTitle, trackerId: 'rutracker', release: parseRelease(generalTitle) };
+    generalItem.selection = compileReleaseSelection(generalItem, generalTarget, undefined, true);
+    assert.equal(generalItem.selection.coverage.claims[0].kind, 'seasonless-local');
+    assert.equal(coverageDecision(generalItem, { ...generalTarget, season: 2, episode: 1 }).match, 'ambiguous');
+});
+
+test('неоднозначный seasonless coverage вытесняется точным, но остаётся единственным fallback', () => {
+    const exact = { title: 'exact', _coverageMatch: 'exact', _titleExtended: false };
+    const ambiguous = { title: 'ambiguous', _coverageMatch: 'ambiguous', _titleExtended: false };
+    const narrowed = narrowToExactMatches([exact, ambiguous], { mode: 'series', movie: {} });
+    assert.deepEqual(narrowed.items.map((item) => item.title), ['exact']);
+    assert.equal(narrowed.rejected[0].reason, 'seasonless-coverage-shadowed');
+    assert.deepEqual(narrowToExactMatches([ambiguous], { mode: 'series', movie: {} }).items, [ambiguous]);
+});
+
+test('title extension сравнивается внутри tracker family и matched title key', () => {
+    const exact = {
+        title: 'точное общее', _titleExtended: false,
+        _titleEvidence: { kind: 'exact', matchedTitleKey: 'hell mode', trackerGroup: 'general' }
+    };
+    const animeLongTitle = {
+        title: 'полное ромадзи', _titleExtended: true,
+        _titleEvidence: { kind: 'extension', matchedTitleKey: 'hell mode', trackerGroup: 'anime' }
+    };
+    const generalSpinOff = {
+        title: 'спин-офф', _titleExtended: true,
+        _titleEvidence: { kind: 'extension', matchedTitleKey: 'hell mode', trackerGroup: 'general' }
+    };
+    const narrowed = narrowToExactMatches([exact, animeLongTitle, generalSpinOff], { mode: 'series', movie: {} });
+    assert.deepEqual(narrowed.items.map((item) => item.title), ['точное общее', 'полное ромадзи']);
+    assert.equal(narrowed.rejected[0].item, generalSpinOff);
+});
+
+test('регрессия Hell Mode: AniLibria первого сезона остаётся рядом с Tapochek', () => {
+    const movie = {
+        name: 'Адский режим: Геймер, который любит спидран, становится бесподобным в параллельном мире с устаревшими настройками',
+        original_name: 'ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～ はじまりの召喚士',
+        genre_ids: [16], original_language: 'ja',
+        seasons: [{ season_number: 1, episode_count: 12 }, { season_number: 2, episode_count: 13 }]
+    };
+    const searchTarget = {
+        movie, mode: 'series', season: 0, episode: 0,
+        englishTitle: 'HELL MODE: The Hardcore Gamer Dominates in Another World with Garbage Balancing',
+        aliases: ['Адский режим']
+    };
+    const rows = [
+        ['tapochek', 'Tapochek', 'Адский режим: Геймер, который любит спидран, становится бесподобным в параллельном мире с устаревшими настройками (ТВ-1) | Hell Mode: Yarikomizuki no Gamer wa Hai Settei no Isekai de Musou suru | The Hardcore Gamer Dominates [TV] [1-12 из 12] [2026] [WEB-DL] [1080p]'],
+        ['anilibria', 'Anilibria', 'Адский режим: Хардкорный геймер отправляется в другой мир на высоком уровне сложности / E01-E12 Hell Mode- Yarikomizuki no Gamer wa Hai Settei no Isekai de Musou suru - AniLiberty.TOP [WEBRip 1080p][HEVC][1-12]'],
+        ['anilibria', 'Anilibria', 'Адский режим: Хардкорный геймер отправляется в другой мир на высоком уровне сложности / E01-E12 Hell Mode- Yarikomizuki no Gamer wa Hai Settei no Isekai de Musou suru - AniLiberty.TOP [WEBRip 1080p][AVC][1-12]']
+    ];
+    const items = rows.map(([trackerId, tracker, title]) => {
+        const item = { trackerId, tracker, title, size: 2_000_000_000, seeders: 5, peers: 0, release: parseRelease(title) };
+        item.selection = compileReleaseSelection(item, searchTarget, undefined, true);
+        return item;
+    });
+    assert.equal(items[1].selection.title.kind, 'extension');
+    assert.equal(items[1].selection.coverage.claims[0].source, 'tracker-default-season-1');
+
+    const evaluation = evaluateCandidatePool(items, {
+        ...searchTarget, season: 1, episode: 1, seasonEpisodeCount: 12, avgRuntimeMinutes: 24
+    }, { filters: {} });
+    assert.equal(evaluation.items.length, 3);
+    assert.equal(evaluation.gateFilteredCount, 0);
+});
+
+test('UI selector не перечитывает название принятой раздачи', () => {
+    const target = {
+        mode: 'series', season: 1, episode: 1, seasonEpisodeCount: 12, avgRuntimeMinutes: 24,
+        movie: { name: 'Правильный сериал', genre_ids: [18], origin_country: ['US'] }
+    };
+    const acceptedTitle = 'Правильный сериал S01E01-E12 1080p WEB-DL';
+    const item = {
+        title: acceptedTitle, trackerId: 'rutracker', tracker: 'RuTracker.org',
+        size: 2_000_000_000, seeders: 5, peers: 0, release: parseRelease(acceptedTitle)
+    };
+    item.selection = compileReleaseSelection(item, target, undefined, true);
+    assert.equal(item.selection.title.accepted, true);
+
+    // Строка после intake используется только для отображения/identity записи. Совместимость уже
+    // зафиксирована метаданными и не должна внезапно измениться при рендере или выборе серии.
+    item.title = 'Совершенно чужая строка без совпадения';
+    const evaluation = evaluateCandidatePool([item], target, { filters: {} });
+    assert.equal(evaluation.items.length, 1);
+    assert.equal(evaluation.items[0]._score.identityPasses, true);
+
+    const legacy = { ...item };
+    delete legacy.selection;
+    const legacyEvaluation = evaluateCandidatePool([legacy], target, { filters: {} });
+    assert.equal(legacyEvaluation.items.length, 1, 'compatibility path тоже не должен читать title');
 });
 
 // ---------- профиль произведения ----------

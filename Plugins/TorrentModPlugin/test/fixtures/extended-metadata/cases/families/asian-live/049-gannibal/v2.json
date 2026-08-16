@@ -48,6 +48,37 @@
       "compatibility": "risky",
       "compatibilityReason": "AV1"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "asian-live",
+      "tracker": {
+        "id": "tapochek",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Gannibal",
+        "matchedTitleKey": "gannibal",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Gannibal"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "asian-live",
       "firstQuery": "Gannibal",

@@ -48,6 +48,32 @@
       "compatibility": "risky",
       "compatibilityReason": "H.263"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Lord of the Rings: The Fellowship of the Ring",
+        "matchedTitleKey": "the lord of the rings the fellowship of the ring",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Lord of the Rings: The Fellowship of the Ring"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "The Lord of the Rings: The Fellowship of the Ring",

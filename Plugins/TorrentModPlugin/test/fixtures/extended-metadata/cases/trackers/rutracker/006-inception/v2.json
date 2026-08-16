@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:rutracker:none:006:v2",
+  "id": "tracker:rutracker:general:006:v2",
   "axis": "tracker",
   "trackerId": "rutracker",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 6,
     "title": "Inception",
@@ -47,6 +47,32 @@
       "container": "FLV",
       "compatibility": "risky",
       "compatibilityReason": "H.263"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Inception",
+        "matchedTitleKey": "inception",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Inception"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -54,5 +80,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Inception",
+      "name": "Inception",
+      "original_title": "Inception",
+      "original_name": "Inception",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2010-01-01",
+      "first_air_date": "2010-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2010-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2010-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2010-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Inception",
+    "aliases": [
+      "Inception Alias"
+    ]
   }
 }

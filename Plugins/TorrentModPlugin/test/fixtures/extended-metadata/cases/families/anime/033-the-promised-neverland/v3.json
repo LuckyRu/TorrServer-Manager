@@ -46,6 +46,37 @@
       "compatibility": "risky",
       "compatibilityReason": "MPEG-2"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "rutracker",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "The Promised Neverland",
+        "matchedTitleKey": "the promised neverland",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "The Promised Neverland"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 12,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "anime",
       "firstQuery": "The Promised Neverland",

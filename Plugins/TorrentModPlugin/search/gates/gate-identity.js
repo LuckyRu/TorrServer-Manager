@@ -7,6 +7,7 @@
 // и все сезоны сериала кроме первого — см. §5 архитектурного документа.
 
 import { yearMatches } from '../parse/release-year.js';
+import { coverageDecision } from '../profile/release-selection.js';
 import { MODE_MOVIE } from '../../shared/state.js';
 
 function yearOf(value) {
@@ -28,41 +29,6 @@ export function targetYear(target) {
     return yearOf(movie.first_air_date || movie.release_date);
 }
 
-// Аниме нумеруют серии сквозным счётом: у релиза «E892» никакого сезона в заголовке нет, а
-// TMDB держит ту же серию как сезон N, серия M. Сумма серий предыдущих сезонов даёт сквозной
-// номер — но она врёт на спецвыпусках и рекапах, поэтому такой номер может только **принять**
-// кандидата и никогда не служит основанием для отказа: сезон у релиза не назван, и ошибиться
-// в сторону лишнего кандидата дешевле, чем потерять единственный верный.
-function absoluteEpisode(target) {
-    var seasons = (target.movie && Array.isArray(target.movie.seasons)) ? target.movie.seasons : [];
-    if (!seasons.length || !target.season || target.season <= 1) return 0;
-    var offset = 0;
-    for (var i = 0; i < seasons.length; i++) {
-        var number = parseInt(seasons[i].season_number, 10);
-        var count = parseInt(seasons[i].episode_count, 10) || 0;
-        if (number > 0 && number < target.season) offset += count;
-    }
-    return offset > 0 ? offset + target.episode : 0;
-}
-
-function episodeNumbers(target, release) {
-    var numbers = [target.episode];
-    if (release.explicitSeason) return numbers;
-    var absolute = absoluteEpisode(target);
-    if (absolute && numbers.indexOf(absolute) < 0) numbers.push(absolute);
-    return numbers;
-}
-
-function lastSeasonNumber(target) {
-    var seasons = (target.movie && Array.isArray(target.movie.seasons)) ? target.movie.seasons : [];
-    var last = 0;
-    seasons.forEach(function (season) {
-        var number = parseInt(season.season_number, 10);
-        if (number > last) last = number;
-    });
-    return last;
-}
-
 // Сезонный пак, попавший в поиск фильма. Одного «S1» мало — эта запись слишком легко возникает
 // из шума вроде «BDRip S1 5.1»; нужен второй сигнал: диапазон серий или слово «сезон».
 function looksLikeSeriesPack(item) {
@@ -82,37 +48,30 @@ export function evaluateIdentityGate(item, target) {
         return { passes: true, reason: '', details: {} };
     }
 
-    if (release.explicitSeason && release.seasons.indexOf(target.season) < 0) {
-        return { passes: false, reason: 'season-mismatch', details: { seasons: release.seasons, wanted: target.season } };
+    var coverage = coverageDecision(item, target);
+    if (coverage.match === 'none') {
+        return {
+            passes: false,
+            reason: coverage.reason,
+            details: {
+                coverageMatch: coverage.match,
+                coverageClaim: coverage.claim,
+                coverage: coverage.metadata.coverage,
+                wanted: { season: target.season, episode: target.episode },
+                releaseType: release.releaseType || ''
+            }
+        };
     }
-    // «Финальный сезон» без номера: какой он по счёту, знает только TMDB. Если последний сезон
-    // известен и это не он — раздача не о нём. Если неизвестен, отказывать не за что.
-    if (!release.explicitSeason && release.finalSeason) {
-        var last = lastSeasonNumber(target);
-        if (last && target.season && target.season !== last) {
-            return { passes: false, reason: 'season-mismatch', details: { finalSeason: last, wanted: target.season } };
+    return {
+        passes: true,
+        reason: '',
+        details: {
+            coverageMatch: coverage.match,
+            coverageClaim: coverage.claim,
+            absoluteEpisode: coverage.absoluteEpisode || 0,
+            coverageReason: coverage.reason || ''
         }
-    }
-    // Полнометражка аниме — не серия. Отказ только когда спрашивают конкретную серию: в общем
-    // пуле произведения фильму по франшизе место есть, а кандидатом на третий эпизод он быть
-    // не может, сколько бы у него ни было сидов.
-    if (target.episode && release.releaseType === 'movie' && !release.explicitEpisode) {
-        return { passes: false, reason: 'movie-release-for-episode', details: { releaseType: release.releaseType } };
-    }
-    if (target.episode && release.explicitEpisode) {
-        var wanted = episodeNumbers(target, release);
-        var covered = wanted.some(function (number) {
-            return number >= release.episodeFrom && number <= release.episodeTo;
-        });
-        if (!covered) {
-            return {
-                passes: false,
-                reason: 'episode-out-of-range',
-                details: { from: release.episodeFrom, to: release.episodeTo, wanted: wanted }
-            };
-        }
-    }
-    return { passes: true, reason: '', details: {} };
+    };
 }
 
 // Относительные правила: применяются к уже прошедшему гейт пулу и только при наличии замены.
@@ -132,10 +91,41 @@ export function narrowToExactMatches(scored, target) {
         scored = kept;
     }
 
-    // Расширенное название («Игра в кальмара: Вызов») уступает точному, когда точное найдено.
-    apply('title-extension',
-        function (item) { return item._titleExtended === false; },
-        function (item) { return item._titleExtended === true; });
+    // Расширенное название («Игра в кальмара: Вызов») уступает точному только в той же группе
+    // трекеров и для того же известного варианта названия. Иначе короткий alias аниме делал
+    // полноценное ромадзи «расширением» и исчезал из-за точного русского названия с Tapochek.
+    var hasStructuredTitle = scored.some(function (item) {
+        return item._titleEvidence && item._titleEvidence.matchedTitleKey;
+    });
+    if (hasStructuredTitle) {
+        var exactTitleGroups = {};
+        scored.forEach(function (item) {
+            var evidence = item._titleEvidence || {};
+            if (evidence.kind !== 'extension' && evidence.matchedTitleKey) {
+                exactTitleGroups[(evidence.trackerGroup || 'general') + '|' + evidence.matchedTitleKey] = true;
+            }
+        });
+        var titleKept = [];
+        scored.forEach(function (item) {
+            var evidence = item._titleEvidence || {};
+            var key = (evidence.trackerGroup || 'general') + '|' + (evidence.matchedTitleKey || '');
+            if (evidence.kind === 'extension' && exactTitleGroups[key]) {
+                rejected.push({ item: item, reason: 'title-extension' });
+            } else titleKept.push(item);
+        });
+        scored = titleKept;
+    } else {
+        // Совместимость для внешних потребителей, которые ещё передают старый boolean.
+        apply('title-extension',
+            function (item) { return item._titleExtended === false; },
+            function (item) { return item._titleExtended === true; });
+    }
+
+    // Неоднозначный E01-E12 без сезона остаётся fallback-ом, пока это единственный вариант.
+    // Явный Sxx или подтверждённая сквозная нумерация вытесняют его для конкретной серии.
+    apply('seasonless-coverage-shadowed',
+        function (item) { return item._coverageMatch === 'exact'; },
+        function (item) { return item._coverageMatch === 'ambiguous'; });
 
     // Год отбрасывает одноимённое, только если год цели известен и в пуле есть попадание в него.
     if (wantedYear) {

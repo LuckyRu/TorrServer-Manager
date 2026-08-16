@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:rutor:none:017:v2",
+  "id": "tracker:rutor:general:017:v2",
   "axis": "tracker",
   "trackerId": "rutor",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 17,
     "title": "Avengers: Endgame",
@@ -48,6 +48,32 @@
       "container": "MKV",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Avengers: Endgame",
+        "matchedTitleKey": "avengers endgame",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Avengers: Endgame"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -55,5 +81,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Avengers: Endgame",
+      "name": "Avengers: Endgame",
+      "original_title": "Avengers: Endgame",
+      "original_name": "Avengers: Endgame",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2019-01-01",
+      "first_air_date": "2019-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Avengers: Endgame",
+    "aliases": [
+      "Avengers: Endgame Alias"
+    ]
   }
 }

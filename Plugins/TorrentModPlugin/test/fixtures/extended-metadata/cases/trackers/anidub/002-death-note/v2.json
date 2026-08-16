@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:anidub:none:002:v2",
+  "id": "tracker:anidub:anime:002:v2",
   "axis": "tracker",
   "trackerId": "anidub",
-  "family": null,
+  "family": "anime",
   "work": {
     "rank": 2,
     "title": "Death Note",
@@ -51,6 +51,39 @@
       "container": "WebM",
       "compatibility": "risky",
       "compatibilityReason": "AV1"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Death Note",
+        "matchedTitleKey": "death note",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Death Note"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1,
+              2,
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 24,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -58,5 +91,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Death Note",
+      "name": "Death Note",
+      "original_title": "進撃作品 2",
+      "original_name": "進撃作品 2",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2006-01-01",
+      "first_air_date": "2006-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Death Note",
+    "aliases": [
+      "Death Note Alias"
+    ]
   }
 }

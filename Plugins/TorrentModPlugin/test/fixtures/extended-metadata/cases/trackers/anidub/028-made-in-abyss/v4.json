@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:anidub:none:028:v4",
+  "id": "tracker:anidub:anime:028:v4",
   "axis": "tracker",
   "trackerId": "anidub",
-  "family": null,
+  "family": "anime",
   "work": {
     "rank": 28,
     "title": "Made in Abyss",
@@ -47,6 +47,44 @@
       "container": "WebM",
       "compatibility": "risky",
       "compatibilityReason": "AV1"
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "anime",
+      "tracker": {
+        "id": "anidub",
+        "group": "anime"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Made in Abyss",
+        "matchedTitleKey": "made in abyss",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Made in Abyss"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              1
+            ],
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "high",
+            "source": "tracker-default-season-1"
+          },
+          {
+            "kind": "absolute",
+            "episodeFrom": 22,
+            "episodeTo": 22,
+            "confidence": "medium",
+            "source": "anime-seasonless-episode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -54,5 +92,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 22,
+    "movie": {
+      "title": "Made in Abyss",
+      "name": "Made in Abyss",
+      "original_title": "進撃作品 28",
+      "original_name": "進撃作品 28",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2017-01-01",
+      "first_air_date": "2017-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2017-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2017-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2017-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Made in Abyss",
+    "aliases": [
+      "Made in Abyss Alias"
+    ]
   }
 }

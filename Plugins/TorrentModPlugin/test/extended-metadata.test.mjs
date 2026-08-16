@@ -7,6 +7,7 @@ import { createRunner } from './helpers/test-runner.mjs';
 import { parseRelease } from '../search/parse/release-parsing.js';
 import { profileFor, indexersInGroup } from '../search/rules/tracker-profiles.js';
 import { workFamily, usesAnimeIndexers, prefersLocalTitle } from '../search/profile/work-profile.js';
+import { compileReleaseSelection } from '../search/profile/release-selection.js';
 import { buildMovieQueries } from '../search/plan/movie-query-building.js';
 import { buildSeriesQueries } from '../search/plan/series-query-building.js';
 import { buildSearchPlan } from '../search/plan/indexer-search-strategies.js';
@@ -75,6 +76,8 @@ test('каждый кейс имеет пять вариантов и полну
         assert.equal(value.schemaVersion, 1, relative);
         assert.equal(value.annotation.method, 'manual-semantic-table', relative);
         assert.deepEqual(Object.keys(value.annotation.expectedRelease).sort(), EXPECTED_RELEASE_KEYS, relative);
+        assert.deepEqual(Object.keys(value.annotation.expectedSelection).sort(),
+            ['coverage', 'family', 'title', 'tracker', 'version'], relative);
         assert.ok(!ids.has(value.id), 'duplicate id: ' + value.id);
         ids.add(value.id);
         const key = value.axis === 'family'
@@ -91,6 +94,9 @@ for (const tracker of [...new Set(trackerCases.map(({ value }) => value.trackerI
         trackerCases.filter(({ value }) => value.trackerId === tracker).forEach(({ relative, value }) => {
             const actual = parseRelease(value.title, profileFor(value.trackerId));
             assert.deepEqual(actual, value.annotation.expectedRelease, relative + '\n' + value.title);
+            const item = { title: value.title, trackerId: value.trackerId, tracker: value.trackerId, release: actual };
+            item.selection = compileReleaseSelection(item, value.target, undefined, true);
+            assert.deepEqual(item.selection, value.annotation.expectedSelection, relative + ': selection');
         });
     });
 }
@@ -106,6 +112,8 @@ for (const family of [...new Set(familyCases.map(({ value }) => value.family))].
             const item = { title: value.title, trackerId: value.trackerId, tracker: value.trackerId };
             item.release = parseRelease(item.title, profileFor(item.trackerId));
             assert.deepEqual(item.release, value.annotation.expectedRelease, relative);
+            item.selection = compileReleaseSelection(item, value.target, undefined, true);
+            assert.deepEqual(item.selection, value.annotation.expectedSelection, relative + ': selection');
             assert.equal(evaluateMediaTypeGate(item, value.target).passes, true, relative + ': media-type');
             assert.equal(evaluateSearchTitleGate(item, value.target).passes, true, relative + ': title');
             assert.equal(evaluateIdentityGate(item, value.target).passes, true, relative + ': identity');

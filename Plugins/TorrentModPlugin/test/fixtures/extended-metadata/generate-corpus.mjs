@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
     TRACKERS, FAMILIES, catalogs, trackerCatalog, familyTracker, semanticFor,
-    renderTitle, expectedRelease, targetFor
+    renderTitle, expectedRelease, targetFor, expectedSelection, trackerFamily
 } from './corpus-definition.mjs';
 
 const root = import.meta.dirname;
@@ -65,7 +65,11 @@ function generateTrackerCases() {
     TRACKERS.forEach(function (tracker) {
         trackerCatalog(tracker).forEach(function (work) {
             for (var variant = 1; variant <= 5; variant++) {
-                var value = baseCase('tracker', tracker, null, work, variant);
+                var family = trackerFamily(tracker);
+                var value = baseCase('tracker', tracker, family, work, variant);
+                value.target = targetFor(family, work, semanticFor(work));
+                value.annotation.expectedSelection = expectedSelection(
+                    family, tracker, work, semanticFor(work), value.target);
                 var folder = String(work.rank).padStart(3, '0') + '-' + slug(work.title);
                 writeJson(path.join(directory, tracker, folder, 'v' + variant + '.json'), value);
             }
@@ -82,6 +86,8 @@ function generateFamilyCases() {
                 var tracker = familyTracker(family, variant);
                 var value = baseCase('family', tracker, family, work, variant);
                 value.target = targetFor(family, work, semanticFor(work));
+                value.annotation.expectedSelection = expectedSelection(
+                    family, tracker, work, semanticFor(work), value.target);
                 value.annotation.expectedPipeline = {
                     family: family,
                     firstQuery: work.title,

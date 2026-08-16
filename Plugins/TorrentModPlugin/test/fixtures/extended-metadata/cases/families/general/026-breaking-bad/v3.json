@@ -46,6 +46,37 @@
       "compatibility": "risky",
       "compatibilityReason": "MPEG-2"
     },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "rutor",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Breaking Bad",
+        "matchedTitleKey": "breaking bad",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Breaking Bad"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "season-local",
+            "seasons": [
+              3
+            ],
+            "episodeFrom": 1,
+            "episodeTo": 12,
+            "confidence": "high",
+            "source": "title-season-episode"
+          }
+        ]
+      }
+    },
     "expectedPipeline": {
       "family": "general",
       "firstQuery": "Breaking Bad",

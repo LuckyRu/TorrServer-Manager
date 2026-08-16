@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "tracker:noname-club:none:014:v3",
+  "id": "tracker:noname-club:general:014:v3",
   "axis": "tracker",
   "trackerId": "noname-club",
-  "family": null,
+  "family": "general",
   "work": {
     "rank": 14,
     "title": "Gladiator",
@@ -48,6 +48,32 @@
       "container": "MKV",
       "compatibility": "likely",
       "compatibilityReason": ""
+    },
+    "expectedSelection": {
+      "version": 1,
+      "family": "general",
+      "tracker": {
+        "id": "noname-club",
+        "group": "general"
+      },
+      "title": {
+        "accepted": true,
+        "kind": "exact",
+        "score": 1,
+        "matchedTitle": "Gladiator",
+        "matchedTitleKey": "gladiator",
+        "matchedTitleKind": "canonical",
+        "matchedSegment": "Gladiator"
+      },
+      "coverage": {
+        "claims": [
+          {
+            "kind": "movie",
+            "confidence": "high",
+            "source": "work-mode"
+          }
+        ]
+      }
     }
   },
   "provenance": {
@@ -55,5 +81,46 @@
     "trackerGrammarSource": "local-jackett-live-corpus",
     "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
     "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Gladiator",
+      "name": "Gladiator",
+      "original_title": "Gladiator",
+      "original_name": "Gladiator",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2000-01-01",
+      "first_air_date": "2000-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2000-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2000-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2000-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Gladiator",
+    "aliases": [
+      "Gladiator Alias"
+    ]
   }
 }
