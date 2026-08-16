@@ -187,16 +187,32 @@ function countingMovie(source, counters) {
     return copy;
 }
 
-// Scope знает границы макрозадач: deferWork уходит через scope.setTimeout, поэтому дельта
-// счётчика внутри одного колбэка — объём работы, выполненной без выхода в event loop.
-function instrumentedScope(counters) {
+// Размер браузерной задачи: счётчик сбрасывается на входе в каждый колбэк scope.setTimeout и
+// растёт до следующего, то есть покрывает колбэк вместе с его микрозадачами — ровно то, что в
+// браузере выполняется одним неразрываемым блоком и откладывает кадр.
+//
+// Считать через setImmediate нельзя: Node выполняет все истёкшие таймеры одной фазой и склеил бы
+// в один «оборот» независимые задачи разных трекеров, которых браузер не склеивает.
+//
+// Метрика опирается на то, что рабочий код уходит в event loop именно через scope.setTimeout.
+// Выход мимо scope не сбросит счётчик, и тест упадёт — это правильно: такой выход заодно ломает
+// отмену работы при закрытии экрана.
+function turnAwareCounter(counters) {
+    let inTurn = 0;
+    return {
+        beginTurn() { inTurn = 0; },
+        countParse() {
+            inTurn++;
+            counters.parseCalls++;
+            counters.maxParseBurst = Math.max(counters.maxParseBurst, inTurn);
+        }
+    };
+}
+
+function instrumentedScope(turn) {
     const scope = createLifecycle();
     const real = scope.setTimeout;
-    scope.setTimeout = (fn, ms) => real(() => {
-        const before = counters.parseCalls;
-        fn();
-        counters.maxParseBurst = Math.max(counters.maxParseBurst, counters.parseCalls - before);
-    }, ms);
+    scope.setTimeout = (fn, ms) => real(() => { turn.beginTurn(); fn(); }, ms);
     return scope;
 }
 
@@ -235,8 +251,9 @@ function runSearch() {
     });
 
     const target = countingTarget(baseTarget, counters);
-    const scope = instrumentedScope(counters);
-    const countingParse = (title, profile) => { counters.parseCalls++; return parseSeriesRelease(title, profile); };
+    const turn = turnAwareCounter(counters);
+    const scope = instrumentedScope(turn);
+    const countingParse = (title, profile) => { turn.countParse(); return parseSeriesRelease(title, profile); };
     const pool = [];
 
     const restoreConsole = spyConsole(counters);

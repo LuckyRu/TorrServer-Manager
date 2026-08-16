@@ -8,6 +8,23 @@
     import { evaluateMediaTypeGate, evaluateSearchTitleGate } from '../gates/search-gates.js';
     import { log, warn, debug, debugEnabled } from '../../shared/core/log.js';
 
+    // Отзывчивость определяется не суммой работы, а размером её наибольшего неразрываемого куска.
+    // Потолок в записях гарантирует точку выхода на любом устройстве, бюджет времени укорачивает
+    // срез там, где устройство медленнее ожидаемого (Chromium телевизора против desktop V8).
+    var SLICE_MAX_ITEMS = 32;
+    var SLICE_BUDGET_MS = 8;
+
+    function now() {
+        return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    }
+
+    function yieldToEventLoop(scope) {
+        return new Promise(function (resolve) {
+            if (scope && scope.setTimeout) scope.setTimeout(resolve, 0);
+            else setTimeout(resolve, 0);
+        });
+    }
+
     function deferWork(work, scope) {
         return new Promise(function (resolve, reject) {
             var run = function () {
@@ -116,15 +133,17 @@
     // функции, поэтому слияние стадий не меняет результат, но снимает три промежуточных массива
     // и позволяет отбросить дубль до самой дорогой работы. `seen` переживает запросы одного
     // трекера, поэтому вторая формулировка запроса не разбирает ту же раздачу заново.
-    function runSearchGates(rawResults, target, parseReleaseForMode, source, query, tracker, seen) {
+    function runSearchGates(rawResults, target, parseReleaseForMode, source, query, tracker, seen, scope) {
         var duplicates = seen || Object.create(null);
         var parseSummary = createGateSummary('parse');
         var mediaSummary = createGateSummary('media-type');
         var titleSummary = createGateSummary('title');
         var accepted = [];
         var considered = 0;
+        var list = rawResults || [];
+        var index = 0;
 
-        (rawResults || []).forEach(function (raw) {
+        function handle(raw) {
             var key = rawIdentity(raw);
             if (key) {
                 if (duplicates[key]) return;
@@ -150,8 +169,23 @@
             // Анализ названия переиспользуется из гейта, а не считается второй раз.
             item.selection = compileReleaseSelection(item, target, title.details.analysis, true);
             accepted.push(item);
-        });
+        }
 
+        function processSlice() {
+            var sliceStart = now();
+            var processed = 0;
+            while (index < list.length) {
+                handle(list[index++]);
+                processed++;
+                if (processed >= SLICE_MAX_ITEMS || now() - sliceStart >= SLICE_BUDGET_MS) break;
+            }
+            if (index < list.length) return yieldToEventLoop(scope).then(processSlice);
+            return finish();
+        }
+
+        return processSlice();
+
+        function finish() {
         var stages = [parseSummary.done(), mediaSummary.done(), titleSummary.done()];
         var filtered = considered - accepted.length;
         var summary = {
@@ -183,6 +217,7 @@
             title: titleSummary.accepted()
         };
         return accepted;
+        }
     }
 
     function searchOneQuery(text, options) {
@@ -222,15 +257,20 @@
                 indexers = indexers.concat(response.indexers);
             });
 
+            // Последовательно, а не Promise.all: цель чанкования — не занимать main thread, и
+            // параллельный разбор всех трекеров сразу свёл бы её на нет.
             return deferWork(function () {
                 var mapped = [];
-                Object.keys(byTracker).forEach(function (id) {
-                    var bucket = byTracker[id];
-                    mapped = mapped.concat(runSearchGates(bucket.raw, target, parseReleaseForMode,
-                        bucket.name, queries.join(' | '),
-                        { id: bucket.id, name: bucket.name, profile: profileFor(bucket.id, bucket.name) }));
+                return Object.keys(byTracker).reduce(function (chain, id) {
+                    return chain.then(function () {
+                        var bucket = byTracker[id];
+                        return runSearchGates(bucket.raw, target, parseReleaseForMode,
+                            bucket.name, queries.join(' | '),
+                            { id: bucket.id, name: bucket.name, profile: profileFor(bucket.id, bucket.name) });
+                    }).then(function (items) { mapped = mapped.concat(items); });
+                }, Promise.resolve()).then(function () {
+                    return { results: mergeReleases([], mapped), indexers: indexers, failed: false };
                 });
-                return { results: mergeReleases([], mapped), indexers: indexers, failed: false };
             });
         });
     }
@@ -398,7 +438,8 @@
                     deferWork(function () {
                         return entry.ok
                             ? runSearchGates(entry.results || [], target, parseReleaseForMode, entry.name, plan.query,
-                                { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) }, state.seenRaw)
+                                { id: entry.id, name: entry.name, profile: profileFor(entry.id, entry.name) },
+                                state.seenRaw, scope)
                             : [];
                     }, scope).then(function (mapped) {
                         state.ok = state.ok || entry.ok;
