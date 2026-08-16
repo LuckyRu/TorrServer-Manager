@@ -83,6 +83,9 @@ ADR/system-design/reference там, где одно объясняет друг�
   (профиль каждого трекера, порядок правил разбора, замеры извлечения по девяти трекерам,
   особенности фильмов, сериалов и азиатской продукции, коды отказов) →
   [`reference/torrent-mod-tracker-formats.md`](reference/torrent-mod-tracker-formats.md)
+- **Что ещё имеет смысл сделать в поиске** (категории Jackett вместо угадывания типа, переизмерение
+  справочника скриптом, алиасы файлом, медленный индексатор, дешёвое упрочнение парсера; и что
+  осознанно не сделано) → [`system-design/torrent-mod-search-backlog.md`](system-design/torrent-mod-search-backlog.md)
 - **Целевая архитектура поиска** (профиль произведения вместо пары фильм/сериал, правила трекеров как
   данные, год, азиатский контент, диагностика; замеры по 1780 живым заголовкам девяти трекеров) →
   [`system-design/torrent-mod-search-architecture.md`](system-design/torrent-mod-search-architecture.md)
