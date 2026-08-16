@@ -1,5 +1,4 @@
     import { buildQueries as buildQueriesForTarget } from '../plan/query-building.js';
-    import { compact } from '../../shared/utils.js';
     import { mergeReleases } from '../../shared/release-identity.js';
     import { startParallelSearch } from './parallel-search.js';
     import { buildSearchPlan } from '../plan/indexer-search-strategies.js';
@@ -267,6 +266,41 @@
         if (!immediate.length) deferred = [];
         var completedQueries = 0;
         var escalated = false;
+        var waveListReports = 0;
+        var waveListsReady = false;
+
+        function fallbackDecisionPending() {
+            return !escalated && deferred.length > 0 && acceptedTotal === 0;
+        }
+
+        function trackerDone(state) {
+            return waveListsReady && state.scheduledQueries > 0 &&
+                state.completedQueries >= state.scheduledQueries && !fallbackDecisionPending();
+        }
+
+        function trackerUpdate(state, query) {
+            var done = trackerDone(state);
+            if (done && state.terminalReported) return;
+            if (done) state.terminalReported = true;
+            onIndexerResult({
+                id: state.id, name: state.name, ok: state.ok, error: state.ok ? null : state.error,
+                // UI показывает wall-clock полного цикла трекера. Сумма Jackett elapsed по
+                // параллельным запросам завышала бы реальное время в несколько раз.
+                elapsedMs: state.startedAt ? Date.now() - state.startedAt : state.queryElapsedMs,
+                queryElapsedMs: state.queryElapsedMs,
+                items: state.items.slice(), query: query || state.lastQuery || '',
+                done: done,
+                completedQueries: state.completedQueries,
+                totalQueries: state.scheduledQueries,
+                stats: { raw: state.raw || 0, video: state.video || 0, title: state.title || 0 }
+            });
+        }
+
+        function flushTrackerUpdates() {
+            Object.keys(indexerState).forEach(function (id) {
+                trackerUpdate(indexerState[id]);
+            });
+        }
 
         function completeWhenReady() {
             if (completionSent || completedQueries < wave.length || pendingMappings > 0) return;
@@ -280,12 +314,17 @@
                 return;
             }
             completionSent = true;
+            flushTrackerUpdates();
             onDone(!anyOk);
         }
 
         function stateFor(entry) {
             if (!indexerState[entry.id]) {
-                indexerState[entry.id] = { items: [], ok: false, error: null, elapsedMs: 0, name: entry.name };
+                indexerState[entry.id] = {
+                    id: entry.id, items: [], ok: false, error: null, queryElapsedMs: 0,
+                    name: entry.name, startedAt: 0, scheduledQueries: 0, completedQueries: 0,
+                    terminalReported: false, lastQuery: ''
+                };
             }
             return indexerState[entry.id];
         }
@@ -301,18 +340,45 @@
             state.title = (state.title || 0) + stats.title;
         }
 
-        function reportIndexerList(indexerList) {
+        function reportIndexerList(indexerList, context) {
+            if (context.listReported) return;
+            context.listReported = true;
             (indexerList || []).forEach(function (entry) {
                 configuredIndexers[entry.id] = { id: entry.id, name: entry.name };
+                context.listed[entry.id] = entry;
+                var state = stateFor(entry);
+                if (!state.startedAt) state.startedAt = Date.now();
+                state.scheduledQueries++;
             });
             if (onIndexerList) onIndexerList(Object.keys(configuredIndexers).map(function (id) { return configuredIndexers[id]; }));
+            waveListReports++;
+            if (waveListReports >= wave.length) {
+                waveListsReady = true;
+                flushTrackerUpdates();
+            }
+        }
+
+        function finishMissingIndexers(context, failed) {
+            Object.keys(context.listed).forEach(function (id) {
+                if (context.received[id]) return;
+                var listed = context.listed[id];
+                var state = stateFor(listed);
+                state.completedQueries++;
+                state.lastQuery = context.plan.query;
+                if (!state.ok) state.error = failed ? 'Не удалось получить ответ' : 'Трекер не вернул итог';
+                trackerUpdate(state, context.plan.query);
+            });
         }
 
         function startWave(plans) {
             wave = plans;
             completedQueries = 0;
+            waveListReports = 0;
+            waveListsReady = false;
             plans.forEach(function (plan) {
+                var context = { plan: plan, listed: {}, received: {}, listReported: false };
                 handles.push(startParallelSearch(plan.query, function (entry) {
+                    context.received[entry.id] = true;
                     var state = stateFor(entry);
                     pendingMappings++;
                     deferWork(function () {
@@ -323,23 +389,24 @@
                     }, scope).then(function (mapped) {
                         state.ok = state.ok || entry.ok;
                         state.error = state.ok ? null : entry.error;
-                        state.elapsedMs += Number(entry.elapsedMs) || 0;
+                        state.queryElapsedMs += Number(entry.elapsedMs) || 0;
+                        state.completedQueries++;
+                        state.lastQuery = plan.query;
                         anyOk = anyOk || entry.ok;
+                        var acceptedBefore = acceptedTotal;
                         acceptedTotal += mapped.length;
                         mergeItems(state, mapped);
                         addStats(state, mapped.stats);
-                        onIndexerResult({
-                            id: entry.id, name: state.name, ok: state.ok, error: state.error,
-                            elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query,
-                            stats: { raw: state.raw, video: state.video, title: state.title }
-                        });
+                        trackerUpdate(state, plan.query);
+                        // Первый принятый кандидат окончательно отменяет if-empty волну. Уже
+                        // завершившиеся трекеры теперь можно честно перевести в terminal.
+                        if (!acceptedBefore && acceptedTotal) flushTrackerUpdates();
                     }, function (error) {
+                        state.completedQueries++;
+                        state.lastQuery = plan.query;
                         state.error = String(error && error.message || error);
                         warn('search', 'Ошибка обработки ответа ' + entry.name + ': ' + state.error);
-                        onIndexerResult({
-                            id: entry.id, name: state.name, ok: state.ok, error: state.error,
-                            elapsedMs: state.elapsedMs, items: state.items.slice(), query: plan.query
-                        });
+                        trackerUpdate(state, plan.query);
                     }).then(function () {
                         pendingMappings--;
                         completeWhenReady();
@@ -349,9 +416,12 @@
                         completeWhenReady();
                     });
                 }, function (failed) {
+                    finishMissingIndexers(context, failed);
                     completedQueries++;
                     completeWhenReady();
-                }, scope, reportIndexerList, plan));
+                }, scope, function (indexerList) {
+                    reportIndexerList(indexerList, context);
+                }, plan));
             });
         }
 

@@ -6,7 +6,7 @@
     import { mergeReleases } from '../shared/release-identity.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';
-    import { log, warn } from '../shared/core/log.js';
+    import { log, warn, debug } from '../shared/core/log.js';
 
     var PER_MOVIE_CACHE_MAX = 200;
     var SLOW_INDEXER_MS = 15000;
@@ -146,16 +146,21 @@
                 poolSearchHandle = search(target, function (entry) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
                 var current = store.get();
-                // Запрос в строке обязателен: один трекер отчитывается по разу на каждый запрос
-                // плана, и «+0» без запроса выглядит как «трекер ничего не дал», хотя это ответ
-                // на японское написание, а русское тем же трекером ещё не отработано. На этом
-                // можно потерять час, разбирая живой лог.
-                log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" по запросу "' + (entry.query || '') + '" ' +
-                    (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, всего принято ' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
+                if (entry.done) {
+                    log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" завершил полный цикл ' +
+                        entry.completedQueries + '/' + entry.totalQueries + ' запросов за ' + entry.elapsedMs +
+                        'мс, всего принято ' + entry.items.length + (entry.ok ? '' : ', ошибка: ' + entry.error));
+                } else {
+                    // Query-level ответы остаются в verbose diagnostics, потому что по ним
+                    // разбирается конкретное название. В UI это всё ещё одна pending-задача трекера.
+                    debug('episodes', 'loadAllTorrents: промежуточный ответ трекера "' + entry.name +
+                        '" по запросу "' + (entry.query || '') + '", прогресс ' +
+                        entry.completedQueries + '/' + entry.totalQueries + ', принято ' + entry.items.length);
+                }
                 // Один медленный индексатор держит poolStatus в «загружается» и после того, как
                 // показывать уже есть что. Прогрессивная выдача это скрывает, поэтому отмечаем
                 // явно: иначе разбирать «почему поиск шёл минуту» не по чему.
-                if (entry.elapsedMs > SLOW_INDEXER_MS) {
+                if (entry.done && entry.elapsedMs > SLOW_INDEXER_MS) {
                     warn('episodes', 'трекер "' + entry.name + '" отвечал ' +
                         Math.round(entry.elapsedMs / 1000) + ' с — он и задерживает завершение поиска');
                 }
@@ -163,7 +168,11 @@
                 var indexers = current.poolIndexers.filter(function (indexer) { return indexer.id !== entry.id; });
                 indexers.push({
                     id: entry.id, name: entry.name, ok: entry.ok, error: entry.error,
-                    elapsedMs: entry.elapsedMs, reportedAt: Date.now(), stats: entry.stats || null
+                    elapsedMs: entry.elapsedMs, reportedAt: entry.done ? Date.now() : null,
+                    done: entry.done !== false,
+                    completedQueries: entry.completedQueries || 0,
+                    totalQueries: entry.totalQueries || 0,
+                    stats: entry.stats || null
                 });
                 store.patch({ pool: merged, poolIndexers: indexers, funnel: sumFunnel(indexers, merged) });
             }, function (startFailed) {

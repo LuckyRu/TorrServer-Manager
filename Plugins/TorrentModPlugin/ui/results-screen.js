@@ -567,6 +567,13 @@
             return indexer.name + ' · ' + (indexer.status === 'ok' ? Math.round(indexer.elapsedMs) + 'мс' : 'ошибка');
         }
 
+        function trackerPendingLabel(indexer) {
+            var progress = indexer.totalQueries > 1
+                ? ' · ' + Math.min(indexer.completedQueries || 0, indexer.totalQueries) + '/' + indexer.totalQueries
+                : '';
+            return '<span class="torrent-mod__spinner"></span>' + escapeHtml(indexer.name + progress);
+        }
+
         function scheduleTrackerHide(id, delayMs) {
             var entry = trackerNodes[id];
             if (!entry || entry.hideTimer) return;
@@ -592,7 +599,7 @@
                     var node = $('<span class="torrent-mod__tracker torrent-mod__tracker--enter"></span>');
                     if (indexer.status === 'pending') {
                         node.addClass('torrent-mod__tracker--pending');
-                        node.html('<span class="torrent-mod__spinner"></span>' + escapeHtml(indexer.name));
+                        node.html(trackerPendingLabel(indexer));
                     } else {
                         node.addClass(indexer.status === 'ok' ? 'torrent-mod__tracker--ok' : 'torrent-mod__tracker--error');
                         node.text(trackerLabel(indexer));
@@ -600,11 +607,19 @@
                     trackers.append(node);
                     entry = trackerNodes[indexer.id] = { node: node, hideTimer: null };
                     viewScope.setTimeout(function () { node.removeClass('torrent-mod__tracker--enter'); }, 0);
-                } else if (indexer.status !== 'pending') {
-                    entry.node
-                        .removeClass('torrent-mod__tracker--pending torrent-mod__tracker--ok torrent-mod__tracker--error')
-                        .addClass(indexer.status === 'ok' ? 'torrent-mod__tracker--ok' : 'torrent-mod__tracker--error')
-                        .text(trackerLabel(indexer));
+                } else {
+                    if (indexer.status === 'pending') {
+                        if (entry.hideTimer) { clearTimeout(entry.hideTimer); entry.hideTimer = null; }
+                        entry.node
+                            .removeClass('torrent-mod__tracker--ok torrent-mod__tracker--error torrent-mod__tracker--leave')
+                            .addClass('torrent-mod__tracker--pending')
+                            .html(trackerPendingLabel(indexer));
+                    } else {
+                        entry.node
+                            .removeClass('torrent-mod__tracker--pending torrent-mod__tracker--ok torrent-mod__tracker--error')
+                            .addClass(indexer.status === 'ok' ? 'torrent-mod__tracker--ok' : 'torrent-mod__tracker--error')
+                            .text(trackerLabel(indexer));
+                    }
                 }
                 if (indexer.status === 'ok') {
                     scheduleTrackerHide(indexer.id, TRACKER_SUCCESS_HIDE_MS - (Date.now() - indexer.reportedAt));

@@ -345,15 +345,16 @@ runner.test('selectPickerData: empty и error различаются, error не
         throw new Error('провалившийся поиск должен давать status=error, retrySeason=true: ' + JSON.stringify(error));
     }
 });
-runner.test('selectPoolIndexers: pending по имени, ok/error, reportedAt проходит без фильтрации по времени', () => {
+runner.test('selectPoolIndexers: tracker task остаётся pending до всех запросов, ok/error не фильтруются по времени', () => {
     const allIndexers = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }];
     const longAgo = Date.now() - 60000;
     const s = Object.assign({}, state, {
         poolAllIndexers: allIndexers,
         poolIndexers: [
             { id: 'a', name: 'A', ok: true, error: null, elapsedMs: 42, reportedAt: longAgo }, // давний успех
-            { id: 'b', name: 'B', ok: false, error: 'Не ответил вовремя', elapsedMs: 30000, reportedAt: longAgo } // провал
-            // 'c' ещё не ответил вообще
+            { id: 'b', name: 'B', ok: false, error: 'Не ответил вовремя', elapsedMs: 30000, reportedAt: longAgo }, // провал
+            { id: 'c', name: 'C', ok: true, error: null, elapsedMs: 20, reportedAt: null,
+                done: false, completedQueries: 1, totalQueries: 3 } // первый query готов, полный цикл ещё нет
         ]
     });
     const progress = selectPoolIndexers(s);
@@ -369,7 +370,9 @@ runner.test('selectPoolIndexers: pending по имени, ok/error, reportedAt �
         throw new Error('a должен быть ok/42мс с исходным reportedAt (не отфильтрован по возрасту): ' + JSON.stringify(a));
     }
     if (b.status !== 'error' || b.error !== 'Не ответил вовремя') throw new Error('b должен быть error: ' + JSON.stringify(b));
-    if (c.status !== 'pending' || c.reportedAt !== null) throw new Error('c ещё не ответил, должен быть pending с reportedAt=null: ' + JSON.stringify(c));
+    if (c.status !== 'pending' || c.reportedAt !== null || c.completedQueries !== 1 || c.totalQueries !== 3) {
+        throw new Error('c должен оставаться pending с прогрессом полного tracker task: ' + JSON.stringify(c));
+    }
 });
 runner.test('isConfidentMatch — высокий availability даёт уверенный матч', () => {
     const best = { _score: { availabilityScore: 18, matchScore: 100, value: 30 }, seeders: 12 };

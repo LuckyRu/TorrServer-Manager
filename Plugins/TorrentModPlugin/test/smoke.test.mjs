@@ -796,6 +796,115 @@ runner.test('domain.destroy() отменяет запланированный а
     }
 });
 
+runner.test('индикатор трекера завершается только после полного цикла его запросов', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    const animeMovie = {
+        id: 999, name: 'Клинок, рассекающий демонов', original_name: '鬼滅の刃',
+        title: 'Клинок, рассекающий демонов', original_title: '鬼滅の刃',
+        original_language: 'ja', genre_ids: [16], origin_country: ['JP'],
+        seasons: [{ season_number: 1, episode_count: 12 }]
+    };
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 24 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/tv/') && !url.includes('/season/'), {
+        name: 'Demon Slayer'
+    });
+
+    function specializedQuery(url, query) {
+        const decoded = decodeURIComponent(url);
+        return decoded.includes('/api/torrent-search/start') &&
+            decoded.includes('indexers=anidub,anilibria') && decoded.includes('query=' + query);
+    }
+    function animeResponse(results, elapsedMs) {
+        return {
+            results,
+            indexers: [{ id: 'anidub', name: 'AniDUB', ok: true, error: null, elapsedMs }]
+        };
+    }
+    const accepted = jackettRaw('Клинок, рассекающий демонов / Demon Slayer [01-12] 1080p WEB-DL', 12, 3, 'tracker-task');
+    globalThis.__mockReguest((url) => specializedQuery(url, 'Клинок, рассекающий демонов'), animeResponse([accepted], 4), 0);
+    globalThis.__mockReguest((url) => specializedQuery(url, '鬼滅の刃'), animeResponse([], 70), 70);
+    globalThis.__mockReguest((url) => specializedQuery(url, 'Demon Slayer'), animeResponse([], 120), 120);
+    globalThis.__mockReguest((url) => {
+        const decoded = decodeURIComponent(url);
+        return decoded.includes('/api/torrent-search/start') && decoded.includes('exclude=anidub,anilibria');
+    }, {
+        results: [],
+        indexers: [{ id: 'rutracker', name: 'RuTracker', ok: true, error: null, elapsedMs: 3 }]
+    }, 0);
+
+    const domain = createResultsDomain({ object: { movie: animeMovie, season: 1 }, movie: animeMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const partial = selectPoolIndexers(domain.store.get()).trackers.find((tracker) => tracker.id === 'anidub');
+    if (!partial || partial.status !== 'pending' || partial.completedQueries !== 1 || partial.totalQueries !== 3) {
+        throw new Error('после первого query AniDUB должен быть одной pending-задачей 1/3: ' + JSON.stringify(partial));
+    }
+    if (!domain.store.get().pool.length) throw new Error('прогрессивные раздачи должны появиться до завершения tracker task');
+
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    const complete = selectPoolIndexers(domain.store.get()).trackers.find((tracker) => tracker.id === 'anidub');
+    if (!complete || complete.status !== 'ok' || complete.completedQueries !== 3 || complete.totalQueries !== 3) {
+        throw new Error('AniDUB должен завершиться один раз после 3/3 запросов: ' + JSON.stringify(complete));
+    }
+    domain.destroy();
+});
+
+runner.test('if-empty запрос продолжает ту же tracker task, не создавая новый terminal-сигнал', async () => {
+    globalThis.__clearReguest();
+    globalThis.__clearStorage();
+    globalThis.__requestLog = [];
+    const animeMovie = {
+        id: 1000, name: 'Клинок, рассекающий демонов', original_name: '鬼滅の刃',
+        title: 'Клинок, рассекающий демонов', original_title: '鬼滅の刃',
+        original_language: 'ja', genre_ids: [16], origin_country: ['JP'],
+        seasons: [{ season_number: 1, episode_count: 12 }]
+    };
+    globalThis.__mockReguest((url) => url.includes('/season/'), {
+        episodes: [{ episode_number: 1, name: 'Эпизод 1', runtime: 24 }]
+    });
+    globalThis.__mockReguest((url) => url.includes('/tv/') && !url.includes('/season/'), { name: 'Demon Slayer' });
+    globalThis.__mockReguest((url) => {
+        const decoded = decodeURIComponent(url);
+        return decoded.includes('/api/torrent-search/start') && decoded.includes('indexers=anidub,anilibria');
+    }, {
+        results: [], indexers: [{ id: 'anidub', name: 'AniDUB', ok: true, error: null, elapsedMs: 2 }]
+    }, 0);
+    globalThis.__mockReguest((url) => {
+        const decoded = decodeURIComponent(url);
+        return decoded.includes('/api/torrent-search/start') && decoded.includes('exclude=anidub,anilibria') &&
+            decoded.includes('query=Demon Slayer');
+    }, {
+        results: [], indexers: [{ id: 'rutracker', name: 'RuTracker', ok: true, error: null, elapsedMs: 3 }]
+    }, 0);
+    globalThis.__mockReguest((url) => {
+        const decoded = decodeURIComponent(url);
+        return decoded.includes('/api/torrent-search/start') && decoded.includes('exclude=anidub,anilibria') &&
+            decoded.includes('query=Клинок, рассекающий демонов');
+    }, {
+        results: [], indexers: [{ id: 'rutracker', name: 'RuTracker', ok: true, error: null, elapsedMs: 80 }]
+    }, 80);
+
+    const domain = createResultsDomain({ object: { movie: animeMovie, season: 1 }, movie: animeMovie, hasSeasons: true });
+    domain.start();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const fallback = selectPoolIndexers(domain.store.get()).trackers.find((tracker) => tracker.id === 'rutracker');
+    if (!fallback || fallback.status !== 'pending' || fallback.completedQueries !== 1 || fallback.totalQueries !== 2) {
+        throw new Error('RuTracker должен продолжать одну задачу на if-empty волне как 1/2: ' + JSON.stringify(fallback));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    const complete = selectPoolIndexers(domain.store.get()).trackers.find((tracker) => tracker.id === 'rutracker');
+    if (!complete || complete.status !== 'ok' || complete.completedQueries !== 2 || complete.totalQueries !== 2) {
+        throw new Error('RuTracker должен завершиться после immediate + if-empty как 2/2: ' + JSON.stringify(complete));
+    }
+    domain.destroy();
+});
+
 runner.test('виджет трекеров: домен не планирует никакого скрытия — это презентационная политика View', async () => {
     globalThis.__clearReguest();
     globalThis.__clearStorage();

@@ -9,6 +9,7 @@
         var cancelled = false;
         var jobId = null;
         var untrackTimer = null;
+        var indexerListSent = false;
         // /poll always returns the full accumulated list — this ensures each indexer crosses onIndexerResult exactly once.
         var delivered = {};
 
@@ -31,6 +32,12 @@
                 // Best-effort — PluginHub's own stale-job sweep (CleanupStaleSearchJobs) is the backstop if this never arrives.
                 request(hubBase + '/api/torrent-search/cancel?jobId=' + encodeURIComponent(jobId), 5000);
             }
+        }
+
+        function reportIndexerList(indexers) {
+            if (indexerListSent) return;
+            indexerListSent = true;
+            if (onIndexerList) onIndexerList(indexers || []);
         }
 
         function poll() {
@@ -57,11 +64,18 @@
         }
         request(startUrl, 15000).then(function (data) {
             if (cancelled) return;
-            if (!data || !data.jobId) { cancelled = true; onDone(true); return; }
+            if (!data || !data.jobId) {
+                cancelled = true;
+                // У оркестратора одна list-нотификация на каждый query-job. Пустой список
+                // закрывает этот слот и не оставляет tracker-level задачу вечной pending.
+                reportIndexerList([]);
+                onDone(true);
+                return;
+            }
             jobId = data.jobId;
             var route = options && options.indexerIds ? ' [anime-trackers]' : (options && options.excludeIndexerIds ? ' [general-trackers]' : '');
             log('search', 'startParallelSearch: "' + query + '"' + route + ', jobId=' + jobId + ', трекеров=' + data.totalIndexers);
-            if (onIndexerList) onIndexerList(data.indexers || []);
+            reportIndexerList(data.indexers || []);
             poll();
         });
 

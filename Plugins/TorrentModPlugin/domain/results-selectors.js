@@ -95,14 +95,20 @@
         var pending = 0;
         (state.poolAllIndexers || []).forEach(function (configured) {
             var indexer = reported[configured.id];
-            if (!indexer) {
+            if (!indexer || indexer.done === false) {
                 pending++;
-                trackers.push({ id: configured.id, name: configured.name, status: 'pending', error: null, elapsedMs: null, reportedAt: null });
+                trackers.push({
+                    id: configured.id, name: configured.name, status: 'pending', error: null,
+                    elapsedMs: indexer ? indexer.elapsedMs : null, reportedAt: null,
+                    completedQueries: indexer ? indexer.completedQueries : 0,
+                    totalQueries: indexer ? indexer.totalQueries : 0
+                });
                 return;
             }
             trackers.push({
                 id: indexer.id, name: indexer.name, status: indexer.ok ? 'ok' : 'error',
-                error: indexer.error, elapsedMs: indexer.elapsedMs, reportedAt: indexer.reportedAt
+                error: indexer.error, elapsedMs: indexer.elapsedMs, reportedAt: indexer.reportedAt,
+                completedQueries: indexer.completedQueries || 0, totalQueries: indexer.totalQueries || 0
             });
         });
         return { trackers: trackers, pending: pending, total: (state.poolAllIndexers || []).length };
