@@ -64,6 +64,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -RequireRelease
 Он падает, если HEAD субмодуля не на теге, дерево грязное или gitlink ещё не обновлён. Подробности
 и таблица состояний — в [`rebuild-patched-torrserver.md`](rebuild-patched-torrserver.md).
 
+## Если менялся Jackett
+
+Порядок такой же: сначала commit и downstream-тег в форке `LuckyRu/Jackett` на ветке
+`jackett-manager`, затем обновление gitlink `external/Jackett` в родительском репозитории.
+Теги имеют форму `v<upstream>-JackettManager.<downstream>`, например
+`v0.24.2413-JackettManager.1`. Полный релизный прогон проверяет официальный upstream-тег,
+чистое дерево и совпадение gitlink:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -RequireRelease
+```
+
+В результате `publish\Jackett\App` содержит self-contained `JackettConsole.exe`, который
+можно установить в `%ProgramData%\Jackett\App` без перезаписи пользовательской конфигурации.
+Подробная схема версий и локальная сборка описаны в
+[`rebuild-patched-jackett.md`](rebuild-patched-jackett.md).
+
 ## Если менялся только JS-плагин
 
 Полный цикл (build → publish → deploy) не обязателен для итерации — см.

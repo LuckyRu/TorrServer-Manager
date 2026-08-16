@@ -21,7 +21,7 @@
     <!-- node_modules/ (npm's, for the plugin-bundling toolchain below) is never .NET project
          content — exclude it from every default item glob the SDK would otherwise scan it with,
          the same way it already excludes bin/obj. -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);node_modules/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);node_modules/**;external/Jackett/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

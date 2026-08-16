@@ -143,19 +143,21 @@ GST/HLS-поток TorrServer. Перед стартом плагин получ
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-Она инициализирует субмодуль `external\TorrServer` из форка `LuckyRu/TorrServer`, собирает
-закреплённый родительским репозиторием downstream-коммит и проверяет downstream-тег вида
-`MatriX.<upstream>-TorrentMod.<version>`, затем подтверждает его официальную upstream-базу,
-собирает `TorrServer.exe` и публикует `TorrServerManager.exe`
-вместе со встроенным Torrent Mod Plugin в `publish\`.
+Она инициализирует субмодули `external\TorrServer` и `external\Jackett` из форков
+`LuckyRu/TorrServer` и `LuckyRu/Jackett`, собирает закреплённые родительским репозиторием
+downstream-коммиты и проверяет их upstream-теги (`MatriX.<upstream>-TorrentMod.<version>` для
+TorrServer и `v<upstream>-JackettManager.<version>` для Jackett), затем подтверждает официальные
+upstream-базы. Результат: `TorrServer.exe`, self-contained Jackett в `publish\Jackett\App\` и
+`TorrServerManager.exe` вместе со встроенным Torrent Mod Plugin в `publish\`.
 Требуются Windows, Git с доступом к субмодулям, .NET 10 SDK и Node.js; требуемую версию Go скрипт читает из
 `external\TorrServer\server\go.mod`, найдёт на PATH или скачает в
 игнорируемый `.tools\`.
 
 После обычного `git clone` нужно выполнить `git submodule update --init --recursive` либо клонировать
-репозиторий сразу с `--recurse-submodules`. Сборка не изменяет рабочее дерево субмодуля: исходники
-копируются во временный `.build\`, а патчи уже являются отдельными коммитами ветки
-`torrserver-manager` форка.
+репозиторий сразу с `--recurse-submodules`. Сборка не изменяет рабочее дерево субмодулей: исходники
+TorrServer копируются во временный `.build\`, а downstream-изменения живут отдельными коммитами
+веток `torrserver-manager` и `jackett-manager` соответствующих форков. Схема Jackett и порядок
+выпуска описаны в [`docs/how-to/rebuild-patched-jackett.md`](docs/how-to/rebuild-patched-jackett.md).
 
 Для отдельных изменений Manager см. [CLAUDE.md](CLAUDE.md) — команды `dotnet build` / `dotnet publish`,
 архитектура компонентов (`ServerController`, `JackettController`, `UpdateService`,

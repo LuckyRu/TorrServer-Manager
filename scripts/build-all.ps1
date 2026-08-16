@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$TorrServerTag = '',
+    [string]$JackettTag = '',
     [string]$OutputDirectory = '',
     [switch]$SkipTests,
     [switch]$NoGoBootstrap,
@@ -12,9 +13,13 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $buildRoot = Join-Path $repoRoot '.build'
 $torrServerSubmodulePath = Join-Path $repoRoot 'external\TorrServer'
+$jackettSubmodulePath = Join-Path $repoRoot 'external\Jackett'
 $officialTorrServerRepository = 'YouROK/TorrServer'
+$officialJackettRepository = 'Jackett/Jackett'
 $expectedSubmodulePath = 'external/TorrServer'
+$expectedJackettSubmodulePath = 'external/Jackett'
 $torrServerReleaseTagPattern = '^(?<upstream>MatriX\.\d+(?:\.\d+)+)-TorrentMod\.(?<downstream>\d+(?:\.\d+)*)$'
+$jackettReleaseTagPattern = '^v(?<upstream>\d+\.\d+\.\d+)-JackettManager\.(?<downstream>\d+(?:\.\d+)*)$'
 $githubApiHeaders = @{ 'User-Agent' = 'TorrServerManager-build' }
 $outputRoot = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     Join-Path $repoRoot 'publish'
@@ -235,6 +240,201 @@ function Resolve-TorrServerSource {
     }
 }
 
+function Get-JackettSubmoduleGitlink {
+    $entry = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('ls-tree', 'HEAD', $expectedJackettSubmodulePath)
+    $match = [regex]::Match($entry, '^\s*\d+\s+commit\s+(?<sha>[0-9a-f]{40})\s')
+    if (-not $match.Success) {
+        return ''
+    }
+    return $match.Groups['sha'].Value
+}
+
+function Test-JackettSubmoduleAncestor {
+    param(
+        [Parameter(Mandatory = $true)][string]$Ancestor,
+        [Parameter(Mandatory = $true)][string]$Descendant
+    )
+
+    $code = Invoke-NativeExitCode -FilePath 'git.exe' `
+        -Arguments @('merge-base', '--is-ancestor', $Ancestor, $Descendant) `
+        -WorkingDirectory $jackettSubmodulePath
+    switch ($code) {
+        0 { return $true }
+        1 { return $false }
+        default {
+            throw "git merge-base не смог сравнить $Ancestor и $Descendant (код $code). Выполните 'git -C $expectedJackettSubmodulePath fetch origin'."
+        }
+    }
+}
+
+function Sync-JackettSubmodule {
+    param([Parameter(Mandatory = $false)][string]$Gitlink = '')
+
+    Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'sync', '--recursive')
+
+    if (-not (Test-Path -LiteralPath (Join-Path $jackettSubmodulePath 'src\Jackett.Server\Jackett.Server.csproj'))) {
+        Invoke-Native -FilePath 'git.exe' -Arguments @('submodule', 'update', '--init', '--recursive', '--', $expectedJackettSubmodulePath)
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($Gitlink)) {
+        return
+    }
+
+    $head = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'rev-parse', 'HEAD')
+    if ($head -eq $Gitlink) {
+        return
+    }
+
+    if (Test-JackettSubmoduleAncestor -Ancestor $Gitlink -Descendant $head) {
+        Write-Host "Субмодуль Jackett опережает gitlink родителя: сборка идёт из рабочей ветки, откат не выполняется." -ForegroundColor Yellow
+        return
+    }
+    if (Test-JackettSubmoduleAncestor -Ancestor $head -Descendant $Gitlink) {
+        Write-Host "Субмодуль Jackett отстаёт от gitlink родителя: перемотка вперёд на $($Gitlink.Substring(0, 12))."
+        Invoke-Native -FilePath 'git.exe' -Arguments @('merge', '--ff-only', $Gitlink) -WorkingDirectory $jackettSubmodulePath
+        return
+    }
+
+    throw "История submodule Jackett разошлась с gitlink родителя ($($Gitlink.Substring(0, 12))). Сведите их вручную."
+}
+
+function Assert-OfficialJackettTag {
+    param([Parameter(Mandatory = $true)][string]$Tag)
+
+    $escapedTag = [Uri]::EscapeDataString($Tag)
+    $releaseUrl = "https://api.github.com/repos/$officialJackettRepository/releases/tags/$escapedTag"
+    Write-Host "Проверка официального базового релиза Jackett: $releaseUrl..."
+    try {
+        $release = Invoke-RestMethod -Headers $githubApiHeaders -Uri $releaseUrl
+    } catch {
+        throw "Не удалось подтвердить официальный релиз Jackett из GitHub: $($_.Exception.Message)"
+    }
+
+    if ([string]$release.tag_name -ne $Tag -or $release.draft -or $release.prerelease) {
+        throw "Тег Jackett '$Tag' не является официальным стабильным релизом upstream."
+    }
+
+    $upstreamRef = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @(
+        'ls-remote', "https://github.com/$officialJackettRepository.git", "refs/tags/$Tag^{}"
+    )
+    $upstreamCommit = ($upstreamRef -split '\s+')[0]
+    if ($upstreamCommit -notmatch '^[0-9a-fA-F]{40}$') {
+        # Jackett publishes lightweight release tags, which have no peeled ^{} ref.
+        $upstreamRef = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @(
+            'ls-remote', "https://github.com/$officialJackettRepository.git", "refs/tags/$Tag"
+        )
+        $upstreamCommit = ($upstreamRef -split '\s+')[0]
+    }
+    $localTagCode = Invoke-NativeExitCode -FilePath 'git.exe' -Arguments @(
+        '-C', $jackettSubmodulePath, 'show-ref', '--verify', '--quiet', "refs/tags/$Tag"
+    )
+    if ($localTagCode -ne 0) {
+        Invoke-Native -FilePath 'git.exe' -Arguments @(
+            '-C', $jackettSubmodulePath, 'fetch', '--no-tags',
+            "https://github.com/$officialJackettRepository.git",
+            "refs/tags/${Tag}:refs/tags/${Tag}"
+        )
+    }
+    $localCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'rev-parse', "refs/tags/$Tag^{}")
+    if ($upstreamCommit -notmatch '^[0-9a-fA-F]{40}$' -or $localCommit.ToLowerInvariant() -ne $upstreamCommit.ToLowerInvariant()) {
+        throw "Тег '$Tag' в submodule Jackett не совпадает с официальным upstream commit."
+    }
+}
+
+function Resolve-JackettSource {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.gitmodules'))) {
+        throw "Не найден .gitmodules. Источник Jackett должен быть подключён как submodule."
+    }
+    $submoduleUrl = (git config --file (Join-Path $repoRoot '.gitmodules') --get "submodule.$expectedJackettSubmodulePath.url" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($submoduleUrl)) {
+        throw "В .gitmodules не найден URL submodule '$expectedJackettSubmodulePath'."
+    }
+
+    $gitlink = Get-JackettSubmoduleGitlink
+    Sync-JackettSubmodule -Gitlink $gitlink
+
+    if (-not (Test-Path -LiteralPath (Join-Path $jackettSubmodulePath 'src\Jackett.Server\Jackett.Server.csproj'))) {
+        throw "В submodule Jackett не найден src/Jackett.Server/Jackett.Server.csproj: $jackettSubmodulePath"
+    }
+
+    Invoke-Native -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'fetch', '--tags', 'origin')
+    $actualCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'rev-parse', 'HEAD')
+    $branch = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'rev-parse', '--abbrev-ref', 'HEAD')
+    $dirty = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'status', '--porcelain', '--untracked-files=no')
+    $isDirty = -not [string]::IsNullOrWhiteSpace($dirty)
+
+    $resolvedTag = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'describe', '--tags', '--match', 'v*-JackettManager.*', '--abbrev=0', 'HEAD')
+    $tagMatch = [regex]::Match($resolvedTag, $jackettReleaseTagPattern)
+    if (-not $tagMatch.Success) {
+        throw "Не удалось определить downstream-тег v<upstream>-JackettManager.<version> из истории submodule."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($JackettTag) -and $JackettTag -ne $resolvedTag) {
+        throw "Запрошен JackettTag '$JackettTag', но ближайший тег submodule — '$resolvedTag'."
+    }
+    $upstreamTag = "v$($tagMatch.Groups['upstream'].Value)"
+    Assert-OfficialJackettTag -Tag $upstreamTag
+
+    $distance = [int](Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $jackettSubmodulePath, 'rev-list', '--count', "$resolvedTag..HEAD"))
+    $devReasons = @()
+    if ($distance -gt 0) {
+        $where = if ($branch -eq 'HEAD') { 'субмодуль' } else { "ветка $branch" }
+        $devReasons += "$where впереди тега ${resolvedTag} на $distance коммит(ов)"
+    }
+    if ($isDirty) {
+        $devReasons += 'рабочее дерево submodule Jackett изменено и не соответствует ни одному коммиту'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($gitlink) -and $gitlink -ne $actualCommit) {
+        $devReasons += "gitlink родителя ещё указывает на $($gitlink.Substring(0, 12))"
+    }
+
+    $buildVersion = $resolvedTag
+    if ($devReasons.Count -gt 0) {
+        $buildVersion = "$resolvedTag-dev.$distance.g$($actualCommit.Substring(0, 7))"
+        if ($isDirty) {
+            $buildVersion += '.dirty'
+        }
+    }
+    if ($devReasons.Count -gt 0 -and $RequireRelease) {
+        throw "Запрошена релизная сборка, но источник Jackett в дев-состоянии:`n  - $($devReasons -join "`n  - ")"
+    }
+
+    return [pscustomobject]@{
+        ReleaseTag = $resolvedTag
+        BuildVersion = $buildVersion
+        UpstreamTag = $upstreamTag
+        UpstreamVersion = $tagMatch.Groups['upstream'].Value
+        Commit = $actualCommit
+        Branch = $branch
+        Repository = $submoduleUrl
+        IsDev = $devReasons.Count -gt 0
+        DevReasons = $devReasons
+        DirtyFiles = $dirty
+    }
+}
+
+function Write-JackettBuildStateBanner {
+    param([Parameter(Mandatory = $true)][psobject]$Source)
+
+    if (-not $Source.IsDev) {
+        Write-Host "Релизная сборка Jackett $($Source.ReleaseTag)." -ForegroundColor Green
+        return
+    }
+
+    Write-Host ''
+    Write-Host '  ДЕВ-СБОРКА Jackett — не релиз  ' -ForegroundColor Black -BackgroundColor Yellow
+    foreach ($reason in $Source.DevReasons) {
+        Write-Host "  - $reason" -ForegroundColor Yellow
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Source.DirtyFiles)) {
+        foreach ($line in ($Source.DirtyFiles -split "`n")) {
+            Write-Host "      $($line.Trim())" -ForegroundColor DarkYellow
+        }
+    }
+    Write-Host "  Версия бинарника: $($Source.BuildVersion)" -ForegroundColor Yellow
+    Write-Host '  Релиз требует downstream-тега на HEAD, чистого дерева и обновлённого gitlink.' -ForegroundColor Yellow
+    Write-Host ''
+}
+
 function Write-BuildStateBanner {
     param([Parameter(Mandatory = $true)][psobject]$Source)
 
@@ -326,6 +526,11 @@ $torrServerReleaseTag = $torrServerSource.ReleaseTag
 $torrServerBuildVersion = $torrServerSource.BuildVersion
 $torrServerVersion = $torrServerSource.UpstreamTag
 Write-BuildStateBanner -Source $torrServerSource
+$jackettSource = Resolve-JackettSource
+$jackettReleaseTag = $jackettSource.ReleaseTag
+$jackettBuildVersion = $jackettSource.BuildVersion
+$jackettVersion = $jackettSource.UpstreamVersion
+Write-JackettBuildStateBanner -Source $jackettSource
 $sourceRoot = Join-Path $buildRoot "TorrServer-$torrServerReleaseTag-$($torrServerSource.Commit.Substring(0, 12))"
 $serverModule = Join-Path $sourceRoot 'server'
 if (Test-Path -LiteralPath $sourceRoot) {
@@ -360,6 +565,26 @@ if (-not $SkipTests) {
 }
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+$jackettOutput = Join-Path $outputRoot 'Jackett\App'
+if (Test-Path -LiteralPath $jackettOutput) {
+    Remove-Item -LiteralPath $jackettOutput -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $jackettOutput | Out-Null
+$jackettArguments = @(
+    'publish',
+    (Join-Path $jackettSubmodulePath 'src\Jackett.Server\Jackett.Server.csproj'),
+    '--configuration', 'Release',
+    '--runtime', 'win-x64',
+    '--framework', 'net9.0',
+    '--self-contained', 'true',
+    '--output', $jackettOutput,
+    "/p:Version=$jackettVersion",
+    "/p:AssemblyVersion=$jackettVersion",
+    "/p:FileVersion=$jackettVersion",
+    "/p:InformationalVersion=$jackettBuildVersion"
+)
+Invoke-Native -FilePath 'dotnet.exe' -Arguments $jackettArguments -WorkingDirectory $jackettSubmodulePath
+
 $serverOutput = Join-Path $outputRoot 'TorrServer.exe'
 $ldflags = "-s -w -checklinkname=0 -X server/version.Version=$torrServerBuildVersion"
 Invoke-Native -FilePath $go -Arguments @('build', '-tags=nosqlite,gst', '-trimpath', "-ldflags=$ldflags", '-o', $serverOutput, './cmd') -WorkingDirectory $serverModule
@@ -371,6 +596,11 @@ Write-Host ""
 Write-Host "Готово:" -ForegroundColor Green
 Write-Host "  Manager:   $(Join-Path $outputRoot 'TorrServerManager.exe')"
 Write-Host "  TorrServer: $serverOutput"
+Write-Host "  Jackett:   $(Join-Path $jackettOutput 'JackettConsole.exe')"
+Write-Host "  Jackett version: $jackettBuildVersion" -ForegroundColor $(if ($jackettSource.IsDev) { 'Yellow' } else { 'Green' })
+Write-Host "  Jackett upstream: $($jackettSource.UpstreamTag)"
+Write-Host "  Jackett release: $jackettReleaseTag"
+Write-Host "  Jackett source: $($jackettSource.Repository)@$($jackettSource.Commit) ($($jackettSource.Branch))"
 Write-Host "  Version:    $torrServerBuildVersion" -ForegroundColor $(if ($torrServerSource.IsDev) { 'Yellow' } else { 'Green' })
 Write-Host "  Upstream:   $torrServerVersion"
 Write-Host "  Release:    $torrServerReleaseTag"

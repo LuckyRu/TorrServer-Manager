@@ -40,6 +40,8 @@ ADR/system-design/reference там, где одно объясняет друг�
 - **Нужно выпустить изменение?** → [`how-to/release-a-change.md`](how-to/release-a-change.md)
 - **Нужно пересобрать TorrServer с расширенным GST-пайплайном?** →
   [`how-to/rebuild-patched-torrserver.md`](how-to/rebuild-patched-torrserver.md)
+- **Нужно собрать Jackett из downstream-форка?** →
+  [`how-to/rebuild-patched-jackett.md`](how-to/rebuild-patched-jackett.md)
 - **Правишь JS-плагин и не хочешь пересобирать .exe?** →
   [`how-to/iterate-on-a-plugin-without-rebuilding.md`](how-to/iterate-on-a-plugin-without-rebuilding.md)
 - **Нужно проверить, как на самом деле ведёт себя Lampa?** →

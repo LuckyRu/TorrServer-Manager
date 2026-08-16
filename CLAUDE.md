@@ -29,11 +29,11 @@ dotnet publish TorrServerManager.csproj -c Release                 # -> bin\Rele
 dotnet run --project TorrServerManager.csproj                      # run locally
 dotnet run --project TorrServerManager.csproj -- --background      # run hidden to tray; the app only reads the flag, it never registers autostart
 npm run test:plugin                                                 # JS plugin tests, run before any plugin release
-powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1  # clean full build: TorrServer + Manager
+powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1  # clean full build: TorrServer + Jackett + Manager
 ```
 
-No linter in this repo. The full clean build (TorrServer submodule + Manager) is
-`scripts/build-all.ps1`; it writes both executables to `publish\`. **Concurrency tests in
+No linter in this repo. The full clean build (TorrServer and Jackett submodules + Manager) is
+`scripts/build-all.ps1`; it writes the executables to `publish\`. **Concurrency tests in
 `external/TorrServer/server` have no oracle without `-race`, and `-race` is impossible on Windows
 (needs cgo, no gcc) — run `scripts\test-race.ps1` (WSL, ~8 s); `build-all.ps1` calls it. A test that
 spawns goroutines and cannot fail without `-race` is a `t.Skip`.** Scenario map, coverage audit and
@@ -44,6 +44,11 @@ fixes are commits on that branch, not patch files; see
 **`release-a-change` skill**; fast JS-only iteration without a full rebuild is the **`iterate-on-a-plugin-
 without-rebuilding`** doc. Verifying UI/navigation/search behavior live is the **`verify-lampa-live`**
 skill — Lampa has no public API docs, its own source and a live instance are the only ground truth.
+
+`external/Jackett` is the `LuckyRu/Jackett` fork on branch `jackett-manager`; downstream tags use
+`v<upstream>-JackettManager.<downstream>` (for example `v0.24.2413-JackettManager.1`). The full
+build validates the upstream base and publishes `publish\Jackett\App`; see
+[`docs/how-to/rebuild-patched-jackett.md`](docs/how-to/rebuild-patched-jackett.md).
 
 ## Architecture
 
