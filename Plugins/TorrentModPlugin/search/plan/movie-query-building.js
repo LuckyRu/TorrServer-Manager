@@ -1,5 +1,5 @@
 import { buildAnimeQueries, queryNames } from './query-building.js';
-import { isAnimeTarget } from './work-profile.js';
+import { isAnimeTarget } from '../profile/work-profile.js';
 
 export function buildMovieQueries(target) {
     // Аниме-фильм раньше не получал ни alias-запросов, ни маршрута в аниме-трекеры, а при

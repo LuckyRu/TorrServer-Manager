@@ -1,9 +1,9 @@
 # Архитектура поиска раздач: целевое состояние
 
-Проектный документ. Описывает, как должна быть устроена подсистема поиска торрент-раздач для
-произведения, и почему именно так. Ничего из описанного здесь ещё не реализовано — текущее
-поведение описано в [`torrent-mod-search-pipeline.md`](torrent-mod-search-pipeline.md), и в одном
-месте тот документ уже расходится с кодом (см. §1.4).
+Описывает, как устроена подсистема поиска торрент-раздач для произведения, и почему именно так.
+**Реализовано полностью**; §1 сохранён как замеры «до», по которым принимались решения, — числа в
+нём описывают состояние на момент разбора, а не текущее. Обзор действующего поведения —
+[`torrent-mod-search-pipeline.md`](torrent-mod-search-pipeline.md).
 
 Задачи, которые архитектура обязана решать:
 
@@ -68,7 +68,7 @@
 
 Из корпуса по шести целям через media+title гейты прошло 452 заголовка. Разбор прошедших:
 
-**(а) Однословное название матчится как подстрока** (`search/search-gates.js:40-42`). Проверено:
+**(а) Однословное название матчится как подстрока** (`search/gates/search-gates.js:40-42`). Проверено:
 
 ```
 titleSimilarity('Кукушонок', цель «Оно») === 1
@@ -378,7 +378,7 @@ anilibria), форма заголовка, технические префикс
 }
 ```
 
-Реализовано в `search/tracker-profiles.js`. Ключ — id индексатора Jackett, потому что отображаемое
+Реализовано в `search/rules/tracker-profiles.js`. Ключ — id индексатора Jackett, потому что отображаемое
 имя пользователь переименовывает в UI. Id доезжает до разбора через `mapTorrent` (`item.trackerId`);
 `item.tracker` при этом намеренно остаётся тем, что прислал Jackett — это поле входит в
 `releaseIdentity`, по которой схлопывается пул и хранится сохранённый выбор ([ADR-0005](../adr/0005-search-whole-season-once.md)).
@@ -577,27 +577,32 @@ TMDB `in_production` / `status`). У завершённых произведен
 
 ## 8. Раскладка модулей
 
+Фактическое состояние (переезд выполнен):
+
 ```
 search/
-  search.js                     единая точка                     ← movie-search.js + series-search.js
-  profile/  work-profile.js  work-taxonomy.js  search-policy.js   ← isAnimeTarget
-  plan/     query-recipes.js  query-plan.js  escalation.js        ← query-building + indexer-search-strategies
-  transport/ parallel-search.js  search-runner.js                 ← search-backend (транспорт)
-  parse/    tokenizer.js  release-signals.js  release-tags.js
-            release-year.js  release-studios.js  parse-release.js ← release-parsing + TRANSLATOR_STUDIOS
-  rules/    tracker-profiles.js  studios.js  rules-source.js
-  gates/    gate-record.js  gate-media-type.js  gate-title.js
-            gate-identity.js  run-gates.js                        ← runSearchGates + passesMatchGate
-  rank/     payload.js  score.js                                  ← scoring.js
-  diagnostics/ reason-codes.js  search-trace.js  explain.js
-domain/     search-context.js  refine-filters.js                  ← target собирается сегодня в 6 местах
-metadata/   tmdb.js — fetchWorkDetails                            ← fetchEnglishTitle
+  movie-search.js  series-search.js      публичный вход для домена
+  profile/  work-profile.js              семейство произведения
+  plan/     query-building.js  movie-query-building.js  series-query-building.js
+            indexer-search-strategies.js план запросов и маршрутов, волны
+  transport/ parallel-search.js  search-backend.js
+  parse/    release-signals.js  release-parsing.js  release-year.js
+            release-studios.js  movie-release-parsing.js  series-release-parsing.js
+  rules/    tracker-profiles.js  rules-source.js
+  gates/    search-gates.js  gate-identity.js
+  rank/     scoring.js
 ```
 
-Исчезают как отдельные сущности: `movie-query-building.js`, `series-query-building.js`,
-`movie-release-parsing.js`, `series-release-parsing.js`, `indexer-search-strategies.js`.
+Отличия от первоначального проекта, принятые сознательно:
 
----
+- `search.js` как единая точка не появился: домен по-прежнему зовёт `movie-search.js` /
+  `series-search.js`, и различие «фильм/сериал» там сводится к паре строк — выигрыш от слияния не
+  окупает правку домена.
+- `tokenizer.js`, `parse-release.js`, `search-policy.js`, `escalation.js` и каталог
+  `diagnostics/` не выделены: их содержимое пока умещается в соседних файлах, а пустые модули ради
+  соответствия схеме — это churn без пользы.
+- `release-signals.js` переехал из `shared/` в `search/parse/`: его импортировал только парсер.
+- Реестр reason-кодов не выделен в отдельный модуль — коды живут рядом со своими гейтами.
 
 ## 9. Порядок внедрения
 

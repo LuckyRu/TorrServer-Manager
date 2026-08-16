@@ -3,11 +3,11 @@
 // старом менеджере, при 404 и при выключенном хабе — тогда он один раз предупреждает и живёт на
 // встроенных. Договор — docs/system-design/torrent-mod-search-architecture.md §4.
 
-import { hubBase } from '../shared/state.js';
-import { request } from '../shared/utils.js';
-import { registerStudioRules } from './release-studios.js';
+import { hubBase } from '../../shared/state.js';
+import { request } from '../../shared/utils.js';
+import { registerStudioRules } from '../parse/release-studios.js';
 import { registerTrackerRules } from './tracker-profiles.js';
-import { log, warn } from '../shared/core/log.js';
+import { log, warn } from '../../shared/core/log.js';
 
 var KNOWN_SCHEMA = 1;
 var pending = null;

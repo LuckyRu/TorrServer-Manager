@@ -1,5 +1,5 @@
-    import { baseTitles, normalizedTitleKey } from './query-building.js';
-    import { profileFor } from './tracker-profiles.js';
+    import { baseTitles, normalizedTitleKey } from '../plan/query-building.js';
+    import { profileFor } from '../rules/tracker-profiles.js';
 
     var MIN_TITLE_SIMILARITY = 0.34;
     var STOPWORDS = {};

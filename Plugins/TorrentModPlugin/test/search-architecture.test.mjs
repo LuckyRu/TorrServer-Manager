@@ -6,17 +6,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 
-import { parseRelease, parseSignals } from '../search/release-parsing.js';
-import { parseYear, yearMatches } from '../search/release-year.js';
-import { extractStudios, registerStudioRules } from '../search/release-studios.js';
-import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments, evaluateMediaTypeGate } from '../search/search-gates.js';
-import { profileFor, indexersInGroup, registerTrackerRules } from '../search/tracker-profiles.js';
-import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gate-identity.js';
-import { workFamily, isAnimeTarget } from '../search/work-profile.js';
-import { buildQueries } from '../search/query-building.js';
-import { buildMovieQueries } from '../search/movie-query-building.js';
-import { buildSeriesQueries } from '../search/series-query-building.js';
-import { buildSearchPlan } from '../search/indexer-search-strategies.js';
+import { parseRelease, parseSignals } from '../search/parse/release-parsing.js';
+import { parseYear, yearMatches } from '../search/parse/release-year.js';
+import { extractStudios, registerStudioRules } from '../search/parse/release-studios.js';
+import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments, evaluateMediaTypeGate } from '../search/gates/search-gates.js';
+import { profileFor, indexersInGroup, registerTrackerRules } from '../search/rules/tracker-profiles.js';
+import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gates/gate-identity.js';
+import { workFamily, isAnimeTarget } from '../search/profile/work-profile.js';
+import { buildQueries } from '../search/plan/query-building.js';
+import { buildMovieQueries } from '../search/plan/movie-query-building.js';
+import { buildSeriesQueries } from '../search/plan/series-query-building.js';
+import { buildSearchPlan } from '../search/plan/indexer-search-strategies.js';
 import { funnelText, buildFilterItems } from '../domain/results-core.js';
 
 let passed = 0;

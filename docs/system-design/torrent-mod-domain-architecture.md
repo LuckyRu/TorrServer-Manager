@@ -151,7 +151,7 @@ scope экрана. View подписывается раздельно на cont
 
 `ok(value)`/`err(kind, message, {retryable, cause})` — Result-форма, применённая только там, где она
 реально закрывает пробел (`fetchSeason` выше). Сознательно **не** применена к
-`search/search-backend.js`'s `{results, indexers, failed}`, которая уже информационно эквивалентна
+`search/transport/search-backend.js`'s `{results, indexers, failed}`, которая уже информационно эквивалентна
 двухисходному Result для своих трёх текущих вызывающих — конвертация была бы churn'ом без исправленного
 бага.
 

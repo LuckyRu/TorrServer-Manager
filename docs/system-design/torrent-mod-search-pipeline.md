@@ -5,7 +5,7 @@
 
 ## Модель данных на кандидата
 
-Каждая найденная раздача (`mapTorrent(raw)` в `search/search-backend.js`) превращается в объект с полями из
+Каждая найденная раздача (`mapTorrent(raw)` в `search/transport/search-backend.js`) превращается в объект с полями из
 двух источников:
 
 - **Из ответа Jackett напрямую** (не разобрано регулярками, а взято как есть): `tracker`, `size`,
@@ -39,7 +39,7 @@ NoNaMe, BigFANGroup и т.п.), не выдуманы — при дрейфе т
 
 ## Входные гейты до доменного пула
 
-`search/search-gates.js` отделяет три разных вопроса:
+`search/gates/search-gates.js` отделяет три разных вопроса:
 
 1. **parse** — запись существует, имеет magnet/link и metadata разобралась без исключения;
 2. **media-type** — это видеорелиз, а не книга, установщик игры, аудиорелиз или бонусный материал;
@@ -77,7 +77,7 @@ JS `\b` определён через `\w` (`[A-Za-z0-9_]` — только ASCI
 После входных гейтов `passesMatchGate(item, target)` проверяет контекст конкретной серии:
 
 - similarity названия < 0.34 → отказ.
-- `evaluateIdentityGate` (`search/gate-identity.js`): сезон не совпал → `season-mismatch`; целевая
+- `evaluateIdentityGate` (`search/gates/gate-identity.js`): сезон не совпал → `season-mismatch`; целевая
   серия вне явного диапазона → `episode-out-of-range`; сезонный пак под поиск фильма →
   `series-pack-for-movie`.
 - иначе — проходит (в том числе релизы без явного сезона/серии — пропускаются дальше, пусть решает

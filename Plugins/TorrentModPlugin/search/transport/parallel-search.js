@@ -1,6 +1,6 @@
-    import { hubBase } from '../shared/state.js';
-    import { request } from '../shared/utils.js';
-    import { log } from '../shared/core/log.js';
+    import { hubBase } from '../../shared/state.js';
+    import { request } from '../../shared/utils.js';
+    import { log } from '../../shared/core/log.js';
 
     var POLL_INTERVAL_MS = 600;
 

@@ -1,6 +1,6 @@
-    import { titleSimilarity, passesSearchTitleGate as passesTitleGate, evaluateTitleMatch } from './search-gates.js';
-    import { evaluateIdentityGate, narrowToExactMatches } from './gate-identity.js';
-    import { filtersOf } from '../domain/filter-state.js';
+    import { titleSimilarity, passesSearchTitleGate as passesTitleGate, evaluateTitleMatch } from '../gates/search-gates.js';
+    import { evaluateIdentityGate, narrowToExactMatches } from '../gates/gate-identity.js';
+    import { filtersOf } from '../../domain/filter-state.js';
 
     var CONFIDENCE_ORDER = { none: 0, low: 1, medium: 2, high: 3 };
 

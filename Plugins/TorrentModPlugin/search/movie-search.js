@@ -1,7 +1,7 @@
 // ---------- movie torrent search ----------
-import { searchTorrentMod, searchTorrentModProgressive } from './search-backend.js';
-import { parseMovieRelease } from './movie-release-parsing.js';
-import { buildMovieQueries } from './movie-query-building.js';
+import { searchTorrentMod, searchTorrentModProgressive } from './transport/search-backend.js';
+import { parseMovieRelease } from './parse/movie-release-parsing.js';
+import { buildMovieQueries } from './plan/movie-query-building.js';
 import { MODE_MOVIE } from '../shared/state.js';
 
 export function searchMovieTorrents(target) {

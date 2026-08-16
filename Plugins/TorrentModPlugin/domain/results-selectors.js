@@ -2,7 +2,7 @@
         candidateIdentity, candidateBadgeText, candidateSubtitleText } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
-    import { applyStateFilters, createCandidateScoreBase, scoreCandidateFromBase } from '../search/scoring.js';
+    import { applyStateFilters, createCandidateScoreBase, scoreCandidateFromBase } from '../search/rank/scoring.js';
 
     export function selectBusy(state) {
         return state.episodesStatus === 'loading' || state.poolStatus === 'loading';

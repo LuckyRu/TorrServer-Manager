@@ -2,8 +2,8 @@
 
 Формулы и пороги. За обоснованием и историей — в
 [`system-design/torrent-mod-search-pipeline.md`](../system-design/torrent-mod-search-pipeline.md).
-Источник истины — входные решения в `Plugins/TorrentModPlugin/search/search-gates.js` и
-`scoreCandidate()`/`passesMatchGate()`/`estimatePayload()` в `search/scoring.js`.
+Источник истины — входные решения в `Plugins/TorrentModPlugin/search/gates/search-gates.js` и
+`scoreCandidate()`/`passesMatchGate()`/`estimatePayload()` в `search/rank/scoring.js`.
 
 ## Входные гейты — до попадания в `state.pool`
 

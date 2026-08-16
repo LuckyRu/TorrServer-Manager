@@ -1,4 +1,4 @@
-import { parseSignals, parseRelease } from '../search/release-parsing.js';
+import { parseSignals, parseRelease } from '../search/parse/release-parsing.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';

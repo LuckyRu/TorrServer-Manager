@@ -3,8 +3,8 @@ import { createRunner } from './helpers/test-runner.mjs';
 import { flushMicrotasks } from './helpers/mock-lampa.mjs';
 import { createResultsDomain } from '../domain/results-domain.js';
 import { selectPickerData, selectPoolIndexers } from '../domain/results-selectors.js';
-import { parseSeriesRelease } from '../search/series-release-parsing.js';
-import { parseMovieRelease } from '../search/movie-release-parsing.js';
+import { parseSeriesRelease } from '../search/parse/series-release-parsing.js';
+import { parseMovieRelease } from '../search/parse/movie-release-parsing.js';
 import { candidateIdentity } from '../domain/results-core.js';
 
 const runner = createRunner();

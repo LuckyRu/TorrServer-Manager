@@ -1,6 +1,6 @@
 import { buildQueries, buildAnimeQueries, isAnimeTarget, queryNames, searchNames, normalizedTitleKey } from './query-building.js';
-import { unique } from '../shared/utils.js';
-import { indexersInGroup } from './tracker-profiles.js';
+import { unique } from '../../shared/utils.js';
+import { indexersInGroup } from '../rules/tracker-profiles.js';
 
 // Список аниме-трекеров больше не хардкод: он выводится из группы в реестре профилей,
 // поэтому добавить третий аниме-трекер — это правка данных, а не кода.

@@ -1,12 +1,12 @@
-    import { buildQueries as buildQueriesForTarget } from './query-building.js';
-    import { compact } from '../shared/utils.js';
-    import { mergeReleases } from '../shared/release-identity.js';
+    import { buildQueries as buildQueriesForTarget } from '../plan/query-building.js';
+    import { compact } from '../../shared/utils.js';
+    import { mergeReleases } from '../../shared/release-identity.js';
     import { startParallelSearch } from './parallel-search.js';
-    import { buildSearchPlan } from './indexer-search-strategies.js';
-    import { workFamily } from './work-profile.js';
-    import { profileFor } from './tracker-profiles.js';
-    import { evaluateMediaTypeGate, evaluateSearchTitleGate } from './search-gates.js';
-    import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
+    import { buildSearchPlan } from '../plan/indexer-search-strategies.js';
+    import { workFamily } from '../profile/work-profile.js';
+    import { profileFor } from '../rules/tracker-profiles.js';
+    import { evaluateMediaTypeGate, evaluateSearchTitleGate } from '../gates/search-gates.js';
+    import { log, warn, debug, debugEnabled } from '../../shared/core/log.js';
 
     function deferWork(work, scope) {
         return new Promise(function (resolve, reject) {

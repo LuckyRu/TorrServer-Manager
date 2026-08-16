@@ -1,14 +1,14 @@
 import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
-import { parseRelease, parseSignals } from '../search/release-parsing.js';
-import { baseTitles, defaultSearchName, buildQueries, isAnimeTarget, buildAnimeQueries } from '../search/query-building.js';
-import { buildMovieQueries } from '../search/movie-query-building.js';
-import { buildSeriesQueries } from '../search/series-query-building.js';
-import { buildSearchPlan, ANIME_INDEXER_IDS } from '../search/indexer-search-strategies.js';
-import { parseMovieRelease } from '../search/movie-release-parsing.js';
-import { parseSeriesRelease } from '../search/series-release-parsing.js';
-import { evaluateMediaTypeGate, evaluateSearchTitleGate, extractSearchTitleSegments } from '../search/search-gates.js';
-import { scoreCandidate, createCandidateScoreBase, scoreCandidateFromBase, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate, estimatePayload } from '../search/scoring.js';
+import { parseRelease, parseSignals } from '../search/parse/release-parsing.js';
+import { baseTitles, defaultSearchName, buildQueries, isAnimeTarget, buildAnimeQueries } from '../search/plan/query-building.js';
+import { buildMovieQueries } from '../search/plan/movie-query-building.js';
+import { buildSeriesQueries } from '../search/plan/series-query-building.js';
+import { buildSearchPlan, ANIME_INDEXER_IDS } from '../search/plan/indexer-search-strategies.js';
+import { parseMovieRelease } from '../search/parse/movie-release-parsing.js';
+import { parseSeriesRelease } from '../search/parse/series-release-parsing.js';
+import { evaluateMediaTypeGate, evaluateSearchTitleGate, extractSearchTitleSegments } from '../search/gates/search-gates.js';
+import { scoreCandidate, createCandidateScoreBase, scoreCandidateFromBase, applyStateFilters, evaluateCandidatePool, passesSearchTitleGate, estimatePayload } from '../search/rank/scoring.js';
 import {
     createInitialState, isSeriesWithSeasons, poolValues, poolTranslators, currentSeasonLabel,
     buildFilterItems, activeFilterLabels, candidatesForEpisode, badgeText, isConfidentMatch,

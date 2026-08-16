@@ -117,7 +117,7 @@ flowchart LR
   каждый `patch`;
 - [`domain/results-selectors.js`](../../Plugins/TorrentModPlugin/domain/results-selectors.js)
   пересчитывает кандидатов для каждой серии;
-- [`search/scoring.js`](../../Plugins/TorrentModPlugin/search/scoring.js) фильтровал, оценивал и сортировал
+- [`search/rank/scoring.js`](../../Plugins/TorrentModPlugin/search/rank/scoring.js) фильтровал, оценивал и сортировал
   кандидатов, одновременно записывая `_score` в исходный item;
 - [`ui/results-screen.js`](../../Plugins/TorrentModPlugin/ui/results-screen.js) пишет все бейджи независимо
   от изменения текста, повторно вызывает `Filter.set`, перестраивает picker через `empty()` и делает

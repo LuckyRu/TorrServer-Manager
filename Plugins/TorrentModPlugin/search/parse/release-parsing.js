@@ -1,4 +1,4 @@
-    import { parseSignals } from '../shared/release-signals.js';
+    import { parseSignals } from './release-signals.js';
     import { parseYear } from './release-year.js';
     import { extractStudios } from './release-studios.js';
     export { parseSignals };

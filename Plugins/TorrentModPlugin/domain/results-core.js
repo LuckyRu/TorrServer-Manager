@@ -1,6 +1,6 @@
     import { formatSize, compact } from '../shared/utils.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
-    import { evaluateCandidatePool, payloadBucket, estimatePayloadForState } from '../search/scoring.js';
+    import { evaluateCandidatePool, payloadBucket, estimatePayloadForState } from '../search/rank/scoring.js';
     import { filtersOf } from './filter-state.js';
     import { releaseIdentity } from '../shared/release-identity.js';
 

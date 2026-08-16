@@ -6,8 +6,8 @@
 // Абсолютный гейт по году уничтожил бы аниме-трекеры (года нет в принципе), многолетние паки
 // и все сезоны сериала кроме первого — см. §5 архитектурного документа.
 
-import { yearMatches } from './release-year.js';
-import { MODE_MOVIE } from '../shared/state.js';
+import { yearMatches } from '../parse/release-year.js';
+import { MODE_MOVIE } from '../../shared/state.js';
 
 function yearOf(value) {
     var year = parseInt(String(value || '').slice(0, 4), 10);

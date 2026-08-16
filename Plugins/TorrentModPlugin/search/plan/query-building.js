@@ -1,7 +1,7 @@
     // ---------- query building ----------
-    import { enabled, pad, unique } from '../shared/utils.js';
-    import { MODE_MOVIE } from '../shared/state.js';
-    import { workFamily, prefersLocalTitle } from './work-profile.js';
+    import { enabled, pad, unique } from '../../shared/utils.js';
+    import { MODE_MOVIE } from '../../shared/state.js';
+    import { workFamily, prefersLocalTitle } from '../profile/work-profile.js';
 
     export function normalizedTitleKey(value) {
         var source = String(value || '');
@@ -31,7 +31,7 @@
         ].concat(Array.isArray(aliases) ? aliases : []).filter(Boolean), normalizedTitleKey);
     }
 
-    export { isAnimeTarget } from './work-profile.js';
+    export { isAnimeTarget } from '../profile/work-profile.js';
 
     export function searchNames(target) {
         target = target || {};

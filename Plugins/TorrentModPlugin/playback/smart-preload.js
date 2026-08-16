@@ -1,4 +1,4 @@
-    import { parseSignals } from '../shared/release-signals.js';
+    import { parseSignals } from '../search/parse/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
     import { isPlayableFile, pickBestFile as pickBestPlayableFile, parseSeriesFileLayout } from './file-selection.js';

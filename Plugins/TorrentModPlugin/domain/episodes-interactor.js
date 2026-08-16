@@ -2,7 +2,7 @@
     import { searchMovieTorrents, searchMovieTorrentsProgressive } from '../search/movie-search.js';
     import { searchSeriesTorrents, searchSeriesTorrentsProgressive } from '../search/series-search.js';
     import { notify } from '../shared/utils.js';
-    import { ensureSearchRules } from '../search/rules-source.js';
+    import { ensureSearchRules } from '../search/rules/rules-source.js';
     import { mergeReleases } from '../shared/release-identity.js';
     import { SEASON_CACHE_KEY, MODE_MOVIE, MODE_SERIES, POOL_RETRY_DELAYS_MS } from '../shared/state.js';
     import { isCurrentGeneration } from '../shared/core/generation-guard.js';

@@ -1,5 +1,5 @@
     // ---------- domain: selection interactor ----------
-    import { evaluateCandidatePool } from '../search/scoring.js';
+    import { evaluateCandidatePool } from '../search/rank/scoring.js';
     import { startDownload } from '../playback/smart-preload.js';
     import { notify } from '../shared/utils.js';
     import { isConfidentMatch, candidateIdentity, findSavedDefault } from './results-core.js';

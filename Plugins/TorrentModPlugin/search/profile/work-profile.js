@@ -3,7 +3,7 @@
 // чего дорамы, китайское игровое кино и аниме-фильмы шли общим путём и не находились вовсе
 // (замеры — §1.5 docs/system-design/torrent-mod-search-architecture.md).
 
-import { MODE_MOVIE } from '../shared/state.js';
+import { MODE_MOVIE } from '../../shared/state.js';
 
 export var FAMILY_ANIME = 'anime';
 export var FAMILY_DONGHUA = 'donghua';
