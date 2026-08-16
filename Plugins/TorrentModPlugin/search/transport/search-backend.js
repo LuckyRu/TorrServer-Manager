@@ -131,6 +131,48 @@
         return title + '|' + (raw.Size || raw.size || 0);
     }
 
+    // Два запроса плана могут вернуть один релиз с разной свежестью метаданных. Отбрасывать
+    // второй ответ только по title/size нельзя: именно mergeReleases раньше сохранял вариант с
+    // magnet, большим числом сидов/пиров или более свежей датой. Сравнение сырых полей дешёвое
+    // и позволяет не разбирать равный/худший дубль, не меняя прежнюю семантику выбора победителя.
+    function rawTransportRank(raw) {
+        var magnet = raw && (raw.MagnetUri || raw.Magnet || '');
+        var link = raw && (raw.Link || raw.downloadUrl || '');
+        if (magnet || /^magnet:/i.test(link)) return 2;
+        return link ? 1 : 0;
+    }
+
+    function rawNumber(raw, names) {
+        for (var i = 0; i < names.length; i++) {
+            if (raw && raw[names[i]] !== undefined) {
+                var value = Number(raw[names[i]]);
+                return isFinite(value) ? value : 0;
+            }
+        }
+        return 0;
+    }
+
+    function rawPublishedAt(raw) {
+        var value = Date.parse(raw && (raw.PublishDate || raw.publishDate || raw.pubDate || ''));
+        return isNaN(value) ? 0 : value;
+    }
+
+    function rawVariantIsBetter(existing, candidate) {
+        var existingTransport = rawTransportRank(existing);
+        var candidateTransport = rawTransportRank(candidate);
+        if (candidateTransport !== existingTransport) return candidateTransport > existingTransport;
+
+        var existingSeeders = rawNumber(existing, ['Seeders', 'Seed', 'seeders']);
+        var candidateSeeders = rawNumber(candidate, ['Seeders', 'Seed', 'seeders']);
+        if (candidateSeeders !== existingSeeders) return candidateSeeders > existingSeeders;
+
+        var existingPeers = rawNumber(existing, ['Peers', 'Peer', 'leechers']);
+        var candidatePeers = rawNumber(candidate, ['Peers', 'Peer', 'leechers']);
+        if (candidatePeers !== existingPeers) return candidatePeers > existingPeers;
+
+        return rawPublishedAt(candidate) > rawPublishedAt(existing);
+    }
+
     // Один проход по сырой выдаче вместо четырёх: разбор и оба гейта — чистые поэлементные
     // функции, поэтому слияние стадий не меняет результат, но снимает три промежуточных массива
     // и позволяет отбросить дубль до самой дорогой работы. `seen` переживает запросы одного
@@ -150,8 +192,9 @@
         function handle(raw) {
             var key = rawIdentity(raw);
             if (key) {
-                if (duplicates[key]) return;
-                duplicates[key] = true;
+                var previous = duplicates[key];
+                if (previous && !rawVariantIsBetter(previous, raw)) return;
+                duplicates[key] = raw;
             }
             considered++;
 

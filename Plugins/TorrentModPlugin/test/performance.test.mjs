@@ -283,6 +283,64 @@ function runSearch() {
     });
 }
 
+// Ранняя дедупликация обязана сохранять семантику mergeReleases: один и тот же релиз может
+// приехать по двум запросам сначала как link-only со старыми счётчиками, затем с magnet и более
+// свежей доступностью. Второй вариант должен пройти разбор и вытеснить первый, а не исчезнуть как
+// уже виденный title/size.
+function runImprovedDuplicateSearch() {
+    const queries = ['Big Bang regression first', 'Big Bang regression second'];
+    const title = 'Теория большого взрыва / The Big Bang Theory S01E01 [2007, WEB-DL 1080p]';
+    const common = {
+        Title: title,
+        Tracker: 'RuTracker',
+        Size: 2_000_000_000,
+        Peers: 4,
+        PublishDate: '2024-03-01T00:00:00Z'
+    };
+    const first = Object.assign({}, common, {
+        Seeders: 2,
+        Link: 'http://jackett.invalid/download/old'
+    });
+    const improved = Object.assign({}, common, {
+        Seeders: 99,
+        MagnetUri: 'magnet:?xt=urn:btih:improved-duplicate',
+        PublishDate: '2025-03-01T00:00:00Z'
+    });
+
+    globalThis.__clearReguest();
+    [first, improved].forEach((raw, index) => {
+        const encoded = 'query=' + encodeURIComponent(queries[index]);
+        globalThis.__mockReguest(
+            (url) => url.includes(encoded + '&') || url.endsWith(encoded),
+            {
+                indexers: [{
+                    id: 'rutracker', name: 'RuTracker', ok: true, error: null,
+                    elapsedMs: index ? 25 : 1, results: [raw]
+                }],
+                results: []
+            },
+            index ? 25 : 0
+        );
+    });
+
+    const scope = createLifecycle();
+    let pool = [];
+    return new Promise((resolve) => {
+        searchTorrentModProgressive(
+            baseTarget,
+            parseSeriesRelease,
+            () => queries,
+            (entry) => { pool = mergeReleases(pool, entry.items); },
+            () => {
+                scope.dispose();
+                resolve(pool);
+            },
+            scope,
+            () => {}
+        );
+    });
+}
+
 // ---------- фейковый DOM и кадр ----------
 // jsdom в проекте нет и не нужен: reconcileKeyedChildren работает с тремя методами контейнера,
 // а планировщику достаточно управляемого requestAnimationFrame.
@@ -323,6 +381,7 @@ function fakeFrames() {
 // ---------- тесты ----------
 
 const search = await runSearch();
+const improvedDuplicatePool = await runImprovedDuplicateSearch();
 observed.poolSize = search.pool.length;
 observed.queries = search.queries.length;
 
@@ -363,6 +422,13 @@ runner.test('intake: трекер не переотправляет накопл
     observed.deliveredItemsVolume = search.counters.deliveredItemsVolume;
     assert.ok(search.counters.deliveredItemsVolume <= BUDGETS.deliveredItemsVolume,
         `доставлено элементов ${search.counters.deliveredItemsVolume}, бюджет ${BUDGETS.deliveredItemsVolume}`);
+});
+
+runner.test('intake: лучший вариант дубля вытесняет ранний link-only ответ', () => {
+    assert.equal(improvedDuplicatePool.length, 1, 'один релиз разъехался на несколько записей');
+    assert.equal(improvedDuplicatePool[0].seeders, 99, 'остались устаревшие счётчики доступности');
+    assert.equal(improvedDuplicatePool[0].magnet, 'magnet:?xt=urn:btih:improved-duplicate',
+        'ранняя дедупликация потеряла вариант с magnet');
 });
 
 runner.test('проекции: один poolRevision — не более одного пересчёта каждой проекции', () => {
