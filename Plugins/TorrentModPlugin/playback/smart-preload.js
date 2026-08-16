@@ -639,6 +639,10 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
             season: info.season,
             episode: info.episode,
             path: file.path,
+            // Lampa опрашивает статистику торрента по torrent_hash того элемента, который сейчас
+            // играет. У первого запуска поле есть, а элементы плейлиста его не несли — после
+            // перехода на следующую серию опрос уходил на /gst/undefined/heartbeat.
+            torrent_hash: session.hash,
             timeline: Lampa.Timeline.view(info.hash)
         };
         if (transport.url) {
@@ -756,26 +760,55 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
             for (var i = 1; i < 5; i++) indicator.find('span').eq(i).toggleClass('active', i < filled);
         }
 
-        function poll() {
+        function applyState(data) {
+            if (stopped || !fileScope.isAlive()) return;
+            cache = data || {};
+            var torrent = cache.Torrent || cache.torrent || {};
+            // playback-state отдаёт скорость верхним полем, heartbeat — внутри Torrent.
+            var rawSpeed = Number(torrent.download_speed || torrent.DownloadSpeed ||
+                cache.DownloadSpeed || cache.download_speed || 0) * 8;
+            var now = Date.now();
+            smoothSpeed = smoothDownloadBps(smoothSpeed, rawSpeed, sampledAt ? (now - sampledAt) / 1000 : 2);
+            sampledAt = now;
             renderHealth();
-            if (request || stopped) return;
-            var base = torrServerBase();
-            if (!base || !session.hash) return;
-            request = $.ajax({
-                url: base + '/gst/' + encodeURIComponent(session.hash) + '/heartbeat',
+        }
+
+        function requestState(path) {
+            return $.ajax({
+                url: torrServerBase() + '/gst/' + encodeURIComponent(session.hash) + path,
                 method: 'GET',
                 dataType: 'json',
                 timeout: 2500
-            }).done(function (data) {
-                if (stopped || !fileScope.isAlive()) return;
-                cache = data || {};
-                var torrent = cache.Torrent || cache.torrent || {};
-                var rawSpeed = Number(torrent.download_speed || torrent.DownloadSpeed || 0) * 8;
-                var now = Date.now();
-                smoothSpeed = smoothDownloadBps(smoothSpeed, rawSpeed, sampledAt ? (now - sampledAt) / 1000 : 2);
-                sampledAt = now;
-                renderHealth();
-            }).always(function () { request = null; });
+            });
+        }
+
+        function poll() {
+            renderHealth();
+            if (request || stopped) return;
+            if (!torrServerBase() || !session.hash) return;
+            // Лёгкий срез вместо полного CacheState: на сериальном паке heartbeat отдаёт около
+            // 43 КБ — список файлов торрента и карту всех кусков — каждые две секунды.
+            // Сервер старше этого роута отвечает 404, и тогда сессия навсегда уходит на heartbeat:
+            // 404 сам по себе значит и «нет сессии», поэтому переключаемся только если старый
+            // роут действительно ответил данными.
+            if (session.lightPlaybackState === false) {
+                request = requestState('/heartbeat').done(applyState).always(function () { request = null; });
+                return;
+            }
+            request = requestState('/playback-state')
+                .done(function (data) {
+                    session.lightPlaybackState = true;
+                    applyState(data);
+                })
+                .fail(function (xhr) {
+                    if (stopped || !fileScope.isAlive() || session.lightPlaybackState === true) return;
+                    if (!xhr || xhr.status !== 404) return;
+                    requestState('/heartbeat').done(function (data) {
+                        session.lightPlaybackState = false;
+                        applyState(data);
+                    });
+                })
+                .always(function () { request = null; });
         }
 
         function cleanup() {
@@ -995,6 +1028,8 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
             filesTimer: null,
             filesDeadline: null,
             nextEpisodeCleanup: null,
+            // null — ещё не проверяли, есть ли на сервере лёгкий роут состояния.
+            lightPlaybackState: null,
             healthCleanup: null,
             dispose: function () {
                 scope.dispose(function () {
