@@ -3,8 +3,29 @@
     import { MODE_MOVIE } from '../../shared/state.js';
     import { workFamily, prefersLocalTitle } from '../profile/work-profile.js';
 
+    // Разбор одного заголовка вызывает нормализацию около полусотни раз, и аргументы повторяются:
+    // названия и алиасы цели одни и те же для всей выдачи трекера. NFKC плюс Unicode-regex дороги,
+    // поэтому результат кэшируется. Кэш ограничен и сбрасывается целиком: приложение живёт на
+    // телевизоре неделями, а вытеснение по одному здесь не окупает своей сложности.
+    var NORMALIZED_CACHE_MAX = 2000;
+    var normalizedCache = Object.create(null);
+    var normalizedCacheSize = 0;
+
     export function normalizedTitleKey(value) {
         var source = String(value || '');
+        var cached = normalizedCache[source];
+        if (cached !== undefined) return cached;
+        var normalized = normalizeTitleValue(source);
+        if (normalizedCacheSize >= NORMALIZED_CACHE_MAX) {
+            normalizedCache = Object.create(null);
+            normalizedCacheSize = 0;
+        }
+        normalizedCache[source] = normalized;
+        normalizedCacheSize++;
+        return normalized;
+    }
+
+    function normalizeTitleValue(source) {
         try { source = source.normalize('NFKC'); } catch (e) {}
         return source.toLowerCase().replace(/[^a-z0-9а-яё\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+/gi, ' ').trim();
     }
