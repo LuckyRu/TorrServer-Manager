@@ -723,6 +723,15 @@ runner.test('выбор файла: сериал сохраняет episode-awar
     if (!chosen || chosen.id !== 2) throw new Error('сериал потерял выбор по эпизоду: ' + JSON.stringify(chosen));
 });
 
+runner.test('выбор файла: path_human используется, если TorrServer не заполнил path', () => {
+    const files = [
+        { id: 1, path_human: 'Hell Mode/Season 01/01 [HEVC].mkv', length: 1_000_000_000 },
+        { id: 2, path_human: 'Hell Mode/Season 01/02 [HEVC].mkv', length: 1_000_000_000 }
+    ];
+    const chosen = pickBestFile(files, { mode: 'series', season: 1, episode: 1 }, parseSignals);
+    if (!chosen || chosen.id !== 1) throw new Error('path_human не распознан для серии: ' + JSON.stringify(chosen));
+});
+
 runner.test('выбор файла: сезонный каталог и порядковый номер задают серию', () => {
     const files = [
         { id: 1, path: 'The Big Bang Theory/Season_07/01. Недостаток Хофстедтера.mkv', length: 1_000_000_000 },

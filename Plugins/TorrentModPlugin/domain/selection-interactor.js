@@ -48,6 +48,8 @@
                     return {
                         rank: index + 1,
                         title: item.title,
+                        tracker: item.tracker,
+                        release: item.release,
                         seeders: item.seeders,
                         leechers: item.leechers !== undefined ? item.leechers : item.peers,
                         payloadMbps: score.payloadMbps ? Math.round(score.payloadMbps * 100) / 100 : null,
@@ -61,6 +63,9 @@
                         availability: score.availabilityScore,
                         streamingRiskPenalty: score.streamingRiskPenalty,
                         pipelinePenalty: score.pipelinePenalty,
+                        identityPasses: score.identityPasses,
+                        identityReason: score.identityReason || '',
+                        identityDetails: score.identityDetails || {},
                         value: score.value
                     };
                 }),

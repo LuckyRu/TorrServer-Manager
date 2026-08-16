@@ -243,6 +243,7 @@
 
     export function scoreCandidateFromBase(item, target, base) {
         var release = item.release;
+        var identity = evaluateIdentityGate(item, target);
         var passes = passesMatchGate(item, target, base.titlePasses);
         var matchScore = base.titleScore +
             (release.explicitSeason && release.seasons.indexOf(target.season) >= 0 ? 20 : 0) +
@@ -264,7 +265,12 @@
             payloadConfidence: base.payload.confidence,
             payloadCoverageEpisodes: base.payload.coverageEpisodes,
             payloadDurationMinutes: base.payload.durationMinutes,
-            payloadReason: base.payload.reason
+            payloadReason: base.payload.reason,
+            // Expose the identity decision to diagnostics. The picker must explain whether a
+            // release disappeared because of S/EP matching, rather than only showing a count.
+            identityPasses: identity.passes,
+            identityReason: identity.reason || '',
+            identityDetails: identity.details || {}
         };
     }
 

@@ -4,12 +4,21 @@ var STREAMABLE_FORMATS = ['mp4', 'mkv', 'm4v', 'mov', 'webm', 'ts', 'm2ts', 'mts
 var LEGACY_FORMATS = ['avi', 'mpg', 'mpeg', 'vob', 'wmv', 'asf', 'flv', 'rm', 'rmvb', 'divx'];
 
 export function isPlayableFile(file) {
-    var exe = String((file && file.path) || '').split('.').pop().toLowerCase();
+    var exe = fileExtension(file);
     return PLAYABLE_FORMATS.indexOf(exe) >= 0;
 }
 
 export function filePath(file) {
-    return String((file && (file.path || file.title)) || '');
+    // TorrServer versions differ: file_stats may expose the machine path as `path`,
+    // while some Jackett/Anilibria layouts only fill `path_human`. Keep the human
+    // path as a fallback so a valid video is not silently discarded before scoring.
+    return String((file && (file.path || file.path_human || file.title)) || '');
+}
+
+export function fileExtension(file) {
+    var path = filePath(file).split(/[?#]/)[0];
+    var match = path.match(/\.([a-z0-9]{2,6})$/i);
+    return match ? match[1].toLowerCase() : '';
 }
 
 export function extensionScore(path) {

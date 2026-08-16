@@ -2,7 +2,8 @@
         candidateIdentity, candidateBadgeText, candidateSubtitleText } from './results-core.js';
     import { buildSeasonItems } from '../metadata/season-picker.js';
     import { MODE_SERIES, POOL_MAX_ATTEMPTS } from '../shared/state.js';
-    import { applyStateFilters, createCandidateScoreBase, scoreCandidateFromBase } from '../search/rank/scoring.js';
+    import { applyStateFilters, createCandidateScoreBase, scoreCandidateFromBase, evaluateCandidatePool } from '../search/rank/scoring.js';
+    import { debug, debugEnabled, log } from '../shared/core/log.js';
 
     export function selectBusy(state) {
         return state.episodesStatus === 'loading' || state.poolStatus === 'loading';
@@ -148,7 +149,41 @@
 
     export function selectPickerData(object, state, seasonDefault) {
         var episode = state.picker.episode;
-        var items = selectCandidatesForEpisode(object, state, episode);
+        var target = buildEpisodeTarget(object, state, episode);
+        var evaluation = evaluateCandidatePool(state.pool, target, state);
+        var items = evaluation.items;
+        // The picker is the first place where the user can compare a particular episode.
+        // Keep a compact always-on breadcrumb and a verbose structured snapshot for the
+        // diagnostics buffer, including every candidate's gate decision and score.
+        log('selection', 'picker: сезон ' + state.season + ', серия ' + episode + ', кандидатов=' + items.length, {
+            pool: evaluation.inputCount,
+            afterStateFilters: evaluation.afterStateFilters,
+            gateFiltered: evaluation.gateFilteredCount,
+            candidates: items.slice(0, 30).map(function (item) {
+                return { title: item.title, tracker: item.tracker, seeders: item.seeders };
+            }),
+            rejected: evaluation.rejectedTitles.slice(0, 30)
+        });
+        if (debugEnabled()) {
+            debug('selection', 'picker: разбор кандидатов серии', {
+                season: state.season,
+                episode: episode,
+                pool: evaluation.inputCount,
+                filters: state.filters || {},
+                stateFiltered: evaluation.stateFilteredCount,
+                gateFiltered: evaluation.gateFilteredCount,
+                candidates: evaluation.items.map(function (item, index) {
+                    return candidateDebug(item, index + 1);
+                }),
+                rejected: evaluation.scoredItems.filter(function (item) {
+                    return !item._score || !item._score.passes;
+                }).map(function (item) {
+                    return candidateDebug(item, 0);
+                }),
+                stateFilteredTitles: evaluation.stateFilteredTitles,
+                gateFilteredTitles: evaluation.gateFilteredTitles
+            });
+        }
         var selectedId = seasonDefault ? seasonDefault.id : null;
         if (items.length) {
             return {
@@ -165,7 +200,7 @@
                         selected: !!(selectedId && id === selectedId)
                     };
                 }),
-                target: buildEpisodeTarget(object, state, episode),
+                target: target,
                 selectedId: selectedId
             };
         }
@@ -176,4 +211,26 @@
         var seasonFailed = !!(state.seasonLoads && state.seasonLoads[state.season] === 'error');
         if (poolFailed || seasonFailed) return { status: 'error', items: [], target: null, selectedId: null, retrySeason: true };
         return { status: 'empty', items: [], target: null, selectedId: null };
+    }
+
+    function candidateDebug(item, rank) {
+        var score = item && item._score || {};
+        var release = item && item.release || {};
+        return {
+            rank: rank,
+            title: item && item.title || '',
+            tracker: item && item.tracker || '',
+            trackerId: item && item.trackerId || '',
+            seeders: item && item.seeders || 0,
+            release: release,
+            passes: score.passes !== false,
+            identityReason: score.identityReason || '',
+            identityDetails: score.identityDetails || {},
+            match: score.matchScore,
+            value: score.value,
+            quality: score.qualityScore,
+            availability: score.availabilityScore,
+            payloadMbps: score.payloadMbps || null,
+            payloadConfidence: score.payloadConfidence || 'none'
+        };
     }

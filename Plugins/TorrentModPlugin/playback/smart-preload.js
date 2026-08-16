@@ -1,12 +1,13 @@
     import { parseSignals } from '../search/parse/release-signals.js';
     import { notify, field, previousController } from '../shared/utils.js';
     import { MODE_MOVIE, MODE_SERIES } from '../shared/state.js';
-    import { isPlayableFile, pickBestFile as pickBestPlayableFile, parseSeriesFileLayout } from './file-selection.js';
+import { isPlayableFile, fileExtension, pickBestFile as pickBestPlayableFile, parseSeriesFileLayout } from './file-selection.js';
+import { scoreSeriesFile } from './series-file-selection.js';
     import { buildMoviePlayerData } from './movie-player.js';
     import { buildSeriesPlayerData } from './series-player.js';
     import { normalizeAudioTracks, preferenceFromTrack, resolvePreferredTrack } from './audio-tracks.js';
     import { clientId } from './client-identity.js';
-    import { log, warn } from '../shared/core/log.js';
+import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
     import { createLifecycle } from '../shared/core/lifecycle.js';
     import {
         sourceBitrateBps,
@@ -508,6 +509,26 @@
                     if (!session.alive || session.clicked || session.bestFile) return;
                     var stats = (json && json.file_stats) || [];
                     var plays = stats.filter(isPlayableFile);
+                    // Keep the complete server response in diagnostics. In particular, an
+                    // Anilibria pack can expose a readable path in path_human while path is
+                    // empty; without this snapshot the reason for an empty picker was opaque.
+                    if (debugEnabled()) debug('playback', 'pollFiles: ответ TorrServer', {
+                        hash: session.hash,
+                        attempt: attempts,
+                        totalFiles: stats.length,
+                        playableFiles: plays.length,
+                        files: stats.slice(0, 200).map(function (file) {
+                            return {
+                                id: file && file.id,
+                                path: file && file.path || '',
+                                pathHuman: file && file.path_human || '',
+                                title: file && file.title || '',
+                                extension: fileExtension(file),
+                                playable: isPlayableFile(file),
+                                size: file && (file.length || file.size || 0)
+                            };
+                        })
+                    });
                     if (!plays.length) {
                         if (attempts >= maxAttempts) {
                             clearInterval(session.filesTimer);
@@ -521,7 +542,12 @@
                     clearTimeout(session.filesDeadline);
                     session.filesTimer = null;
                     session.filesDeadline = null;
-                    log('playback', 'pollFiles: метаданные получены, попытка ' + attempts + ', файлов=' + plays.length);
+                    log('playback', 'pollFiles: метаданные получены, попытка ' + attempts + ', файлов=' + plays.length, {
+                        hash: session.hash,
+                        totalFiles: stats.length,
+                        playableFiles: plays.length,
+                        ignoredFiles: stats.length - plays.length
+                    });
                     session.allFiles = stats;
                     try { Lampa.Torserver.clearFileName(plays); } catch (e) {}
                     session.files = plays;
@@ -540,6 +566,26 @@
 
     function pickBestFile(session) {
         if (!session.alive || session.clicked || !session.files || !session.files.length) return;
+        if (session.mode === MODE_SERIES && debugEnabled()) {
+            debug('playback', 'pickBestFile: разбор файлов серии', {
+                torrent: session.item.title,
+                target: { season: session.target.season, episode: session.target.episode },
+                files: session.files.slice(0, 200).map(function (file) {
+                    var layout = parseSeriesFileLayout(file);
+                    var path = file && (file.path || file.path_human || file.title) || '';
+                    var signals = parseSignals(path);
+                    return {
+                        id: file && file.id,
+                        path: path,
+                        extension: fileExtension(file),
+                        layout: layout,
+                        releaseSignals: signals,
+                        score: scoreSeriesFile(file, session.target, parseSignals),
+                        size: file && (file.length || file.size || 0)
+                    };
+                })
+            });
+        }
         session.bestFile = pickBestPlayableFile(session.files, session.target, parseSignals);
         if (!session.bestFile) return;
         log('playback', 'pickBestFile: выбран файл "' + session.bestFile.path + '"', {
