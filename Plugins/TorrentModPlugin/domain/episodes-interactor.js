@@ -146,8 +146,12 @@
                 poolSearchHandle = search(target, function (entry) {
                 if (!isCurrentGeneration(store, 'poolGeneration', generation, isDestroyed)) return;
                 var current = store.get();
-                log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" ' +
-                    (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, +' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
+                // Запрос в строке обязателен: один трекер отчитывается по разу на каждый запрос
+                // плана, и «+0» без запроса выглядит как «трекер ничего не дал», хотя это ответ
+                // на японское написание, а русское тем же трекером ещё не отработано. На этом
+                // можно потерять час, разбирая живой лог.
+                log('episodes', 'loadAllTorrents: трекер "' + entry.name + '" по запросу "' + (entry.query || '') + '" ' +
+                    (entry.ok ? ('ответил за ' + entry.elapsedMs + 'мс, всего принято ' + entry.items.length) : ('провалился (' + entry.error + ') за ' + entry.elapsedMs + 'мс')));
                 // Один медленный индексатор держит poolStatus в «загружается» и после того, как
                 // показывать уже есть что. Прогрессивная выдача это скрывает, поэтому отмечаем
                 // явно: иначе разбирать «почему поиск шёл минуту» не по чему.
