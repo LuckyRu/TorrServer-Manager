@@ -1,6 +1,7 @@
     import { parseSignals } from './release-signals.js';
     import { parseYear } from './release-year.js';
-    import { extractStudios } from './release-studios.js';
+    import { extractCredits } from './release-credits.js';
+    import { creditInfo } from './credits-registry.js';
     export { parseSignals };
 
     function matchOne(source, pairs) {
@@ -39,7 +40,7 @@
         return found;
     }
 
-    function extractVoiceTypes(source, profile) {
+    function extractVoiceTypes(source, profile, translators) {
         var found = [];
         VOICE_MARKERS.forEach(function (marker) {
             if (marker[0].test(source) && found.indexOf(marker[1]) < 0) found.push(marker[1]);
@@ -49,6 +50,14 @@
         if (!profile || profile.voices !== 'text') {
             voiceCodes(source).forEach(function (name) {
                 if (found.indexOf(name) < 0) found.push(name);
+            });
+        }
+        // Студия названа, а тип перевода — нет: «(Кубик в Кубе)» это всегда многоголосый,
+        // «(Ю. Сербин)» — всегда одноголосый. Реестр знает это про студию, заголовок молчит.
+        if (!found.length) {
+            (translators || []).forEach(function (name) {
+                var record = creditInfo(name);
+                if (record && record.voice && found.indexOf(record.voice) < 0) found.push(record.voice);
             });
         }
         // Трекер, который не пишет тип перевода вовсе, объявляет его профилем — иначе фильтр
@@ -87,7 +96,8 @@
     export function parseRelease(title, profile) {
         var source = stripByProfile(String(title || ''), profile);
         var signals = parseSignals(source);
-        var voiceTypes = extractVoiceTypes(source, profile);
+        var credits = extractCredits(source, profile);
+        var voiceTypes = extractVoiceTypes(source, profile, credits.translators);
         var release = {
             seasons: signals.seasons,
             episodeFrom: signals.episodeFrom,
@@ -121,7 +131,10 @@
             // voiceType остаётся первым по приоритету значением — бейджи и старые фильтры
             // читают одно значение, множество живёт рядом в voiceTypes.
             voiceType: voiceTypes[0] || '',
-            translators: extractStudios(source, profile),
+            // Кто перевёл и кто собрал — разные роли и разные меню: «от Scarabey» это релиз-группа,
+            // а не студия перевода (docs/reference/torrent-mod-tracker-formats.md §1.5).
+            translators: credits.translators,
+            releaseGroups: credits.releaseGroups,
             year: (profile && profile.year === 'never') ? ABSENT_YEAR : parseYear(source),
             subtitles: /\bsub\b|\bsubs\b|субтитр/i.test(source),
             videoCodec: matchOne(source, [

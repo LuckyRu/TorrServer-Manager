@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 
 import { parseRelease, parseSignals } from '../search/parse/release-parsing.js';
 import { parseYear, yearMatches } from '../search/parse/release-year.js';
-import { extractStudios, registerStudioRules } from '../search/parse/release-studios.js';
+import { extractCredits } from '../search/parse/release-credits.js';
+import { registerCredits, creditInfo, CREDIT_KINDS } from '../search/parse/credits-registry.js';
 import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments, evaluateMediaTypeGate } from '../search/gates/search-gates.js';
 import { profileFor, indexersInGroup, registerTrackerRules } from '../search/rules/tracker-profiles.js';
 import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gates/gate-identity.js';
@@ -107,25 +108,59 @@ test('однобуквенные коды rutor и megapeer читаются к�
     assert.deepEqual(parseRelease('Фильм / Movie (2024) BDRip 1080p').voiceTypes, []);
 });
 
-// ---------- студии ----------
+// ---------- студии и релиз-группы ----------
+
+const studiosOf = (title, profile) => extractCredits(title, profile).translators;
+const groupsOf = (title, profile) => extractCredits(title, profile).releaseGroups;
 
 test('студии извлекаются по грамматике трекера, а не по словарю', () => {
-    assert.deepEqual(extractStudios('S1E1-6 of 6 (2024) WEB-DL 1080p] 6 x MVO (LostFilm, HDrezka, TVShows, Продубляж)'),
+    assert.deepEqual(studiosOf('S1E1-6 of 6 (2024) WEB-DL 1080p] 6 x MVO (LostFilm, HDrezka, TVShows, Продубляж)'),
         ['LostFilm', 'HDrezka', 'TVShows', 'Продубляж']);
-    assert.deepEqual(extractStudios('Дюна / Dune (2024) WEB-DL 1080p от Scarabey | D'), ['Scarabey']);
-    assert.deepEqual(extractStudios('[2024, WEB-DL 1080p] [MVO|Сербин]'), ['Сербин']);
+    assert.deepEqual(studiosOf('[2024, WEB-DL 1080p] [MVO|Сербин]'), ['Ю. Сербин']);
 });
 
-test('в студии не попадают языки, пометки и сами типы перевода', () => {
-    const noise = extractStudios('Фильм (2024) BDRip 1080p | DUB, MVO, AVO - ExKinoRay + Sub (Rus, Eng, Ukr) + Original');
+test('релиз-группа не смешивается со студией перевода', () => {
+    // «от X» на rutor — тот, кто собрал раздачу; студия стоит в поле за кодом перевода.
+    const rutor = profileFor('rutor');
+    const credits = extractCredits('Дюна / Dune (2024) WEB-DL 1080p от Scarabey | D | Red Head Sound', rutor);
+    assert.deepEqual(credits.releaseGroups, ['Scarabey']);
+    assert.deepEqual(credits.translators, ['Red Head Sound']);
+});
+
+test('роль имени решает реестр, а не слот', () => {
+    // Jaskier и озвучивает, и заливает: в слоте релиза он группа, в слоте перевода — студия.
+    const rutor = profileFor('rutor');
+    assert.deepEqual(groupsOf('Фильм / Movie (2024) WEB-DL 1080p от Jaskier | P', rutor), ['Jaskier']);
+    assert.deepEqual(studiosOf('Фильм (2024) 1080p] MVO (Jaskier)'), ['Jaskier']);
+    // ExKinoRay в слоте студии всё равно остаётся релиз-группой: так сказал реестр.
+    assert.deepEqual(groupsOf('Фильм / Movie (2024) WEB-DL 1080p | D-ExKinoRay', rutor), ['ExKinoRay']);
+});
+
+test('код перевода не приклеивается к имени студии', () => {
+    const rutor = profileFor('rutor');
+    assert.deepEqual(studiosOf('Сериал / Series [S02] (2024) WEBRip | P2-ViruseProject', rutor), ['ViruseProject']);
+    assert.deepEqual(studiosOf('Фильм / Movie (2024) WEB-DL 1080p | P-Продубляж', profileFor('megapeer')), ['Продубляж']);
+});
+
+test('в авторов не попадают языки, пометки и сами типы перевода', () => {
+    const noise = extractCredits('Фильм (2024) BDRip 1080p | DUB, MVO, AVO - ExKinoRay + Sub (Rus, Eng, Ukr) + Original');
+    const all = noise.translators.concat(noise.releaseGroups);
     ['Rus', 'Eng', 'Ukr', 'MVO', 'AVO', 'Original'].forEach((word) => {
-        assert.equal(noise.indexOf(word), -1, 'в студии попало «' + word + '»: ' + JSON.stringify(noise));
+        assert.equal(all.indexOf(word), -1, 'в авторы попало «' + word + '»: ' + JSON.stringify(all));
     });
 });
 
 test('разные написания одной студии схлопываются в каноническое', () => {
-    assert.deepEqual(extractStudios('Сериал (2024) 1080p] MVO (HDRezka Studio)'), ['HDrezka']);
-    assert.deepEqual(extractStudios('Сериал (2024) 1080p] MVO (кубик в кубе)'), ['Кубик в Кубе']);
+    assert.deepEqual(studiosOf('Сериал (2024) 1080p] MVO (HDRezka Studio)'), ['HDrezka']);
+    assert.deepEqual(studiosOf('Сериал (2024) 1080p] MVO (кубик в кубе)'), ['Кубик в Кубе']);
+});
+
+test('тип перевода берётся из реестра, когда заголовок о нём молчит', () => {
+    // noname-club почти никогда не пишет перевод, но студию называет: LostFilm — всегда МВО.
+    assert.deepEqual(parseRelease('Сериал / Series (2024) WEB-DL 1080p LostFilm', profileFor('noname-club')).voiceTypes,
+        ['Многоголосый']);
+    // Явный маркер в заголовке всегда важнее реестра.
+    assert.deepEqual(parseRelease('Фильм (2024) BDRip 1080p Дубляж (LostFilm)').voiceTypes, ['Дубляж']);
 });
 
 // ---------- гейт по названию ----------
@@ -387,9 +422,9 @@ test('у аниме-трекеров студия — сам трекер, а г
     assert.deepEqual(anilibria.translators, ['AniLibria']);
 });
 
-test('слот студии выбирается по трекеру', () => {
-    // rutor пишет «от X», rutracker — в скобках после типа перевода.
-    assert.deepEqual(parseRelease('Дюна / Dune (2024) WEB-DL 1080p от Scarabey | D', profileFor('rutor')).translators, ['Scarabey']);
+test('слот автора выбирается по трекеру', () => {
+    // rutor пишет сборщика в «от X», rutracker — студию в скобках после типа перевода.
+    assert.deepEqual(parseRelease('Дюна / Dune (2024) WEB-DL 1080p от Scarabey | D', profileFor('rutor')).releaseGroups, ['Scarabey']);
     assert.deepEqual(parseRelease('Сериал S01E01 (2024) 1080p] MVO (TVShows)', profileFor('rutracker')).translators, ['TVShows']);
 });
 
@@ -633,16 +668,32 @@ test('на живом корпусе разбор не выдумывает се
 // Реестр студий глобален для модуля, поэтому эта проверка идёт последней.
 
 test('студию можно добавить и переименовать правилами, не трогая код', () => {
-    assert.deepEqual(extractStudios('Сериал (2024) 1080p] MVO (Тайм Медиа Групп)'), ['Тайм Медиа Групп']);
+    assert.deepEqual(studiosOf('Сериал (2024) 1080p] MVO (Тайм Медиа Групп)'), ['Тайм Медиа Групп']);
 
-    registerStudioRules([{ name: 'Тайм Медиа', aliases: ['Тайм Медиа Групп', 'TimeMedia'], disabled: false }]);
+    registerCredits([{ name: 'Тайм Медиа', aliases: ['Тайм Медиа Групп', 'TimeMedia'] }], CREDIT_KINDS.STUDIO);
     // Оба написания сводятся к каноническому имени из правил.
-    assert.deepEqual(extractStudios('Сериал (2024) 1080p] MVO (Тайм Медиа Групп)'), ['Тайм Медиа']);
-    assert.deepEqual(extractStudios('Сериал (2024) 1080p от TimeMedia'), ['Тайм Медиа']);
+    assert.deepEqual(studiosOf('Сериал (2024) 1080p] MVO (Тайм Медиа Групп)'), ['Тайм Медиа']);
+    // Имя из «от X» по умолчанию релиз-группа, но реестр знает, что это студия перевода.
+    assert.deepEqual(studiosOf('Сериал (2024) 1080p от TimeMedia'), ['Тайм Медиа']);
 
     // Встроенную студию можно погасить, не пересобирая плагин.
-    registerStudioRules([{ name: 'ProFilms', disabled: true }]);
-    assert.deepEqual(extractStudios('Фильм (2024) BDRip 1080p ProFilms'), []);
+    registerCredits([{ name: 'ProFilms', disabled: true }], CREDIT_KINDS.STUDIO);
+    assert.deepEqual(studiosOf('Фильм (2024) BDRip 1080p ProFilms'), []);
+});
+
+test('релиз-группа и метаданные студии приезжают файлом', () => {
+    registerCredits([{ name: 'НоваяГруппа', aliases: ['NewGroup'] }], CREDIT_KINDS.GROUP);
+    assert.deepEqual(groupsOf('Фильм (2024) BDRip 1080p от NewGroup'), ['НоваяГруппа']);
+
+    registerCredits([{ name: 'Своя Студия', voice: 'Дубляж', profanity: true, rating: 9.5, votes: 42 }], CREDIT_KINDS.STUDIO);
+    const record = creditInfo('своя студия');
+    assert.equal(record.kind, CREDIT_KINDS.STUDIO);
+    assert.equal(record.voice, 'Дубляж');
+    assert.equal(record.profanity, true);
+    assert.equal(record.rating, 9.5);
+    assert.equal(record.votes, 42);
+    // Тип перевода из реестра заполняет молчание заголовка.
+    assert.deepEqual(parseRelease('Фильм (2024) BDRip 1080p Своя Студия').voiceTypes, ['Дубляж']);
 });
 
 console.log('\nИтог: ' + passed + ' passed, ' + failed + ' failed');

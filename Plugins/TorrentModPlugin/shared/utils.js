@@ -67,6 +67,7 @@
                     codec: r.videoCodec,
                     voice: r.voiceType,
                     translators: (r.translators || []).join(', '),
+                    releaseGroups: (r.releaseGroups || []).join(', '),
                     audioTracks: r.audioTracks || '',
                     subs: r.subtitles,
                     sizeMB: Math.round(item.size / 1048576),

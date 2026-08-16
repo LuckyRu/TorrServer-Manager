@@ -1629,13 +1629,18 @@ internal sealed class PluginHub : IDisposable
         address is not null && (IPAddress.IsLoopback(address) ||
             (address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4())));
 
-    private sealed record SearchRulesStudio(string Name, string[]? Aliases, bool Disabled);
+    // Студия перевода и релиз-группа — разные роли одного справочника: первая озвучивает, вторая
+    // собирает раздачу. Секция задаёт роль по умолчанию, поле kind переопределяет её для записи.
+    private sealed record SearchRulesCredit(
+        string Name, string[]? Aliases, bool Disabled, string? Kind, string? Voice,
+        bool? Official, bool? Profanity, double? Rating, int? Votes);
 
     private sealed record SearchRulesTracker(
         string Id, string? Group, string? TitleSeparators, string? Year, string? Voices,
         string? StudioSlots, string? StudioDefault, string[]? Strip);
 
-    private sealed record SearchRulesFile(SearchRulesStudio[]? Studios, SearchRulesTracker[]? Trackers);
+    private sealed record SearchRulesFile(
+        SearchRulesCredit[]? Studios, SearchRulesCredit[]? ReleaseGroups, SearchRulesTracker[]? Trackers);
 
     private readonly object searchRulesLock = new();
     private DateTime searchRulesStamp;
@@ -1663,7 +1668,14 @@ internal sealed class PluginHub : IDisposable
     {
         if (!File.Exists(AppPaths.SearchRulesFile))
         {
-            return new { schema = 1, studios = Array.Empty<object>(), trackers = Array.Empty<object>(), warnings = Array.Empty<string>() };
+            return new
+            {
+                schema = 1,
+                studios = Array.Empty<object>(),
+                releaseGroups = Array.Empty<object>(),
+                trackers = Array.Empty<object>(),
+                warnings = Array.Empty<string>()
+            };
         }
 
         try
@@ -1672,20 +1684,8 @@ internal sealed class PluginHub : IDisposable
                 File.ReadAllText(AppPaths.SearchRulesFile),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip });
 
-            var studios = (parsed?.Studios ?? Array.Empty<SearchRulesStudio>())
-                .Where(studio => !string.IsNullOrWhiteSpace(studio.Name))
-                .Take(2000)
-                .Select(studio => new
-                {
-                    name = studio.Name.Trim(),
-                    aliases = (studio.Aliases ?? Array.Empty<string>())
-                        .Where(alias => !string.IsNullOrWhiteSpace(alias))
-                        .Select(alias => alias.Trim())
-                        .Take(20)
-                        .ToArray(),
-                    disabled = studio.Disabled
-                })
-                .ToArray();
+            var studios = MapCredits(parsed?.Studios);
+            var releaseGroups = MapCredits(parsed?.ReleaseGroups);
 
             var trackers = (parsed?.Trackers ?? Array.Empty<SearchRulesTracker>())
                 .Where(tracker => !string.IsNullOrWhiteSpace(tracker.Id))
@@ -1706,7 +1706,7 @@ internal sealed class PluginHub : IDisposable
                 })
                 .ToArray();
 
-            return new { schema = 1, studios, trackers, warnings = Array.Empty<string>() };
+            return new { schema = 1, studios, releaseGroups, trackers, warnings = Array.Empty<string>() };
         }
         catch (Exception error)
         {
@@ -1715,11 +1715,36 @@ internal sealed class PluginHub : IDisposable
             {
                 schema = 1,
                 studios = Array.Empty<object>(),
+                releaseGroups = Array.Empty<object>(),
                 trackers = Array.Empty<object>(),
                 warnings = new[] { $"search-rules.json не разобран: {error.Message}" }
             };
         }
     }
+
+    private static object[] MapCredits(SearchRulesCredit[]? credits) =>
+        (credits ?? Array.Empty<SearchRulesCredit>())
+            .Where(credit => !string.IsNullOrWhiteSpace(credit.Name))
+            .Take(2000)
+            .Select(object (credit) => new
+            {
+                name = credit.Name.Trim(),
+                aliases = (credit.Aliases ?? Array.Empty<string>())
+                    .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                    .Select(alias => alias.Trim())
+                    .Take(20)
+                    .ToArray(),
+                disabled = credit.Disabled,
+                kind = credit.Kind,
+                voice = credit.Voice,
+                official = credit.Official,
+                profanity = credit.Profanity,
+                // Оценка пользовательская: чужого рейтинга студий не существует, поэтому границы
+                // проверяем здесь, а не доверяем файлу.
+                rating = credit.Rating is >= 0 and <= 10 ? credit.Rating : null,
+                votes = credit.Votes is >= 0 ? credit.Votes : null
+            })
+            .ToArray();
 
     private static async Task WriteJsonAsync(HttpListenerResponse response, object value)
     {

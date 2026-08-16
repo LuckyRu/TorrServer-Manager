@@ -352,6 +352,7 @@
             }
             if (a.kind === 'voice') domain.filters.setVoiceFilter(b.value);
             else if (a.kind === 'translator') domain.filters.setTranslatorFilter(b.value);
+            else if (a.kind === 'release-group') domain.filters.setReleaseGroupFilter(b.value);
             else if (a.kind === 'quality') domain.filters.setResolutionFilter(b.value);
             else if (a.kind === 'bitrate') domain.filters.setBitrateFilter(b.value);
             restoreContentFocus();

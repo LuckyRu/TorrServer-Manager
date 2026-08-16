@@ -3,6 +3,7 @@
     import { evaluateCandidatePool, payloadBucket, estimatePayloadForState } from '../search/rank/scoring.js';
     import { filtersOf } from './filter-state.js';
     import { releaseIdentity } from '../shared/release-identity.js';
+    import { creditInfo } from '../search/parse/credits-registry.js';
 
     export function createInitialState(object) {
         return {
@@ -10,6 +11,7 @@
             filters: {
                 voiceType: 'any',
                 translator: 'any',
+                releaseGroup: 'any',
                 resolution: 'any',
                 bitrate: 'any'
             }
@@ -46,17 +48,49 @@
         return found;
     }
 
-    export function poolTranslators(pool) {
+    function poolCredits(pool, pluck) {
         var found = [];
         var seen = {};
         (pool || []).forEach(function (item) {
-            ((item.release && item.release.translators) || []).forEach(function (translator) {
-                if (!translator || seen[translator]) return;
-                seen[translator] = true;
-                found.push(translator);
+            (pluck(item.release || {}) || []).forEach(function (name) {
+                if (!name || seen[name]) return;
+                seen[name] = true;
+                found.push(name);
             });
         });
-        return found;
+        // Оценка пользователя задаётся в search-rules.json и у большинства имён отсутствует:
+        // оценённые встают выше, остальные сохраняют порядок появления в пуле. Порядок держим
+        // индексом, а не устойчивостью sort — на браузере телевизора она не гарантирована.
+        return found.map(function (name, index) {
+            var record = creditInfo(name);
+            return { name: name, index: index, rating: record && typeof record.rating === 'number' ? record.rating : -1 };
+        }).sort(function (left, right) {
+            return right.rating - left.rating || left.index - right.index;
+        }).map(function (item) { return item.name; });
+    }
+
+    export function poolTranslators(pool) {
+        return poolCredits(pool, function (release) { return release.translators; });
+    }
+
+    export function poolReleaseGroups(pool) {
+        return poolCredits(pool, function (release) { return release.releaseGroups; });
+    }
+
+    // Подпись имени в меню: чем известна студия. Пустая строка у имени, о котором реестр молчит —
+    // подпись «неизвестно» была бы шумом на каждой второй строке.
+    export function creditSubtitle(name) {
+        var record = creditInfo(name);
+        if (!record) return '';
+        var bits = [];
+        if (record.voice) bits.push(record.voice);
+        if (record.official) bits.push('официальный');
+        if (record.profanity === true) bits.push('мат');
+        if (record.profanity === false) bits.push('без мата');
+        if (typeof record.rating === 'number') {
+            bits.push('★ ' + record.rating + (typeof record.votes === 'number' ? ' (' + record.votes + ')' : ''));
+        }
+        return bits.join(' · ');
     }
 
     export var QUALITY_LABELS = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': '480p' };
@@ -77,6 +111,25 @@
         if (!funnel || !funnel.raw) return '';
         return 'Найдено ' + funnel.raw + ' → видео ' + funnel.video +
             ' → это произведение ' + funnel.title + ' → в списке ' + funnel.pool;
+    }
+
+    function creditFilterItem(options) {
+        var current = options.current || 'any';
+        var names = options.options.slice();
+        // Выбранное имя могло уйти из пула при смене сезона — иначе фильтр стоит, а строки,
+        // которой он соответствует, в меню нет.
+        if (current !== 'any' && names.indexOf(current) < 0) names.push(current);
+        var items = [{ title: options.anyTitle, value: 'any', selected: current === 'any' }].concat(
+            names.map(function (name) {
+                return { title: name, subtitle: creditSubtitle(name), value: name, selected: current === name };
+            })
+        );
+        return {
+            title: options.title,
+            subtitle: current === 'any' ? options.anyTitle : current,
+            kind: options.kind,
+            items: items
+        };
     }
 
     export function buildFilterItems(movie, hasSeasons, state) {
@@ -108,21 +161,26 @@
             items: voiceItems
         });
 
-        var translatorOptions = poolTranslators(state.pool);
-        if (filters.translator && filters.translator !== 'any' && translatorOptions.indexOf(filters.translator) < 0) {
-            translatorOptions.push(filters.translator);
-        }
-        var translatorItems = [{ title: 'Любая', value: 'any', selected: (filters.translator || 'any') === 'any' }].concat(
-            translatorOptions.map(function (translator) {
-                return { title: translator, value: translator, selected: filters.translator === translator };
-            })
-        );
-        select.push({
+        select.push(creditFilterItem({
             title: 'Студия',
-            subtitle: (filters.translator || 'any') === 'any' ? 'Любая' : filters.translator,
+            anyTitle: 'Любая',
             kind: 'translator',
-            items: translatorItems
-        });
+            options: poolTranslators(state.pool),
+            current: filters.translator
+        }));
+
+        // Релиз-группа собирает раздачу, а не переводит: смешивать её со студией нельзя, но и
+        // показывать пустое меню незачем — трекеры, которые группу не пишут, его не получают.
+        var groupOptions = poolReleaseGroups(state.pool);
+        if (groupOptions.length || (filters.releaseGroup && filters.releaseGroup !== 'any')) {
+            select.push(creditFilterItem({
+                title: 'Релиз-группа',
+                anyTitle: 'Любая',
+                kind: 'release-group',
+                options: groupOptions,
+                current: filters.releaseGroup
+            }));
+        }
 
         var order = ['2160p', '1080p', '720p', '480p'];
         var qualityFound = poolValues(state, function (item) { return item.release.resolution; }, order);
@@ -165,6 +223,7 @@
         var labels = [];
         if (filters.voiceType !== 'any') labels.push(filters.voiceType);
         if (filters.translator && filters.translator !== 'any') labels.push(filters.translator);
+        if (filters.releaseGroup && filters.releaseGroup !== 'any') labels.push(filters.releaseGroup);
         if (filters.resolution !== 'any') labels.push(QUALITY_LABELS[filters.resolution] || filters.resolution);
         if (filters.bitrate && filters.bitrate !== 'any') labels.push(PAYLOAD_LABELS[filters.bitrate] || filters.bitrate);
         return labels;

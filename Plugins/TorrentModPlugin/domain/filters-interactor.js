@@ -8,43 +8,31 @@
     var BITRATE_CACHE_KEY = 'torrent_mod_last_bitrate';
     var TRANSLATOR_DEFAULT_KEY = 'torrent_mod_translator';
     var TRANSLATOR_CACHE_KEY = 'torrent_mod_last_translator';
+    var GROUP_DEFAULT_KEY = 'torrent_mod_release_group';
+    var GROUP_CACHE_KEY = 'torrent_mod_last_release_group';
     var PER_MOVIE_CACHE_MAX = 200;
 
-    function rememberVoice(movie, value) {
+    // Выбор запоминается дважды: как общее умолчание и как выбор для этого произведения.
+    function remember(keys, movie, value) {
         try {
-            Lampa.Storage.set(VOICE_DEFAULT_KEY, value);
-            var last = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
+            Lampa.Storage.set(keys.def, value);
+            var last = Lampa.Storage.cache(keys.cache, PER_MOVIE_CACHE_MAX, {});
             last[movie.id] = value;
-            Lampa.Storage.set(VOICE_CACHE_KEY, last);
+            Lampa.Storage.set(keys.cache, last);
         } catch (e) {}
     }
 
-    function rememberQuality(movie, value) {
-        try {
-            Lampa.Storage.set(QUALITY_DEFAULT_KEY, value);
-            var last = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            last[movie.id] = value;
-            Lampa.Storage.set(QUALITY_CACHE_KEY, last);
-        } catch (e) {}
+    function restore(keys, movie) {
+        var value = Lampa.Storage.get(keys.def, 'any');
+        var last = Lampa.Storage.cache(keys.cache, PER_MOVIE_CACHE_MAX, {});
+        return last[movie.id] ? last[movie.id] : value;
     }
 
-    function rememberBitrate(movie, value) {
-        try {
-            Lampa.Storage.set(BITRATE_DEFAULT_KEY, value);
-            var last = Lampa.Storage.cache(BITRATE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            last[movie.id] = value;
-            Lampa.Storage.set(BITRATE_CACHE_KEY, last);
-        } catch (e) {}
-    }
-
-    function rememberTranslator(movie, value) {
-        try {
-            Lampa.Storage.set(TRANSLATOR_DEFAULT_KEY, value);
-            var last = Lampa.Storage.cache(TRANSLATOR_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            last[movie.id] = value;
-            Lampa.Storage.set(TRANSLATOR_CACHE_KEY, last);
-        } catch (e) {}
-    }
+    var VOICE = { def: VOICE_DEFAULT_KEY, cache: VOICE_CACHE_KEY };
+    var QUALITY = { def: QUALITY_DEFAULT_KEY, cache: QUALITY_CACHE_KEY };
+    var BITRATE = { def: BITRATE_DEFAULT_KEY, cache: BITRATE_CACHE_KEY };
+    var TRANSLATOR = { def: TRANSLATOR_DEFAULT_KEY, cache: TRANSLATOR_CACHE_KEY };
+    var GROUP = { def: GROUP_DEFAULT_KEY, cache: GROUP_CACHE_KEY };
 
     export function createFiltersInteractor(options) {
         var store = options.store;
@@ -57,30 +45,32 @@
         }
 
         function resetFilters() {
-            rememberVoice(movie, 'any');
-            rememberTranslator(movie, 'any');
-            rememberQuality(movie, 'any');
-            rememberBitrate(movie, 'any');
-            patchFilters({ voiceType: 'any', translator: 'any', resolution: 'any', bitrate: 'any' });
+            [VOICE, TRANSLATOR, GROUP, QUALITY, BITRATE].forEach(function (keys) { remember(keys, movie, 'any'); });
+            patchFilters({ voiceType: 'any', translator: 'any', releaseGroup: 'any', resolution: 'any', bitrate: 'any' });
         }
 
         function setVoiceFilter(value) {
-            rememberVoice(movie, value);
+            remember(VOICE, movie, value);
             patchFilters({ voiceType: value });
         }
 
         function setResolutionFilter(value) {
-            rememberQuality(movie, value);
+            remember(QUALITY, movie, value);
             patchFilters({ resolution: value });
         }
 
         function setTranslatorFilter(value) {
-            rememberTranslator(movie, value);
+            remember(TRANSLATOR, movie, value);
             patchFilters({ translator: value });
         }
 
+        function setReleaseGroupFilter(value) {
+            remember(GROUP, movie, value);
+            patchFilters({ releaseGroup: value });
+        }
+
         function setBitrateFilter(value) {
-            rememberBitrate(movie, value);
+            remember(BITRATE, movie, value);
             patchFilters({ bitrate: value });
         }
 
@@ -88,6 +78,7 @@
             resetFilters: resetFilters,
             setVoiceFilter: setVoiceFilter,
             setTranslatorFilter: setTranslatorFilter,
+            setReleaseGroupFilter: setReleaseGroupFilter,
             setResolutionFilter: setResolutionFilter,
             setBitrateFilter: setBitrateFilter
         };
@@ -99,22 +90,15 @@
             var lastSeason = Lampa.Storage.cache(SEASON_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
             var season = lastSeason[movie.id] ? lastSeason[movie.id] : state.season;
 
-            var voiceType = Lampa.Storage.get(VOICE_DEFAULT_KEY, 'any');
-            var lastVoice = Lampa.Storage.cache(VOICE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            if (lastVoice[movie.id]) voiceType = lastVoice[movie.id];
-
-            var translator = Lampa.Storage.get(TRANSLATOR_DEFAULT_KEY, 'any');
-            var lastTranslator = Lampa.Storage.cache(TRANSLATOR_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            if (lastTranslator[movie.id]) translator = lastTranslator[movie.id];
-
-            var resolution = Lampa.Storage.get(QUALITY_DEFAULT_KEY, 'any');
-            var lastQuality = Lampa.Storage.cache(QUALITY_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            if (lastQuality[movie.id]) resolution = lastQuality[movie.id];
-
-            var bitrate = Lampa.Storage.get(BITRATE_DEFAULT_KEY, 'any');
-            var lastBitrate = Lampa.Storage.cache(BITRATE_CACHE_KEY, PER_MOVIE_CACHE_MAX, {});
-            if (lastBitrate[movie.id]) bitrate = lastBitrate[movie.id];
-
-            store.patch({ season: season, filters: { voiceType: voiceType, translator: translator, resolution: resolution, bitrate: bitrate } });
+            store.patch({
+                season: season,
+                filters: {
+                    voiceType: restore(VOICE, movie),
+                    translator: restore(TRANSLATOR, movie),
+                    releaseGroup: restore(GROUP, movie),
+                    resolution: restore(QUALITY, movie),
+                    bitrate: restore(BITRATE, movie)
+                }
+            });
         } catch (e) {}
     }

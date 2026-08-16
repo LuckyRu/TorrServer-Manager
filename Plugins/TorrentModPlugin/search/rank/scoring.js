@@ -287,6 +287,11 @@
         return ((item.release && item.release.translators) || []).indexOf(translator) >= 0;
     }
 
+    function matchesReleaseGroup(item, group) {
+        if (!group || group === 'any') return true;
+        return ((item.release && item.release.releaseGroups) || []).indexOf(group) >= 0;
+    }
+
     function matchesBitrate(item, state, filters, target) {
         if (!filters.bitrate || filters.bitrate === 'any') return true;
         var payload = target ? estimatePayload(item, target) : estimatePayloadForState(item, state);
@@ -326,6 +331,7 @@
 
         narrow('voice', function (item) { return matchesTranslation(item, filters.voiceType); }, filters.voiceType && filters.voiceType !== 'any');
         narrow('translator', function (item) { return matchesTranslator(item, filters.translator); }, filters.translator && filters.translator !== 'any');
+        narrow('release-group', function (item) { return matchesReleaseGroup(item, filters.releaseGroup); }, filters.releaseGroup && filters.releaseGroup !== 'any');
         narrow('resolution', function (item) { return item.release.resolution === filters.resolution; }, filters.resolution && filters.resolution !== 'any');
         narrow('bitrate', function (item) { return matchesBitrate(item, state, filters, target); }, filters.bitrate && filters.bitrate !== 'any');
 

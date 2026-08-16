@@ -58,7 +58,9 @@ var PROFILES = [
         titleSeparators: 'slash',
         year: 'delimited',
         voices: 'letter-codes',
-        studioSlots: 'from'
+        // Роли разведены по слотам: «от X» — кто собрал раздачу, поле за кодом перевода — кто
+        // озвучил. До разделения меню «Студия» на 25 именах из 28 показывало релиз-группы.
+        studioSlots: 'codes'
     },
     {
         id: 'megapeer',
@@ -66,7 +68,7 @@ var PROFILES = [
         titleSeparators: 'slash',
         year: 'delimited',
         voices: 'letter-codes',
-        studioSlots: 'from'
+        studioSlots: 'codes'
     },
     {
         id: 'noname-club',

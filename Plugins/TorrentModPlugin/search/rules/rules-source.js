@@ -5,7 +5,7 @@
 
 import { hubBase } from '../../shared/state.js';
 import { request } from '../../shared/utils.js';
-import { registerStudioRules } from '../parse/release-studios.js';
+import { registerCredits, CREDIT_KINDS } from '../parse/credits-registry.js';
 import { registerTrackerRules } from './tracker-profiles.js';
 import { log, warn } from '../../shared/core/log.js';
 
@@ -23,8 +23,13 @@ function apply(data) {
     (data.warnings || []).forEach(function (message) { warn('search', 'search-rules: ' + message); });
     var studios = Array.isArray(data.studios) ? data.studios : [];
     if (studios.length) {
-        registerStudioRules(studios);
+        registerCredits(studios, CREDIT_KINDS.STUDIO);
         log('search', 'search-rules: применено студий — ' + studios.length);
+    }
+    var groups = Array.isArray(data.releaseGroups) ? data.releaseGroups : [];
+    if (groups.length) {
+        registerCredits(groups, CREDIT_KINDS.GROUP);
+        log('search', 'search-rules: применено релиз-групп — ' + groups.length);
     }
     var trackers = Array.isArray(data.trackers) ? data.trackers : [];
     if (trackers.length) {
