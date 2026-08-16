@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { parseRelease, parseSignals } from '../search/release-parsing.js';
 import { parseYear, yearMatches } from '../search/release-year.js';
 import { extractStudios, registerStudioRules } from '../search/release-studios.js';
-import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments } from '../search/search-gates.js';
+import { titleSimilarity, evaluateTitleMatch, passesSearchTitleGate, extractSearchTitleSegments, evaluateMediaTypeGate } from '../search/search-gates.js';
 import { profileFor, indexersInGroup, registerTrackerRules } from '../search/tracker-profiles.js';
 import { evaluateIdentityGate, narrowToExactMatches, targetYear } from '../search/gate-identity.js';
 import { workFamily, isAnimeTarget } from '../search/work-profile.js';
@@ -414,6 +414,50 @@ test('правила трекера можно переопределить фа
     registerTrackerRules([{ id: 'новый-аниме-трекер', group: 'anime', studioDefault: 'NewFansub' }]);
     assert.ok(indexersInGroup('anime').indexOf('новый-аниме-трекер') >= 0);
     assert.deepEqual(parseRelease('Аниме [1080p]', profileFor('новый-аниме-трекер')).translators, ['NewFansub']);
+});
+
+// ---------- случаи из живого лога ----------
+
+test('раскладка «ромадзи | английское | локализованное» не считается конфликтом', () => {
+    const target = {
+        mode: 'series',
+        movie: { name: 'История о перекуре за супермаркетом', original_name: 'スーパーの裏でヤニ吸うふтари' },
+        englishTitle: 'Smoking Behind the Supermarket with You'
+    };
+    const item = {
+        title: 'Super no Ura de Yani Suu Futari | Smoking Behind the Supermarket with You | ' +
+               'История о перекуре за супермаркетом [2026, Web, 12] WebRip 1080p raw',
+        trackerId: 'noname-club', tracker: 'NoNaMe Club'
+    };
+    item.release = parseRelease(item.title, profileFor('noname-club'));
+    assert.equal(passesSearchTitleGate(item, target), true);
+
+    // Документальный фильм о сериале по-прежнему отсекается: чужой заголовок на том же языке,
+    // что и локализованное название цели.
+    const got = { mode: 'series', movie: { name: 'Игра престолов', original_name: 'Game of Thrones' }, englishTitle: 'Game of Thrones' };
+    assert.equal(passesSearchTitleGate(
+        { title: 'Настоящая война / Игра престолов / The Real War of Thrones [2019, WEB-DL 1080p]' }, got), false);
+});
+
+test('у онгоинга общее число серий может быть неизвестно', () => {
+    const title = 'История о перекуре за супермаркетом / Super no Ura de Yani Suu Futari / YaniSuu ' +
+                  '[TV] [1-12 из ??] [RUS(MVO)] [2026, ААС]';
+    const signals = parseSignals(title);
+    assert.equal(signals.explicitEpisode, true);
+    assert.equal(signals.episodeFrom, 1);
+    assert.equal(signals.episodeTo, 12);
+
+    // Без сигнала серий такая раздача отсекалась media-гейтом как «нет видеосигнала».
+    const target = { mode: 'series', movie: { name: 'История о перекуре за супермаркетом' } };
+    const item = { title: title, trackerId: 'rutracker', tracker: 'RuTracker.org' };
+    item.release = parseRelease(title, profileFor('rutracker'));
+    assert.equal(evaluateMediaTypeGate(item, target).passes, true);
+});
+
+test('поля метаданных после вертикальной черты не считаются названиями', () => {
+    const segments = extractSearchTitleSegments(
+        'Дюна / Dune: Part Two (2024) BDRip 1080p от селезень | D | 4K | 2024 | WEB-DL', profileFor('bigfangroup'));
+    assert.deepEqual(segments, ['Дюна', 'Dune: Part Two']);
 });
 
 // ---------- живой корпус ----------

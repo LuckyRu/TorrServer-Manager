@@ -26,13 +26,30 @@
         return segment.replace(/[,:;\s-]+$/g, '').trim();
     }
 
-    // У rutor и megapeer вертикальная черта разделяет поля метаданных, а не названия: без
-    // профиля трекера код дубляжа «D» становился отдельным «названием» раздачи.
+    // Вертикальная черта у одного и того же трекера разделяет то названия, то поля метаданных
+    // («Ru | En | 2026 | WebRip» против «… | D | Red Head Sound»). Поэтому делим по обоим
+    // разделителям, а поля выбрасываем по их собственному виду, а не по имени трекера.
+    var METADATA_FIELD = [
+        /^[DPLAO]\d?(?:\s*,\s*[DPLAO]\d?)*$/i,
+        /^(?:dub|mvo|avo|dvo|vo|sub|subs|rus|eng|ukr|jap|orig(?:inal)?)(?:\s*,\s*(?:dub|mvo|avo|dvo|vo|sub|subs|rus|eng|ukr|jap|orig(?:inal)?))*$/i,
+        /^(?:4k|uhd|sdr|hdr\d*\+?|dolby\s*vision.*|\d{1,2}-?bit|\d{3,4}[pi])$/i,
+        /^(?:19|20)\d{2}(?:\s*[-–]\s*(?:19|20)\d{2})?$/,
+        /^(?:web-?dl(?:-?rip)?|webrip|bdrip|bdremux|remux|blu-?ray|hdtv|hdrip|dvdrip|camrip)(?:[\s-].*)?$/i
+    ];
+
+    function looksLikeMetadataField(segment) {
+        var text = String(segment || '').trim();
+        if (!text) return true;
+        return METADATA_FIELD.some(function (pattern) { return pattern.test(text); });
+    }
+
     export function extractSearchTitleSegments(rawTitle, profile) {
-        var separators = (profile && profile.titleSeparators === 'slash') ? /\// : /[\/|]/;
         var text = decodeEntities(rawTitle);
         ((profile && profile.strip) || []).forEach(function (pattern) { text = text.replace(pattern, ' '); });
-        return text.split(separators).map(cleanTitleSegment).filter(Boolean);
+        var separators = (profile && profile.titleSeparators === 'slash') ? /\// : /[\/|]/;
+        return text.split(separators)
+            .map(cleanTitleSegment)
+            .filter(function (segment) { return segment && !looksLikeMetadataField(segment); });
     }
 
     function profileOf(item) {
@@ -142,15 +159,19 @@
         return '';
     }
 
-    function looksLikeConflictingTitle(segment, names, matchedSegment, exactMatch) {
+    function looksLikeConflictingTitle(segment, names, matchedSegment, exactMatch, localTitle) {
         if (/(?:lostfilm|alexfilm|newstudio|release|tracker|rip|group|team|studio)/i.test(segment)) return false;
-        // «Локализованное / Оригинальное» — обычная раскладка заголовка, а не два разных
-        // произведения. У онгоингов локализованное название ещё не устоялось и в карточке TMDB
-        // его может не быть вовсе; отвергать такую раздачу нельзя, раз оригинал в ней совпал.
-        // Признак настоящего конфликта («Настоящая война / Игра престолов») — оба заголовка на
-        // одном языке.
+        // Заголовок вида «Ромадзи | English | Локализованное» — это одно произведение под
+        // разными названиями, а не два разных. Настоящий конфликт («Настоящая война / Игра
+        // престолов» — документальный фильм о сериале) отличается тем, что чужой заголовок
+        // написан на том же языке, что и локализованное название цели, и на том же, что
+        // совпавший сегмент. Достаточно разойтись с любым из двух, чтобы это была раскладка
+        // названий, а не подмена произведения.
         var segmentScript = scriptOf(segment);
-        if (exactMatch && segmentScript && segmentScript !== scriptOf(matchedSegment)) return false;
+        if (exactMatch && segmentScript) {
+            if (segmentScript !== scriptOf(matchedSegment)) return false;
+            if (localTitle && segmentScript !== scriptOf(localTitle)) return false;
+        }
         var segmentTokens = significantTokens(segment);
         if (segmentTokens.some(function (token) {
             return names.some(function (name) { return significantTokens(name).indexOf(token) >= 0; });
@@ -169,7 +190,7 @@
             if (analysis.scores[matchIndex] >= MIN_TITLE_SIMILARITY) { firstMatch = matchIndex; break; }
         }
         for (var i = 0; i < firstMatch; i++) {
-            if (analysis.scores[i] < MIN_TITLE_SIMILARITY && looksLikeConflictingTitle(analysis.segments[i], baseTitles((target && target.movie) || {}, target && target.englishTitle, target && target.aliases), analysis.segments[firstMatch], analysis.matches[firstMatch].score === 1 && !analysis.matches[firstMatch].extended)) {
+            if (analysis.scores[i] < MIN_TITLE_SIMILARITY && looksLikeConflictingTitle(analysis.segments[i], baseTitles((target && target.movie) || {}, target && target.englishTitle, target && target.aliases), analysis.segments[firstMatch], analysis.matches[firstMatch].score === 1 && !analysis.matches[firstMatch].extended, ((target && target.movie) || {}).name || ((target && target.movie) || {}).title || '')) {
                 return {
                     passes: false,
                     reason: 'conflicting-title',

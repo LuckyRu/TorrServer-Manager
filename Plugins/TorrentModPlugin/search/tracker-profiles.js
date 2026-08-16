@@ -70,7 +70,9 @@ var PROFILES = [
     {
         id: 'noname-club',
         group: 'general',
-        titleSeparators: 'slash',
+        // Пишет названия и через «/», и через «|» — разделитель выбирать по трекеру нельзя,
+        // поля отсеиваются по собственному виду.
+        titleSeparators: 'slash-pipe',
         year: 'delimited',
         voices: 'any',
         studioSlots: 'from'
@@ -79,7 +81,7 @@ var PROFILES = [
         id: 'bigfangroup',
         group: 'general',
         // Заголовки приходят обрезанными многоточием — хвост слота студии может быть потерян.
-        titleSeparators: 'slash',
+        titleSeparators: 'slash-pipe',
         strip: [/…+\s*$/],
         year: 'delimited',
         voices: 'any',
