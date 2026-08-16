@@ -229,6 +229,9 @@
             plan: planned.map(function (plan) {
                 return {
                     query: plan.query,
+                    // Без этого поля по логу нельзя отличить запрос первой волны от отложенного,
+                    // а значит нельзя понять, почему их ушло больше или меньше ожидаемого.
+                    when: plan.when || 'always',
                     include: plan.indexerIds || null,
                     exclude: plan.excludeIndexerIds || null
                 };
