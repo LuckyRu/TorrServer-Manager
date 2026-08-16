@@ -45,7 +45,11 @@
 
     export function extractSearchTitleSegments(rawTitle, profile) {
         var text = decodeEntities(rawTitle);
-        ((profile && profile.strip) || []).forEach(function (pattern) { text = text.replace(pattern, ' '); });
+        // Захваченный разделитель возвращается на место — иначе срез технической приставки
+        // склеивает соседние названия в один сегмент. См. stripByProfile в parse/release-parsing.js.
+        ((profile && profile.strip) || []).forEach(function (pattern) {
+            text = text.replace(pattern, function (match, separator) { return typeof separator === 'string' ? separator + ' ' : ' '; });
+        });
         var separators = (profile && profile.titleSeparators === 'slash') ? /\// : /[\/|]/;
         return text.split(separators)
             .map(cleanTitleSegment)

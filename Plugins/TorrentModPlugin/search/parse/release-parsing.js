@@ -62,7 +62,15 @@
     function stripByProfile(source, profile) {
         var patterns = (profile && profile.strip) || [];
         var text = source;
-        patterns.forEach(function (pattern) { text = text.replace(pattern, ' '); });
+        patterns.forEach(function (pattern) {
+            // Первая группа шаблона — то, что он захватил ради контекста и обязан вернуть на
+            // место. У AniLibria приставка «E01-E12» стоит сразу после разделителя названий, и
+            // без этого срез съедал сам разделитель: два названия склеивались в одно, а
+            // склейка читается гейтом как «название плюс добавка» — то есть чужое произведение.
+            text = text.replace(pattern, function (match, separator) {
+                return typeof separator === 'string' ? separator + ' ' : ' ';
+            });
+        });
         return patterns.length ? text.replace(/\s{2,}/g, ' ').trim() : text;
     }
 

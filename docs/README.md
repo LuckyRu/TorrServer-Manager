@@ -79,6 +79,10 @@ ADR/system-design/reference там, где одно объясняет друг�
   [`system-design/lampa-navigation-contract.md`](system-design/lampa-navigation-contract.md)
 - **Как устроен поиск/скоринг/буферизация Torrent Mod целиком** →
   [`system-design/torrent-mod-search-pipeline.md`](system-design/torrent-mod-search-pipeline.md)
+- **Какие трекеры поддержаны, как оформлены их раздачи и в каком порядке работают парсеры**
+  (профиль каждого трекера, порядок правил разбора, замеры извлечения по девяти трекерам,
+  особенности фильмов, сериалов и азиатской продукции, коды отказов) →
+  [`reference/torrent-mod-tracker-formats.md`](reference/torrent-mod-tracker-formats.md)
 - **Целевая архитектура поиска** (профиль произведения вместо пары фильм/сериал, правила трекеров как
   данные, год, азиатский контент, диагностика; замеры по 1780 живым заголовкам девяти трекеров) →
   [`system-design/torrent-mod-search-architecture.md`](system-design/torrent-mod-search-architecture.md)

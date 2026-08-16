@@ -506,6 +506,25 @@ test('аниме-трекер объявляет тип перевода про�
     assert.deepEqual(parseRelease('Фильм / Movie (2024) BDRip 1080p', profileFor('rutracker')).voiceTypes, []);
 });
 
+test('срез технической приставки не склеивает соседние названия', () => {
+    // Приставка «E01-E06» у AniLibria стоит сразу после разделителя названий. Если срез съедает
+    // сам разделитель, два названия становятся одним сегментом, а склейка читается гейтом как
+    // «название плюс добавка» — и раздача выбрасывается, как только у общего трекера есть точное
+    // совпадение. Так все раздачи аниме-трекеров пропадали из списка.
+    const title = 'История о перекуре за супермаркетом / E01-E06 Super no Ura de Yani Suu Futari - AniLiberty.TOP [WEB-DL 1080p][HEVC][1-6]';
+    assert.deepEqual(extractSearchTitleSegments(title, profileFor('anilibria')),
+        ['История о перекуре за супермаркетом', 'Super no Ura de Yani Suu Futari']);
+
+    const target = {
+        mode: 'series', season: 1,
+        movie: { name: 'История о перекуре за супермаркетом', original_name: 'スーパーの裏でヤニ吸うふтари' },
+        englishTitle: 'Smoking Behind the Supermarket with You'
+    };
+    const match = evaluateTitleMatch({ title: title, trackerId: 'anilibria', tracker: 'Anilibria' }, target);
+    assert.equal(match.similarity, 1);
+    assert.equal(match.extended, false, 'раздача аниме-трекера не должна выглядеть расширением названия');
+});
+
 // ---------- эскалация запросов ----------
 
 test('запасное название не уходит сразу, а помечается «если пусто»', () => {
