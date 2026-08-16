@@ -826,6 +826,16 @@ internal sealed class MainForm : Form
         try
         {
             var status = await jackettController.GetStatusAsync(lifetime.Token);
+            if (JackettController.IsDownstreamBuild(status.Version))
+            {
+                MessageBox.Show(
+                    this,
+                    $"Установлен Jackett из downstream-форка {status.Version}.\n\nОбновление выполняется сборкой source-релиза из ветки jackett-manager; официальный updater не применяется.",
+                    "Обновление Jackett",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
             var release = await jackettController.GetLatestReleaseAsync(lifetime.Token);
             if (!JackettController.IsNewer(release.Version, status.Version))
             {

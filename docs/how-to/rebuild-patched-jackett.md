@@ -73,6 +73,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -RequireRelease
 
 Содержимое `publish\Jackett\App` копируется в `%ProgramData%\Jackett\App` после остановки
 Jackett. Конфигурация и индексаторы находятся отдельно в `%ProgramData%\Jackett` и не должны
-перезаписываться. Менеджер продолжает запускать `JackettConsole.exe` с `--NoUpdates`, поэтому
-обновление исходной fork-версии выполняется через новый source-release, а не встроенным
-updater Jackett.
+перезаписываться. Менеджер продолжает запускать `JackettConsole.exe` с `--NoUpdates`; для
+версии с суффиксом `-JackettManager.*` кнопка upstream-обновления блокируется, поэтому fork
+обновляется только новым source-релизом.

@@ -193,6 +193,9 @@ internal sealed class JackettController : IDisposable
         return left > right;
     }
 
+    public static bool IsDownstreamBuild(string version) =>
+        version.Contains("-JackettManager.", StringComparison.OrdinalIgnoreCase);
+
     public async Task InstallUpdateAsync(
         JackettReleaseInfo release,
         IProgress<string>? progress = null,
