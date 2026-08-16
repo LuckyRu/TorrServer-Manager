@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:anidub:anime:014:v2",
+  "axis": "family",
+  "trackerId": "anidub",
+  "family": "anime",
+  "work": {
+    "rank": 14,
+    "title": "Code Geass",
+    "year": 2006,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "Code Geass / Code Geass Alt [Special] E22 [RUS] [WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio] MVO (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Code Geass",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 22,
+    "movie": {
+      "title": "Code Geass",
+      "name": "Code Geass",
+      "original_title": "進撃作品 14",
+      "original_name": "進撃作品 14",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2006-01-01",
+      "first_air_date": "2006-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Code Geass",
+    "aliases": [
+      "Code Geass Alias"
+    ]
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "id": "family:exkinoray:general:023:v4",
+  "axis": "family",
+  "trackerId": "exkinoray",
+  "family": "general",
+  "work": {
+    "rank": 23,
+    "title": "The Green Mile",
+    "year": 1999,
+    "mode": "movie"
+  },
+  "layoutVariant": 4,
+  "title": "The Green Mile | The Green Mile Alt [Movie] [США, 1999, video] Blu-ray BDRip 2160p HDR10+ HEVC MKV 7.1 dual audio MVO + Original (LostFilm) - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "2160p",
+      "sourceType": "BDRip",
+      "hdr": "HDR",
+      "audioChannels": "7.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Многоголосый",
+        "Оригинал"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 1999,
+        "to": 1999,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "H.265",
+      "container": "MKV",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "general",
+      "firstQuery": "The Green Mile",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "The Green Mile",
+      "name": "The Green Mile",
+      "original_title": "The Green Mile",
+      "original_name": "The Green Mile",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1999-01-01",
+      "first_air_date": "1999-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1999-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1999-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1999-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Green Mile",
+    "aliases": [
+      "The Green Mile Alias"
+    ]
+  }
+}

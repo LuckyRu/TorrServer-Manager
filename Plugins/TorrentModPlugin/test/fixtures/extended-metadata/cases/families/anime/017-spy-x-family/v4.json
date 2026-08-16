@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "id": "family:tapochek:anime:017:v4",
+  "axis": "family",
+  "trackerId": "tapochek",
+  "family": "anime",
+  "work": {
+    "rank": 17,
+    "title": "Spy x Family",
+    "year": 2022,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "Spy x Family | Spy x Family Alt [Special] The Final Season E01-E02 [США, 2022, video] DVDRip 480p XviD AVI 2.0 2 x audio [Original|LostFilm] от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 1,
+      "episodeTo": 2,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": true,
+      "releaseType": "special",
+      "resolution": "480p",
+      "sourceType": "DVDRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Оригинал"
+      ],
+      "voiceType": "Оригинал",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 2022,
+        "to": 2022,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "XviD",
+      "container": "AVI",
+      "compatibility": "risky",
+      "compatibilityReason": "XviD"
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Spy x Family",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 3,
+    "episode": 1,
+    "movie": {
+      "title": "Spy x Family",
+      "name": "Spy x Family",
+      "original_title": "進撃作品 17",
+      "original_name": "進撃作品 17",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2022-01-01",
+      "first_air_date": "2022-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2022-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2022-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2022-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Spy x Family",
+    "aliases": [
+      "Spy x Family Alias"
+    ]
+  }
+}

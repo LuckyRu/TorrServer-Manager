@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:anilibria:none:037:v5",
+  "axis": "tracker",
+  "trackerId": "anilibria",
+  "family": null,
+  "work": {
+    "rank": 37,
+    "title": "Monster",
+    "year": 2004,
+    "mode": "series"
+  },
+  "layoutVariant": 5,
+  "title": "Monster / E01-E12 Monster Alt - AniLiberty.TOP [WEBRip 720p AV1 WebM 2.0 1 x audio] [OVA] S1-3E1-24 AVO (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        1,
+        2,
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 24,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "720p",
+      "sourceType": "WEBRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 1,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": false,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

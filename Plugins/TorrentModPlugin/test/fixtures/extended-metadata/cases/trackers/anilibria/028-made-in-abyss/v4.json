@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:anilibria:none:028:v4",
+  "axis": "tracker",
+  "trackerId": "anilibria",
+  "family": null,
+  "work": {
+    "rank": 28,
+    "title": "Made in Abyss",
+    "year": 2017,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "Made in Abyss / E01-E12 Made in Abyss Alt - AniLiberty.TOP [WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio] [Special] E22 MVO (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

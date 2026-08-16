@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:donghua:033:v3",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "donghua",
+  "work": {
+    "rank": 33,
+    "title": "Snow Eagle Lord",
+    "year": 2018,
+    "mode": "series"
+  },
+  "layoutVariant": 3,
+  "title": "Snow Eagle Lord / Snow Eagle Lord Alt [TV] TV-3 [1-12 из 12] | 2018 | SDTV MPEG-2 MPG 2.0",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 12,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "",
+      "sourceType": "SDTV",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 0,
+      "voiceTypes": [],
+      "voiceType": "",
+      "translators": [],
+      "releaseGroups": [],
+      "year": {
+        "value": 2018,
+        "to": 2018,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "MPEG-2",
+      "container": "MPG",
+      "compatibility": "risky",
+      "compatibilityReason": "MPEG-2"
+    },
+    "expectedPipeline": {
+      "family": "donghua",
+      "firstQuery": "Snow Eagle Lord",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 3,
+    "episode": 1,
+    "movie": {
+      "title": "Snow Eagle Lord",
+      "name": "Snow Eagle Lord",
+      "original_title": "动画作品 33",
+      "original_name": "动画作品 33",
+      "original_language": "zh",
+      "origin_country": [
+        "CN"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2018-01-01",
+      "first_air_date": "2018-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Snow Eagle Lord",
+    "aliases": [
+      "Snow Eagle Lord Alias"
+    ]
+  }
+}

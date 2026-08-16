@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:tapochek:asian-live:032:v2",
+  "axis": "family",
+  "trackerId": "tapochek",
+  "family": "asian-live",
+  "work": {
+    "rank": 32,
+    "title": "Love Between Fairy and Devil",
+    "year": 2022,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "Love Between Fairy and Devil | Love Between Fairy and Devil Alt [TV] [16/16] [2022, video] HDTV 1080p HDR H.264 M2TS 5.1 4 x audio [Dub|LostFilm] Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 1,
+      "episodeTo": 16,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "1080p",
+      "sourceType": "HDTV",
+      "hdr": "HDR",
+      "audioChannels": "5.1",
+      "audioTracks": 4,
+      "voiceTypes": [
+        "Дубляж"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2022,
+        "to": 2022,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "TS",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "asian-live",
+      "firstQuery": "Love Between Fairy and Devil",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": true,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Love Between Fairy and Devil",
+      "name": "Love Between Fairy and Devil",
+      "original_title": "인기 작품 32",
+      "original_name": "인기 작품 32",
+      "original_language": "ko",
+      "origin_country": [
+        "KR"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2022-01-01",
+      "first_air_date": "2022-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2022-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2022-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2022-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Love Between Fairy and Devil",
+    "aliases": [
+      "Love Between Fairy and Devil Alias"
+    ]
+  }
+}

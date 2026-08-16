@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:exkinoray:none:050:v2",
+  "axis": "tracker",
+  "trackerId": "exkinoray",
+  "family": null,
+  "work": {
+    "rank": 50,
+    "title": "The Walking Dead",
+    "year": 2010,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "The Walking Dead | The Walking Dead Alt [TV] S02E03-E10 [2010, video] WEB-DL 1080p HDR10 H.264 MP4 5.1 dual audio MVO (LostFilm) Sub - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        2
+      ],
+      "episodeFrom": 3,
+      "episodeTo": 10,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "1080p",
+      "sourceType": "WEB-DL",
+      "hdr": "HDR",
+      "audioChannels": "5.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2010,
+        "to": 2010,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "MP4",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-16",
+  "sources": [
+    {
+      "id": "local-jackett-live-corpus",
+      "kind": "tracker-grammar",
+      "location": "../live-multitracker.json",
+      "description": "Публичные текстовые заголовки из живой выдачи Jackett этой установки; без .torrent, magnet-ссылок и медиаданных.",
+      "currentTitleCount": 1537,
+      "trackerCounts": {
+        "rutracker": 354,
+        "rutor": 298,
+        "megapeer": 81,
+        "noname-club": 263,
+        "bigfangroup": 121,
+        "tapochek": 154,
+        "exkinoray": 104,
+        "anidub": 26,
+        "anilibria": 136
+      }
+    },
+    {
+      "id": "tracker-format-reference",
+      "kind": "tracker-grammar",
+      "location": "../../../../../docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+      "description": "Ручное описание грамматик девяти профилей трекеров и порядка разбора полей."
+    },
+    {
+      "id": "tmdb-popular-curated-2026-08-16",
+      "kind": "popularity-selection",
+      "url": "https://www.themoviedb.org/movie",
+      "methodologyUrl": "https://developer.themoviedb.org/docs/popularity-and-trending",
+      "apiReferenceUrl": "https://developer.themoviedb.org/reference/movie-popular-list",
+      "description": "Замороженная ручная выборка узнаваемых популярных произведений. Порядок внутри семейства — порядок ручного отбора, а не обещание вечного численного рейтинга TMDB."
+    }
+  ],
+  "policy": {
+    "downloadedTorrentFiles": false,
+    "storedMagnetLinks": false,
+    "storedMediaPayloads": false,
+    "storedPublicTextTitlesOnly": true
+  }
+}

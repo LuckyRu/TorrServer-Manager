@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:noname-club:none:007:v5",
+  "axis": "tracker",
+  "trackerId": "noname-club",
+  "family": null,
+  "work": {
+    "rank": 7,
+    "title": "Fight Club",
+    "year": 1999,
+    "mode": "movie"
+  },
+  "layoutVariant": 5,
+  "title": "Fight Club / Fight Club Alt [Movie] (1999 г.) [H.265/2160p] BDRemux 2160p Dolby Vision H.265 MKV 7.1 3 x audio Dub + MVO + AVO + Original (LostFilm) от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "2160p",
+      "sourceType": "Remux",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 3,
+      "voiceTypes": [
+        "Дубляж",
+        "Многоголосый",
+        "Одноголосый",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 1999,
+        "to": 1999,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.265",
+      "container": "MKV",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

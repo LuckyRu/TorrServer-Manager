@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:anime:021:v3",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "anime",
+  "work": {
+    "rank": 21,
+    "title": "Mob Psycho 100",
+    "year": 2016,
+    "mode": "series"
+  },
+  "layoutVariant": 3,
+  "title": "Mob Psycho 100 / Mob Psycho 100 Alt [Special] E22 | 2016 | WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio MVO (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2016,
+        "to": 2016,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Mob Psycho 100",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 22,
+    "movie": {
+      "title": "Mob Psycho 100",
+      "name": "Mob Psycho 100",
+      "original_title": "進撃作品 21",
+      "original_name": "進撃作品 21",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2016-01-01",
+      "first_air_date": "2016-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2016-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2016-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2016-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Mob Psycho 100",
+    "aliases": [
+      "Mob Psycho 100 Alias"
+    ]
+  }
+}

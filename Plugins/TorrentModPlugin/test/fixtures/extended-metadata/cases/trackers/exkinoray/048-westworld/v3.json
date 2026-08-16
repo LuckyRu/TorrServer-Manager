@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:exkinoray:none:048:v3",
+  "axis": "tracker",
+  "trackerId": "exkinoray",
+  "family": null,
+  "work": {
+    "rank": 48,
+    "title": "Westworld",
+    "year": 2016,
+    "mode": "series"
+  },
+  "layoutVariant": 3,
+  "title": "Westworld | Westworld Alt [ONA] 2x07 | 2016 | HDRip 1080p AVC MP4 5.1 dual audio Dub + Original (LostFilm) от Scarabey, Sub - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        2
+      ],
+      "episodeFrom": 7,
+      "episodeTo": 7,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "1080p",
+      "sourceType": "HDRip",
+      "hdr": "",
+      "audioChannels": "5.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Дубляж",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 2016,
+        "to": 2016,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "MP4",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

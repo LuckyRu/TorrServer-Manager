@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "family:noname-club:western-animation:030:v5",
+  "axis": "family",
+  "trackerId": "noname-club",
+  "family": "western-animation",
+  "work": {
+    "rank": 30,
+    "title": "Teenage Mutant Ninja Turtles",
+    "year": 2012,
+    "mode": "series"
+  },
+  "layoutVariant": 5,
+  "title": "Teenage Mutant Ninja Turtles / Teenage Mutant Ninja Turtles Alt [OVA] S1-3E1-24 (2012 г.) [AV1/720p] WEBRip 720p AV1 WebM 2.0 1 x audio AVO (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        1,
+        2,
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 24,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "720p",
+      "sourceType": "WEBRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 1,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2012,
+        "to": 2012,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "western-animation",
+      "firstQuery": "Teenage Mutant Ninja Turtles",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Teenage Mutant Ninja Turtles",
+      "name": "Teenage Mutant Ninja Turtles",
+      "original_title": "Teenage Mutant Ninja Turtles",
+      "original_name": "Teenage Mutant Ninja Turtles",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2012-01-01",
+      "first_air_date": "2012-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2012-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2012-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2012-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Teenage Mutant Ninja Turtles",
+    "aliases": [
+      "Teenage Mutant Ninja Turtles Alias"
+    ]
+  }
+}

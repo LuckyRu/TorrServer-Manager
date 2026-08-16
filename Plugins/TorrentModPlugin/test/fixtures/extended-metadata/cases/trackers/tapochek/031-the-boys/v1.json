@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:tapochek:none:031:v1",
+  "axis": "tracker",
+  "trackerId": "tapochek",
+  "family": null,
+  "work": {
+    "rank": 31,
+    "title": "The Boys",
+    "year": 2019,
+    "mode": "series"
+  },
+  "layoutVariant": 1,
+  "title": "The Boys / The Boys Alt [Special] The Final Season E01-E02 (2019) DVDRip 480p XviD AVI 2.0 2 x audio [Original|LostFilm] от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 1,
+      "episodeTo": 2,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": true,
+      "releaseType": "special",
+      "resolution": "480p",
+      "sourceType": "DVDRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Оригинал"
+      ],
+      "voiceType": "Оригинал",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 2019,
+        "to": 2019,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "XviD",
+      "container": "AVI",
+      "compatibility": "risky",
+      "compatibilityReason": "XviD"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

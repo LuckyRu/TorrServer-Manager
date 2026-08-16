@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "family:exkinoray:asian-live:027:v4",
+  "axis": "family",
+  "trackerId": "exkinoray",
+  "family": "asian-live",
+  "work": {
+    "rank": 27,
+    "title": "Sweet Home",
+    "year": 2020,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "Sweet Home | Sweet Home Alt [ONA] 2x07 [США, 2020, video] HDRip 1080p AVC MP4 5.1 dual audio Dub + Original (LostFilm) от Scarabey, Sub - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        2
+      ],
+      "episodeFrom": 7,
+      "episodeTo": 7,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "1080p",
+      "sourceType": "HDRip",
+      "hdr": "",
+      "audioChannels": "5.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Дубляж",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 2020,
+        "to": 2020,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "MP4",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "asian-live",
+      "firstQuery": "Sweet Home",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": true,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 2,
+    "episode": 7,
+    "movie": {
+      "title": "Sweet Home",
+      "name": "Sweet Home",
+      "original_title": "인기 작품 27",
+      "original_name": "인기 작품 27",
+      "original_language": "ko",
+      "origin_country": [
+        "KR"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2020-01-01",
+      "first_air_date": "2020-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Sweet Home",
+    "aliases": [
+      "Sweet Home Alias"
+    ]
+  }
+}

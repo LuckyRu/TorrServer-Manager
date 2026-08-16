@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:tapochek:none:046:v2",
+  "axis": "tracker",
+  "trackerId": "tapochek",
+  "family": null,
+  "work": {
+    "rank": 46,
+    "title": "Black Mirror",
+    "year": 2011,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "Black Mirror | Black Mirror Alt [TV] [16/16] [2011, video] HDTV 1080p HDR H.264 M2TS 5.1 4 x audio [Dub|LostFilm] Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 1,
+      "episodeTo": 16,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "1080p",
+      "sourceType": "HDTV",
+      "hdr": "HDR",
+      "audioChannels": "5.1",
+      "audioTracks": 4,
+      "voiceTypes": [
+        "Дубляж"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2011,
+        "to": 2011,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "TS",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

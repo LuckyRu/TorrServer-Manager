@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:western-animation:046:v1",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "western-animation",
+  "work": {
+    "rank": 46,
+    "title": "Masters of the Universe: Revelation",
+    "year": 2021,
+    "mode": "series"
+  },
+  "layoutVariant": 1,
+  "title": "Masters of the Universe: Revelation / Masters of the Universe: Revelation Alt [TV] [16/16] (2021) HDTV 1080p HDR H.264 M2TS 5.1 4 x audio Dub (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 1,
+      "episodeTo": 16,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "1080p",
+      "sourceType": "HDTV",
+      "hdr": "HDR",
+      "audioChannels": "5.1",
+      "audioTracks": 4,
+      "voiceTypes": [
+        "Дубляж"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2021,
+        "to": 2021,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "TS",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "western-animation",
+      "firstQuery": "Masters of the Universe: Revelation",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Masters of the Universe: Revelation",
+      "name": "Masters of the Universe: Revelation",
+      "original_title": "Masters of the Universe: Revelation",
+      "original_name": "Masters of the Universe: Revelation",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2021-01-01",
+      "first_air_date": "2021-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2021-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2021-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2021-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Masters of the Universe: Revelation",
+    "aliases": [
+      "Masters of the Universe: Revelation Alias"
+    ]
+  }
+}

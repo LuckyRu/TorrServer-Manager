@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:general:002:v1",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "general",
+  "work": {
+    "rank": 2,
+    "title": "The Godfather",
+    "year": 1972,
+    "mode": "movie"
+  },
+  "layoutVariant": 1,
+  "title": "The Godfather / The Godfather Alt [Movie] (1972) Blu-ray BDRip 2160p HDR10+ HEVC MKV 7.1 dual audio MVO + Original (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "2160p",
+      "sourceType": "BDRip",
+      "hdr": "HDR",
+      "audioChannels": "7.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Многоголосый",
+        "Оригинал"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 1972,
+        "to": 1972,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "H.265",
+      "container": "MKV",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "general",
+      "firstQuery": "The Godfather",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "The Godfather",
+      "name": "The Godfather",
+      "original_title": "The Godfather",
+      "original_name": "The Godfather",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1972-01-01",
+      "first_air_date": "1972-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1972-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1972-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1972-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Godfather",
+    "aliases": [
+      "The Godfather Alias"
+    ]
+  }
+}

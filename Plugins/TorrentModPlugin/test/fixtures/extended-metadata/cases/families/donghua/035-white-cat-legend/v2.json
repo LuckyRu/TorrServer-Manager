@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:anidub:donghua:035:v2",
+  "axis": "family",
+  "trackerId": "anidub",
+  "family": "donghua",
+  "work": {
+    "rank": 35,
+    "title": "White Cat Legend",
+    "year": 2020,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "White Cat Legend / White Cat Legend Alt [Special] E22 [RUS] [WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio] MVO (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "donghua",
+      "firstQuery": "White Cat Legend",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 22,
+    "movie": {
+      "title": "White Cat Legend",
+      "name": "White Cat Legend",
+      "original_title": "动画作品 35",
+      "original_name": "动画作品 35",
+      "original_language": "zh",
+      "origin_country": [
+        "CN"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2020-01-01",
+      "first_air_date": "2020-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "White Cat Legend",
+    "aliases": [
+      "White Cat Legend Alias"
+    ]
+  }
+}

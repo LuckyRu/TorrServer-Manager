@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:bigfangroup:none:028:v4",
+  "axis": "tracker",
+  "trackerId": "bigfangroup",
+  "family": null,
+  "work": {
+    "rank": 28,
+    "title": "The Wire",
+    "year": 2002,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "The Wire / The Wire Alt, [Special] E22 [США, 2002, video] WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio MVO Sub | LostFilm …",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2002,
+        "to": 2002,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

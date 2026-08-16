@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "family:exkinoray:general:007:v4",
+  "axis": "family",
+  "trackerId": "exkinoray",
+  "family": "general",
+  "work": {
+    "rank": 7,
+    "title": "Fight Club",
+    "year": 1999,
+    "mode": "movie"
+  },
+  "layoutVariant": 4,
+  "title": "Fight Club | Fight Club Alt [Movie] [США, 1999, video] BDRemux 2160p Dolby Vision H.265 MKV 7.1 3 x audio Dub + MVO + AVO + Original (LostFilm) от Scarabey, Sub - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "2160p",
+      "sourceType": "Remux",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 3,
+      "voiceTypes": [
+        "Дубляж",
+        "Многоголосый",
+        "Одноголосый",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 1999,
+        "to": 1999,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.265",
+      "container": "MKV",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "general",
+      "firstQuery": "Fight Club",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Fight Club",
+      "name": "Fight Club",
+      "original_title": "Fight Club",
+      "original_name": "Fight Club",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1999-01-01",
+      "first_air_date": "1999-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1999-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1999-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1999-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Fight Club",
+    "aliases": [
+      "Fight Club Alias"
+    ]
+  }
+}

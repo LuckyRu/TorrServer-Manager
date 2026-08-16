@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "id": "family:anidub:anime:036:v2",
+  "axis": "family",
+  "trackerId": "anidub",
+  "family": "anime",
+  "work": {
+    "rank": 36,
+    "title": "Gintama",
+    "year": 2006,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "Gintama / Gintama Alt [TV] S02E03-E10 [RUS] [WEB-DL 1080p HDR10 H.264 MP4 5.1 dual audio] MVO (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        2
+      ],
+      "episodeFrom": 3,
+      "episodeTo": 10,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "1080p",
+      "sourceType": "WEB-DL",
+      "hdr": "HDR",
+      "audioChannels": "5.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "MP4",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Gintama",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 2,
+    "episode": 3,
+    "movie": {
+      "title": "Gintama",
+      "name": "Gintama",
+      "original_title": "進撃作品 36",
+      "original_name": "進撃作品 36",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2006-01-01",
+      "first_air_date": "2006-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Gintama",
+    "aliases": [
+      "Gintama Alias"
+    ]
+  }
+}

@@ -38,8 +38,11 @@ export function buildSearchPlan(target, queries) {
     queries = Array.isArray(queries) ? queries : [];
 
     if (!isAnimeTarget(target)) {
-        var general = queries.map(function (query) { return { query: query }; });
-        return unique(general.concat(escalationPlans(target, queries)), planKey);
+        // Общий маршрут не должен повторно спрашивать профильные аниме-индексаторы: для anime и
+        // donghua они получают отдельные адресные планы, а для остальных семейств там нет контента.
+        var animeIds = animeIndexerIds();
+        var general = queries.map(function (query) { return { query: query, excludeIndexerIds: animeIds }; });
+        return unique(general.concat(escalationPlans(target, queries, animeIds)), planKey);
     }
 
     var animeQueries = buildAnimeQueries(target).slice(0, 3);

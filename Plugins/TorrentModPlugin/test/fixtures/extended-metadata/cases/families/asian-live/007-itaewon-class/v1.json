@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:asian-live:007:v1",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "asian-live",
+  "work": {
+    "rank": 7,
+    "title": "Itaewon Class",
+    "year": 2020,
+    "mode": "series"
+  },
+  "layoutVariant": 1,
+  "title": "Itaewon Class / Itaewon Class Alt [Special] E22 (2020) WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio MVO (LostFilm) Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2020,
+        "to": 2020,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "asian-live",
+      "firstQuery": "Itaewon Class",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": true,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 22,
+    "movie": {
+      "title": "Itaewon Class",
+      "name": "Itaewon Class",
+      "original_title": "인기 작품 7",
+      "original_name": "인기 작품 7",
+      "original_language": "ko",
+      "origin_country": [
+        "KR"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2020-01-01",
+      "first_air_date": "2020-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2020-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Itaewon Class",
+    "aliases": [
+      "Itaewon Class Alias"
+    ]
+  }
+}

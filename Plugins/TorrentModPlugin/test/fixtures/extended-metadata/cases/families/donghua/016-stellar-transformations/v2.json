@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "family:anidub:donghua:016:v2",
+  "axis": "family",
+  "trackerId": "anidub",
+  "family": "donghua",
+  "work": {
+    "rank": 16,
+    "title": "Stellar Transformations",
+    "year": 2018,
+    "mode": "series"
+  },
+  "layoutVariant": 2,
+  "title": "Stellar Transformations / Stellar Transformations Alt [OVA] S1-3E1-24 [RUS] [WEBRip 720p AV1 WebM 2.0 1 x audio] AVO (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        1,
+        2,
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 24,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "720p",
+      "sourceType": "WEBRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 1,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": false,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "donghua",
+      "firstQuery": "Stellar Transformations",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Stellar Transformations",
+      "name": "Stellar Transformations",
+      "original_title": "动画作品 16",
+      "original_name": "动画作品 16",
+      "original_language": "zh",
+      "origin_country": [
+        "CN"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2018-01-01",
+      "first_air_date": "2018-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Stellar Transformations",
+    "aliases": [
+      "Stellar Transformations Alias"
+    ]
+  }
+}

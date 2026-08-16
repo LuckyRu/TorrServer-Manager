@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:anidub:none:042:v5",
+  "axis": "tracker",
+  "trackerId": "anidub",
+  "family": null,
+  "work": {
+    "rank": 42,
+    "title": "Princess Mononoke",
+    "year": 1997,
+    "mode": "movie"
+  },
+  "layoutVariant": 5,
+  "title": "Princess Mononoke / Princess Mononoke Alt [Movie] [RUS] [CAMRip 480p H.263 FLV 2.0] AVO (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "480p",
+      "sourceType": "CAM",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 0,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": false,
+      "videoCodec": "H.263",
+      "container": "FLV",
+      "compatibility": "risky",
+      "compatibilityReason": "H.263"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

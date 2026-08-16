@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutor:general:041:v3",
+  "axis": "family",
+  "trackerId": "rutor",
+  "family": "general",
+  "work": {
+    "rank": 41,
+    "title": "Friends",
+    "year": 1994,
+    "mode": "series"
+  },
+  "layoutVariant": 3,
+  "title": "Friends / Friends Alt [ONA] 2x07 | 1994 | HDRip 1080p AVC MP4 5.1 dual audio | D, O | LostFilm | от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        2
+      ],
+      "episodeFrom": 7,
+      "episodeTo": 7,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "1080p",
+      "sourceType": "HDRip",
+      "hdr": "",
+      "audioChannels": "5.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Дубляж",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 1994,
+        "to": 1994,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "MP4",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "general",
+      "firstQuery": "Friends",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 2,
+    "episode": 7,
+    "movie": {
+      "title": "Friends",
+      "name": "Friends",
+      "original_title": "Friends",
+      "original_name": "Friends",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "1994-01-01",
+      "first_air_date": "1994-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1994-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1994-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1994-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Friends",
+    "aliases": [
+      "Friends Alias"
+    ]
+  }
+}

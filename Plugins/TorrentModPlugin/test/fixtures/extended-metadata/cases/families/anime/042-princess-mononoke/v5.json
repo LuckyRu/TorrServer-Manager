@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:noname-club:anime:042:v5",
+  "axis": "family",
+  "trackerId": "noname-club",
+  "family": "anime",
+  "work": {
+    "rank": 42,
+    "title": "Princess Mononoke",
+    "year": 1997,
+    "mode": "movie"
+  },
+  "layoutVariant": 5,
+  "title": "Princess Mononoke / Princess Mononoke Alt [Movie] (1997 г.) [H.263/480p] CAMRip 480p H.263 FLV 2.0 AVO (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "480p",
+      "sourceType": "CAM",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 0,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 1997,
+        "to": 1997,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "H.263",
+      "container": "FLV",
+      "compatibility": "risky",
+      "compatibilityReason": "H.263"
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Princess Mononoke",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Princess Mononoke",
+      "name": "Princess Mononoke",
+      "original_title": "進撃作品 42",
+      "original_name": "進撃作品 42",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "1997-01-01",
+      "first_air_date": "1997-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "1997-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "1997-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "1997-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Princess Mononoke",
+    "aliases": [
+      "Princess Mononoke Alias"
+    ]
+  }
+}

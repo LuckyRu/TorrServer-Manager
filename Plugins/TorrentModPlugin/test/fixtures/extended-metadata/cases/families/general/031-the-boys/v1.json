@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:general:031:v1",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "general",
+  "work": {
+    "rank": 31,
+    "title": "The Boys",
+    "year": 2019,
+    "mode": "series"
+  },
+  "layoutVariant": 1,
+  "title": "The Boys / The Boys Alt [Special] The Final Season E01-E02 (2019) DVDRip 480p XviD AVI 2.0 2 x audio Original (LostFilm) от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 1,
+      "episodeTo": 2,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": true,
+      "releaseType": "special",
+      "resolution": "480p",
+      "sourceType": "DVDRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Оригинал"
+      ],
+      "voiceType": "Оригинал",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 2019,
+        "to": 2019,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "XviD",
+      "container": "AVI",
+      "compatibility": "risky",
+      "compatibilityReason": "XviD"
+    },
+    "expectedPipeline": {
+      "family": "general",
+      "firstQuery": "The Boys",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 3,
+    "episode": 1,
+    "movie": {
+      "title": "The Boys",
+      "name": "The Boys",
+      "original_title": "The Boys",
+      "original_name": "The Boys",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2019-01-01",
+      "first_air_date": "2019-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2019-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Boys",
+    "aliases": [
+      "The Boys Alias"
+    ]
+  }
+}

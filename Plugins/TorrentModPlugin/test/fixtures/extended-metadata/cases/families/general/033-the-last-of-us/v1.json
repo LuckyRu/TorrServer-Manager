@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "id": "family:rutracker:general:033:v1",
+  "axis": "family",
+  "trackerId": "rutracker",
+  "family": "general",
+  "work": {
+    "rank": 33,
+    "title": "The Last of Us",
+    "year": 2023,
+    "mode": "series"
+  },
+  "layoutVariant": 1,
+  "title": "The Last of Us / The Last of Us Alt [TV] TV-3 [1-12 из 12] (2023) SDTV MPEG-2 MPG 2.0",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 12,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "",
+      "sourceType": "SDTV",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 0,
+      "voiceTypes": [],
+      "voiceType": "",
+      "translators": [],
+      "releaseGroups": [],
+      "year": {
+        "value": 2023,
+        "to": 2023,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "MPEG-2",
+      "container": "MPG",
+      "compatibility": "risky",
+      "compatibilityReason": "MPEG-2"
+    },
+    "expectedPipeline": {
+      "family": "general",
+      "firstQuery": "The Last of Us",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 3,
+    "episode": 1,
+    "movie": {
+      "title": "The Last of Us",
+      "name": "The Last of Us",
+      "original_title": "The Last of Us",
+      "original_name": "The Last of Us",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        18
+      ],
+      "release_date": "2023-01-01",
+      "first_air_date": "2023-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2023-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2023-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2023-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "The Last of Us",
+    "aliases": [
+      "The Last of Us Alias"
+    ]
+  }
+}

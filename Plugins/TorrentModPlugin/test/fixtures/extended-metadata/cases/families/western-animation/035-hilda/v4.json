@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "family:exkinoray:western-animation:035:v4",
+  "axis": "family",
+  "trackerId": "exkinoray",
+  "family": "western-animation",
+  "work": {
+    "rank": 35,
+    "title": "Hilda",
+    "year": 2018,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "Hilda | Hilda Alt [Special] E22 [США, 2018, video] WEB-DLRip 2160p Dolby Vision AV1 WebM 7.1 5 x audio MVO (LostFilm) Sub - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 22,
+      "episodeTo": 22,
+      "explicitSeason": false,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "special",
+      "resolution": "2160p",
+      "sourceType": "WEBRip",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 5,
+      "voiceTypes": [
+        "Многоголосый"
+      ],
+      "voiceType": "Многоголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2018,
+        "to": 2018,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "western-animation",
+      "firstQuery": "Hilda",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 22,
+    "movie": {
+      "title": "Hilda",
+      "name": "Hilda",
+      "original_title": "Hilda",
+      "original_name": "Hilda",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2018-01-01",
+      "first_air_date": "2018-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2018-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Hilda",
+    "aliases": [
+      "Hilda Alias"
+    ]
+  }
+}

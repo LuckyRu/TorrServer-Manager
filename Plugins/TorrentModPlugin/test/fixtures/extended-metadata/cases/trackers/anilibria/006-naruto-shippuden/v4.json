@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:anilibria:none:006:v4",
+  "axis": "tracker",
+  "trackerId": "anilibria",
+  "family": null,
+  "work": {
+    "rank": 6,
+    "title": "Naruto: Shippuden",
+    "year": 2007,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "Naruto: Shippuden / E01-E12 Naruto: Shippuden Alt - AniLiberty.TOP [HDRip 1080p AVC MP4 5.1 dual audio] [ONA] 2x07 Dub + Original (LostFilm) от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        2
+      ],
+      "episodeFrom": 7,
+      "episodeTo": 7,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "1080p",
+      "sourceType": "HDRip",
+      "hdr": "",
+      "audioChannels": "5.1",
+      "audioTracks": 2,
+      "voiceTypes": [
+        "Дубляж",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": true,
+      "videoCodec": "H.264",
+      "container": "MP4",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

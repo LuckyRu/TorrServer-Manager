@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "family:exkinoray:western-animation:002:v4",
+  "axis": "family",
+  "trackerId": "exkinoray",
+  "family": "western-animation",
+  "work": {
+    "rank": 2,
+    "title": "Rick and Morty",
+    "year": 2013,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "Rick and Morty | Rick and Morty Alt [OVA] S1-3E1-24 [США, 2013, video] WEBRip 720p AV1 WebM 2.0 1 x audio AVO (LostFilm) - ExKinoRay",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        1,
+        2,
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 24,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "720p",
+      "sourceType": "WEBRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 1,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": 2013,
+        "to": 2013,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "western-animation",
+      "firstQuery": "Rick and Morty",
+      "usesAnimeIndexers": false,
+      "prefersLocalTitle": false,
+      "route": "general"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Rick and Morty",
+      "name": "Rick and Morty",
+      "original_title": "Rick and Morty",
+      "original_name": "Rick and Morty",
+      "original_language": "en",
+      "origin_country": [
+        "US"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2013-01-01",
+      "first_air_date": "2013-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2013-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2013-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2013-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Rick and Morty",
+    "aliases": [
+      "Rick and Morty Alias"
+    ]
+  }
+}

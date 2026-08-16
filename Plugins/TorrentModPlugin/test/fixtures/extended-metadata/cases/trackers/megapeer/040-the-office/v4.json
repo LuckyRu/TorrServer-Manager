@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "tracker:megapeer:none:040:v4",
+  "axis": "tracker",
+  "trackerId": "megapeer",
+  "family": null,
+  "work": {
+    "rank": 40,
+    "title": "The Office",
+    "year": 2005,
+    "mode": "series"
+  },
+  "layoutVariant": 4,
+  "title": "The Office / The Office Alt [TV] TV-3 [1-12 из 12] [США, 2005, video] SDTV MPEG-2 MPG 2.0",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 12,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "tv",
+      "resolution": "",
+      "sourceType": "SDTV",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 0,
+      "voiceTypes": [],
+      "voiceType": "",
+      "translators": [],
+      "releaseGroups": [],
+      "year": {
+        "value": 2005,
+        "to": 2005,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": false,
+      "videoCodec": "MPEG-2",
+      "container": "MPG",
+      "compatibility": "risky",
+      "compatibilityReason": "MPEG-2"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  }
+}

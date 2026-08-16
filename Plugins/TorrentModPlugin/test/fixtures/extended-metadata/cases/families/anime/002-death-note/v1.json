@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "family:anilibria:anime:002:v1",
+  "axis": "family",
+  "trackerId": "anilibria",
+  "family": "anime",
+  "work": {
+    "rank": 2,
+    "title": "Death Note",
+    "year": 2006,
+    "mode": "series"
+  },
+  "layoutVariant": 1,
+  "title": "Death Note / E01-E12 Death Note Alt - AniLiberty.TOP [WEBRip 720p AV1 WebM 2.0 1 x audio] [OVA] S1-3E1-24 AVO (LostFilm)",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [
+        1,
+        2,
+        3
+      ],
+      "episodeFrom": 1,
+      "episodeTo": 24,
+      "explicitSeason": true,
+      "explicitEpisode": true,
+      "finalSeason": false,
+      "releaseType": "ova",
+      "resolution": "720p",
+      "sourceType": "WEBRip",
+      "hdr": "",
+      "audioChannels": "2.0",
+      "audioTracks": 1,
+      "voiceTypes": [
+        "Одноголосый"
+      ],
+      "voiceType": "Одноголосый",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [],
+      "year": {
+        "value": null,
+        "to": null,
+        "isRange": false,
+        "from": "tracker-has-no-year",
+        "confidence": "none"
+      },
+      "subtitles": false,
+      "videoCodec": "AV1",
+      "container": "WebM",
+      "compatibility": "risky",
+      "compatibilityReason": "AV1"
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Death Note",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "series",
+    "season": 1,
+    "episode": 1,
+    "movie": {
+      "title": "Death Note",
+      "name": "Death Note",
+      "original_title": "進撃作品 2",
+      "original_name": "進撃作品 2",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2006-01-01",
+      "first_air_date": "2006-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2006-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Death Note",
+    "aliases": [
+      "Death Note Alias"
+    ]
+  }
+}

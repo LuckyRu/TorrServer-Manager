@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "family:noname-club:anime:043:v5",
+  "axis": "family",
+  "trackerId": "noname-club",
+  "family": "anime",
+  "work": {
+    "rank": 43,
+    "title": "Howl's Moving Castle",
+    "year": 2004,
+    "mode": "movie"
+  },
+  "layoutVariant": 5,
+  "title": "Howl's Moving Castle / Howl's Moving Castle Alt [Movie] (2004 г.) [H.265/2160p] BDRemux 2160p Dolby Vision H.265 MKV 7.1 3 x audio Dub + MVO + AVO + Original (LostFilm) от Scarabey, Sub",
+  "annotation": {
+    "method": "manual-semantic-table",
+    "expectedRelease": {
+      "seasons": [],
+      "episodeFrom": 0,
+      "episodeTo": 0,
+      "explicitSeason": false,
+      "explicitEpisode": false,
+      "finalSeason": false,
+      "releaseType": "movie",
+      "resolution": "2160p",
+      "sourceType": "Remux",
+      "hdr": "DV",
+      "audioChannels": "7.1",
+      "audioTracks": 3,
+      "voiceTypes": [
+        "Дубляж",
+        "Многоголосый",
+        "Одноголосый",
+        "Оригинал"
+      ],
+      "voiceType": "Дубляж",
+      "translators": [
+        "LostFilm"
+      ],
+      "releaseGroups": [
+        "Scarabey"
+      ],
+      "year": {
+        "value": 2004,
+        "to": 2004,
+        "isRange": false,
+        "from": "delimited",
+        "confidence": "high"
+      },
+      "subtitles": true,
+      "videoCodec": "H.265",
+      "container": "MKV",
+      "compatibility": "likely",
+      "compatibilityReason": ""
+    },
+    "expectedPipeline": {
+      "family": "anime",
+      "firstQuery": "Howl's Moving Castle",
+      "usesAnimeIndexers": true,
+      "prefersLocalTitle": false,
+      "route": "anime"
+    }
+  },
+  "provenance": {
+    "popularitySource": "tmdb-popular-curated-2026-08-16",
+    "trackerGrammarSource": "local-jackett-live-corpus",
+    "grammarReference": "docs/reference/torrent-mod-tracker-formats.md#3-форматы-по-трекерам",
+    "generatedBy": "generate-corpus.mjs"
+  },
+  "target": {
+    "mode": "movie",
+    "season": 0,
+    "episode": 0,
+    "movie": {
+      "title": "Howl's Moving Castle",
+      "name": "Howl's Moving Castle",
+      "original_title": "進撃作品 43",
+      "original_name": "進撃作品 43",
+      "original_language": "ja",
+      "origin_country": [
+        "JP"
+      ],
+      "genre_ids": [
+        16
+      ],
+      "release_date": "2004-01-01",
+      "first_air_date": "2004-01-01",
+      "seasons": [
+        {
+          "season_number": 1,
+          "air_date": "2004-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 2,
+          "air_date": "2004-01-01",
+          "episode_count": 24
+        },
+        {
+          "season_number": 3,
+          "air_date": "2004-01-01",
+          "episode_count": 24
+        }
+      ]
+    },
+    "englishTitle": "Howl's Moving Castle",
+    "aliases": [
+      "Howl's Moving Castle Alias"
+    ]
+  }
+}
