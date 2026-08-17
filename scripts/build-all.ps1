@@ -148,13 +148,23 @@ function Assert-OfficialTorrServerTag {
     $escapedTag = [Uri]::EscapeDataString($Tag)
     $releaseUrl = "https://api.github.com/repos/$officialTorrServerRepository/releases/tags/$escapedTag"
     Write-Host "Проверка официального базового релиза TorrServer: $releaseUrl..."
+
+    # Upstream публикует не каждый свой тег как release: MatriX.142.2 существует как git-тег, но
+    # release для него нет — только для MatriX.142 и MatriX.143. Смысл проверки в том, что база
+    # это настоящий upstream-коммит, и сверка ls-remote ниже доказывает это строже, чем наличие
+    # release. Поэтому 404 не отвергает тег, а лишь снимает проверку stable/draft/prerelease.
+    $release = $null
     try {
         $release = Invoke-RestMethod -Headers $githubApiHeaders -Uri $releaseUrl
     } catch {
-        throw "Не удалось подтвердить официальный релиз TorrServer из GitHub: $($_.Exception.Message)"
+        $status = $_.Exception.Response.StatusCode.value__
+        if ($status -ne 404) {
+            throw "Не удалось подтвердить официальный релиз TorrServer из GitHub: $($_.Exception.Message)"
+        }
+        Write-Host "Release для '$Tag' не опубликован; проверяю тег напрямую в upstream." -ForegroundColor Yellow
     }
 
-    if ([string]$release.tag_name -ne $Tag -or $release.draft -or $release.prerelease) {
+    if ($null -ne $release -and ([string]$release.tag_name -ne $Tag -or $release.draft -or $release.prerelease)) {
         throw "Тег TorrServer '$Tag' не является официальным стабильным релизом upstream."
     }
 
