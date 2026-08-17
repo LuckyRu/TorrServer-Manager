@@ -93,11 +93,12 @@ summary:
   and still corrupt a stream by acting in the wrong order. The cache sweep moving a reader that was
   mid-read was silent under `-race` and needed a deterministic rendezvous test
   ([§5.1](docs/system-design/one-torrent-many-streams-concurrency.md)).
-- `codecToCapsName` returns `""` for any video codec outside H264/H265/AV1/VP9/VP8, and `""` makes
-  `videoIsTranscoded`'s `default` branch return **false** — so Xvid/MPEG-2/VC-1/WMV3 are *accepted*
-  and then build a pipeline with no video branch at all. The existing test hides this by setting
-  `CapsName` to a value the parser never emits
-  ([§1.1](docs/system-design/gst-pipeline-plan-architecture.md)).
+- Whether video is copied is decided **only** by `videoRemuxChain` (`task.go`): it returns the
+  passthrough element chain or `""`, and `""` means transcode unconditionally — no `Transcode*` flag
+  overrides it. Never add a second codec `switch` beside it; the old pair of independent switches
+  drifted and built pipelines with no video branch at all for Xvid/MPEG-2/VC-1
+  ([§0](docs/system-design/gst-pipeline-plan-architecture.md)). A test that sets `CapsName` by hand
+  instead of via `codecToCapsName` proves nothing — that is how the drift stayed green.
 - GStreamer seek flags are not additive: `ACCURATE` asks for the exact position, `KEY_UNIT|SNAP_AFTER`
   for the next keyframe after it. Set together, the latter wins and `ACCURATE` silently does nothing —
   the log even says `accurate=true` while the position is seconds off
