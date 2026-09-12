@@ -99,6 +99,8 @@ summary:
   drifted and built pipelines with no video branch at all for Xvid/MPEG-2/VC-1
   ([§0](docs/system-design/gst-pipeline-plan-architecture.md)). A test that sets `CapsName` by hand
   instead of via `codecToCapsName` proves nothing — that is how the drift stayed green.
+- A stored setting overrides the code default forever: `MaxTasks` sat at `0` (unlimited) on the live
+  install long after `defaultMaxTasks = 6` landed. Check `GET /gst/settings`, not just `config.go`.
 - GStreamer seek flags are not additive: `ACCURATE` asks for the exact position, `KEY_UNIT|SNAP_AFTER`
   for the next keyframe after it. Set together, the latter wins and `ACCURATE` silently does nothing —
   the log even says `accurate=true` while the position is seconds off
