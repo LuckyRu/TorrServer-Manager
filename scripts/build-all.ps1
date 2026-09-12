@@ -173,7 +173,27 @@ function Assert-OfficialTorrServerTag {
     )
     $upstreamCommit = ($upstreamRef -split '\s+')[0]
     $localCommit = Invoke-NativeOutput -FilePath 'git.exe' -Arguments @('-C', $torrServerSubmodulePath, 'rev-parse', "refs/tags/$Tag^{}")
-    if ($upstreamCommit -notmatch '^[0-9a-fA-F]{40}$' -or $localCommit.ToLowerInvariant() -ne $upstreamCommit.ToLowerInvariant()) {
+
+    # Upstream удаляет теги задним числом: MatriX.142.2 исчез после выхода 143, хотя код остался.
+    # Ярлык пропал - база не изменилась, поэтому проверяем то, что важно на самом деле: что наш
+    # базовый коммит лежит в истории upstream. Это строже совпадения метки, а не слабее.
+    if ($upstreamCommit -notmatch '^[0-9a-fA-F]{40}$') {
+        Write-Host "Тег '$Tag' у upstream удалён; проверяю базовый коммит по истории." -ForegroundColor Yellow
+        Invoke-Native -FilePath 'git.exe' -Arguments @(
+            '-C', $torrServerSubmodulePath, 'fetch', '--quiet',
+            "https://github.com/$officialTorrServerRepository.git", 'HEAD'
+        )
+        $contained = Invoke-NativeExitCode -FilePath 'git.exe' -Arguments @(
+            '-C', $torrServerSubmodulePath, 'merge-base', '--is-ancestor', $localCommit, 'FETCH_HEAD'
+        )
+        if ($contained -ne 0) {
+            throw "Базовый коммит '$Tag' ($($localCommit.Substring(0, 12))) отсутствует в истории upstream."
+        }
+        Write-Host "  Базовый коммит $($localCommit.Substring(0, 12)) подтверждён в истории upstream." -ForegroundColor Green
+        return
+    }
+
+    if ($localCommit.ToLowerInvariant() -ne $upstreamCommit.ToLowerInvariant()) {
         throw "Тег '$Tag' в submodule не совпадает с официальным upstream commit."
     }
 }
