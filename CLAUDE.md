@@ -99,6 +99,10 @@ summary:
   drifted and built pipelines with no video branch at all for Xvid/MPEG-2/VC-1
   ([§0](docs/system-design/gst-pipeline-plan-architecture.md)). A test that sets `CapsName` by hand
   instead of via `codecToCapsName` proves nothing — that is how the drift stayed green.
+- Every player URL (`video.m3u8`, `init.mp4`, `seg/N`) carries the session token, and a token with no
+  task used to return a **silent 404** — no log line at all. A session the server removes itself must
+  stay restorable (`restoreExpiredSession`); "nothing in the log after a pause" means look here first
+  ([0011](docs/system-design/gstreamer-pipeline-robustness.md)).
 - A stored setting overrides the code default forever: `MaxTasks` sat at `0` (unlimited) on the live
   install long after `defaultMaxTasks = 6` landed. Check `GET /gst/settings`, not just `config.go`.
 - GStreamer seek flags are not additive: `ACCURATE` asks for the exact position, `KEY_UNIT|SNAP_AFTER`
