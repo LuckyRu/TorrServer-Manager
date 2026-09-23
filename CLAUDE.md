@@ -39,7 +39,9 @@ No linter in this repo. The full clean build (TorrServer and Jackett submodules 
 spawns goroutines and cannot fail without `-race` is a `t.Skip`.** Scenario map, coverage audit and
 race-test design: [`docs/system-design/scenarios-and-test-plan.md`](docs/system-design/scenarios-and-test-plan.md). TorrServer is pulled in as the
 `external/TorrServer` submodule (fork `LuckyRu/TorrServer`, branch `torrserver-manager`) — downstream
-fixes are commits on that branch, not patch files; see
+fixes are commits on that branch, not patch files. The branch is a two-layer stack **rebased** (not
+merged) onto upstream release tags: edits to upstream files first, one commit per fate; `server/gstreamer`
+after. Never mix the layers in one commit — mixed commits are what spread conflicts through the stack; see
 [`docs/how-to/rebuild-patched-torrserver.md`](docs/how-to/rebuild-patched-torrserver.md). Full release checklist (version bump, deploy, plugin-cache refresh) is the
 **`release-a-change` skill**; fast JS-only iteration without a full rebuild is the **`iterate-on-a-plugin-
 without-rebuilding`** doc. Verifying UI/navigation/search behavior live is the **`verify-lampa-live`**

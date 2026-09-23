@@ -8,7 +8,10 @@ param(
     [int]$Count = 1,
     [string]$Run = '',
     [string]$Cpu = '1,2,8',
-    [string[]]$Packages = @('./gstreamer', './torr/...', './settings')
+    # Пакеты, за которые отвечаем мы. ./torr/utils не входит: в тестах upstream (MatriX.145) там
+    # гонка тест-харнесса — тест меняет глобальную переменную, пока её читает цикл соседнего теста.
+    # Рабочий код не затронут, а чинить чужой тест значит заводить патч чужого файла.
+    [string[]]$Packages = @('./gstreamer', './torr', './torr/storage/...', './settings')
 )
 
 $ErrorActionPreference = 'Stop'
