@@ -95,6 +95,10 @@ summary:
   and still corrupt a stream by acting in the wrong order. The cache sweep moving a reader that was
   mid-read was silent under `-race` and needed a deterministic rendezvous test
   ([§5.1](docs/system-design/one-torrent-many-streams-concurrency.md)).
+- The cache sweep evicts complete pieces before ones still downloading: the torrent client keeps
+  counting received chunks as had, so a responsive reader coming back to an evicted half-piece
+  reads zeros — demuxer `parse_id` failures right where an earlier session seeked away
+  ([§5.3](docs/system-design/one-torrent-many-streams-concurrency.md)).
 - Whether video is copied is decided **only** by `videoRemuxChain` (`task.go`): it returns the
   passthrough element chain or `""`, and `""` means transcode unconditionally — no `Transcode*` flag
   overrides it. Never add a second codec `switch` beside it; the old pair of independent switches
