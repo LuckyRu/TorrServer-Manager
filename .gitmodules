@@ -1,8 +1,8 @@
 [submodule "external/TorrServer"]
 	path = external/TorrServer
-	url = git@github.com:LuckyRu/TorrServer.git
+	url = https://github.com/LuckyRu/TorrServer.git
 	branch = torrserver-manager
 [submodule "external/Jackett"]
 	path = external/Jackett
-	url = git@github.com:LuckyRu/Jackett.git
+	url = https://github.com/LuckyRu/Jackett.git
 	branch = jackett-manager

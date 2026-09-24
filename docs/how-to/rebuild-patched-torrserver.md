@@ -159,7 +159,9 @@ git submodule update --init --recursive
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1 -RequireRelease
 ```
 
-Скрипт требует Git с доступом к `git@github.com:LuckyRu/TorrServer.git`, .NET 10 SDK и Node.js. Версия
+Скрипту нужны Git, .NET 10 SDK и Node.js; форки сабмодулей забираются по HTTPS без ключа. Пуш в
+форки идёт по SSH через `remote.origin.pushurl`: `git submodule sync`, который вызывает скрипт,
+переписывает только `url`. Версия
 Go читается из `external\TorrServer\server\go.mod`, затем берётся с PATH либо скачивается в
 `.tools\go-1.25.7\`; копия исходников и промежуточные файлы лежат в `.build\`. Обе папки
 игнорируются Git и не являются частью поставки. GStreamer runtime не компилируется из исходников:
