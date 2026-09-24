@@ -1,6 +1,7 @@
 {
   "name": "torrservermanager-plugins",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "version": "1.0.0",
   "description": "Build tooling for the Lampa plugins embedded in TorrServerManager (see Plugins/). No runtime Node.js dependency — this only produces the .js file(s) the .NET build embeds as resources.",
