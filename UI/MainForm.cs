@@ -26,7 +26,6 @@ internal sealed class MainForm : Form
     }
 
     private readonly ServerController controller = new();
-    private readonly FfprobeService ffprobeService = new();
     private readonly GStreamerService gStreamerService = new();
     private readonly JackettController jackettController = new();
     private readonly FlareSolverrController flareSolverrController = new();
@@ -400,31 +399,37 @@ internal sealed class MainForm : Form
                 Hide();
             }
 
-            try { await FirewallService.EnsureRulesAsync(lifetime.Token); }
+            // Each step fails on its own. On a fresh install the hub starts only after the LAN step
+            // below has reserved its URL, so this first attempt fails quietly.
+            TryStartPluginHub(reportFailure: false);
+
+            try { await gStreamerService.EnsureInstalledAsync(lifetime.Token); }
             catch (Exception exception)
             {
                 AppLog.Write(exception);
-                trayIcon.ShowBalloonTip(5000, "Файервол не настроен", exception.Message, ToolTipIcon.Warning);
+                trayIcon.ShowBalloonTip(7000, "GStreamer не установлен", exception.Message, ToolTipIcon.Warning);
             }
 
-            try { pluginHub.Start(); }
-            catch (Exception exception)
-            {
-                AppLog.Write(exception);
-                trayIcon.ShowBalloonTip(5000, "Lampa Plugin Hub не запущен", exception.Message, ToolTipIcon.Error);
-            }
-
+            var torrServerStarted = false;
             try
             {
-                await ffprobeService.EnsureInstalledAsync(lifetime.Token);
-                await gStreamerService.EnsureInstalledAsync(lifetime.Token);
                 await StartTorrServerAsync(lifetime.Token);
-                await gStreamerService.ConfigureAsync(lifetime.Token);
+                torrServerStarted = true;
             }
             catch (Exception exception)
             {
                 AppLog.Write(exception);
-                trayIcon.ShowBalloonTip(7000, "TorrServer/GStreamer не запущен", exception.Message, ToolTipIcon.Error);
+                trayIcon.ShowBalloonTip(7000, "TorrServer не запущен", exception.Message, ToolTipIcon.Error);
+            }
+
+            if (torrServerStarted)
+            {
+                try { await gStreamerService.ConfigureAsync(lifetime.Token); }
+                catch (Exception exception)
+                {
+                    AppLog.Write(exception);
+                    trayIcon.ShowBalloonTip(7000, "GStreamer не настроен", exception.Message, ToolTipIcon.Warning);
+                }
             }
 
             try { await StartJackettStackAsync(lifetime.Token); }
@@ -439,6 +444,17 @@ internal sealed class MainForm : Form
 
             await RefreshStatusAsync();
             statusTimer.Start();
+
+            // Last, because it may wait on a UAC prompt, and nothing on this computer needs it.
+            try { await LanAccessService.EnsureAsync(lifetime.Token); }
+            catch (Exception exception)
+            {
+                AppLog.Write(exception);
+                trayIcon.ShowBalloonTip(5000, "Доступ из локальной сети не настроен", exception.Message, ToolTipIcon.Warning);
+            }
+
+            if (!pluginHub.IsRunning)
+                TryStartPluginHub(reportFailure: true);
         };
         FormClosing += OnFormClosing;
         Resize += (_, _) =>
@@ -446,6 +462,17 @@ internal sealed class MainForm : Form
             if (WindowState == FormWindowState.Minimized)
                 HideToTray();
         };
+    }
+
+    private void TryStartPluginHub(bool reportFailure)
+    {
+        try { pluginHub.Start(); }
+        catch (Exception exception)
+        {
+            AppLog.Write(exception);
+            if (reportFailure)
+                trayIcon.ShowBalloonTip(5000, "Lampa Plugin Hub не запущен", exception.Message, ToolTipIcon.Error);
+        }
     }
 
     public void ShowFromTray()
@@ -1262,7 +1289,6 @@ internal sealed class MainForm : Form
         flareSolverrController.Dispose();
         pluginHub.Dispose();
         controller.Dispose();
-        ffprobeService.Dispose();
         gStreamerService.Dispose();
         lifetime.Dispose();
     }

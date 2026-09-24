@@ -20,11 +20,11 @@
 
 | Файл | Роль |
 |---|---|
-| `ServerController.cs` | `TorrServer.exe` как дочерний процесс: старт/стоп/рестарт, HTTP health-check `127.0.0.1:8090`, downstream-версия из `--version` (формат `MatriX.x.x-TorrentMod.x.x`). |
+| `ServerController.cs` | `TorrServer.exe` как дочерний процесс: старт/стоп/рестарт, HTTP health-check `127.0.0.1:8090`, downstream-версия из `--version` (формат `MatriX.x.x-TorrentMod.x.x`); версия кэшируется по времени изменения и размеру `.exe`. LAN-адрес — адаптер со шлюзом по умолчанию, а не первый попавшийся (коммутатор Hyper-V/WSL тоже числится Ethernet с частным адресом). |
 | `JackettController.cs` | `JackettConsole.exe` та же схема, без службы Windows и UAC. Флаги: `-z --DataFolder <dir> -p 9117 --NoUpdates`. |
 | `ProcessRecoveryTracker.cs` | Состояние supervisor для TorrServer, Jackett и FlareSolverr: порог HTTP-сбоев, экспоненциальный backoff и журналирование восстановления. Ручной Stop меняет желаемое состояние и не компенсируется автозапуском. |
 | `UpdateService.cs` | Проверяет официальные upstream-релизы TorrServer и сравнивает их с upstream-базой локального downstream-тега. Установка не выполняется: новая база требует rebase downstream-ветки и пересборки. |
-| `FirewallService.cs` | На старте — non-elevated проверка правил `Get-NetFirewallRule`; если нет — один elevated `New-NetFirewallRule` (`-EncodedCommand`, один UAC-запрос) для портов TorrServer/Plugin Hub. Jackett правило не нужно (loopback-only). |
+| `LanAccessService.cs` | Доступ из LAN: правила файервола для TorrServer/Plugin Hub и резервирование URL `http://+:8095/` под SID пользователя (без него `HttpListener` не слушает все интерфейсы без прав администратора). Проверка — без повышения прав (`Get-NetFirewallRule`, `netsh http show urlacl`); всё недостающее создаётся одним elevated-шагом, одним UAC-запросом. Выполняется последним шагом старта: службы не ждут ответа на UAC. Jackett правило не нужно (loopback-only). |
 
 ## Plugin Hub (`PluginHub.cs`) — крупнейший файл
 
@@ -39,6 +39,14 @@
 - Хостинг самого Lampa web-app (`/app/*`) с автообновлением по `assembly.json`.
 
 ### Gotchas
+
+- Меняющие `POST` (`/api/config`, `/api/plugins/refresh`) принимаются только с loopback **и** без `Origin` либо с `Origin`
+  самой панели (`http://127.0.0.1:8095`, `localhost`): любая страница в браузере на этом ПК тоже ходит на 127.0.0.1.
+  CORS разрешает только `GET` — Lampa с других origin хаб лишь читает.
+- `hls.js` 1.4+ берёт таймауты фрагментов только из `fragLoadPolicy`; старые `fragLoading*` в его умолчаниях игнорируются.
+  Хаб дописывает к отдаваемому `vender/hls/hls.js` скрипт, который поднимает `Hls.DefaultConfig.fragLoadPolicy`
+  (первый байт — до 60 с: сегмент GST после перемотки бывает дольше 10 с). Заменам текста в `app.min.js` нужен якорь;
+  если его нет, в `manager.log` пишется `Lampa patch not applied` — Lampa обновляется сама, и патч не должен молча отваливаться.
 
 - `HttpListenerRequest.Url.AbsolutePath` обрезает конечный слэш — маршруты `/app` и `/app/` нужно
   обрабатывать в одной ветке, иначе редирект зацикливается.

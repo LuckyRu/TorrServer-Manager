@@ -247,11 +247,29 @@ internal sealed partial class ServerController : IDisposable
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return false; }
     }
 
+    // Status is polled every few seconds by the window and the supervisor; asking the binary each
+    // time meant a new TorrServer.exe process every couple of seconds, all day long.
+    private sealed record VersionStamp(DateTime WriteTimeUtc, long Length, string Version);
+    private volatile VersionStamp? versionCache;
+
     public async Task<string> GetInstalledVersionAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(AppPaths.ServerExecutable))
+        var executable = new FileInfo(AppPaths.ServerExecutable);
+        if (!executable.Exists)
             return "не установлен";
 
+        var cached = versionCache;
+        if (cached is not null && cached.WriteTimeUtc == executable.LastWriteTimeUtc && cached.Length == executable.Length)
+            return cached.Version;
+
+        var version = await ReadVersionFromExecutableAsync(cancellationToken);
+        if (version != "неизвестно")
+            versionCache = new VersionStamp(executable.LastWriteTimeUtc, executable.Length, version);
+        return version;
+    }
+
+    private static async Task<string> ReadVersionFromExecutableAsync(CancellationToken cancellationToken)
+    {
         try
         {
             var startInfo = new ProcessStartInfo
@@ -279,20 +297,40 @@ internal sealed partial class ServerController : IDisposable
         }
     }
 
+    // This address is pushed into every TV's Lampa settings, so it has to be the adapter the LAN
+    // routes through. A Hyper-V/WSL switch also reports as Ethernet with a private address and can
+    // enumerate first; what it lacks is a default gateway.
     public static string GetPreferredLanAddress()
     {
-        var candidates = NetworkInterface.GetAllNetworkInterfaces()
+        var best = NetworkInterface.GetAllNetworkInterfaces()
             .Where(n => n.OperationalStatus == OperationalStatus.Up)
             .Where(n => n.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
-            .SelectMany(n => n.GetIPProperties().UnicastAddresses)
-            .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork)
-            .Select(a => a.Address)
-            .Where(a => !IPAddress.IsLoopback(a) && !a.ToString().StartsWith("169.254.", StringComparison.Ordinal))
-            .ToList();
+            .SelectMany(n =>
+            {
+                var properties = n.GetIPProperties();
+                var hasGateway = properties.GatewayAddresses.Any(g =>
+                    g.Address.AddressFamily == AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any));
+                var virtualAdapter = LooksVirtual(n);
+                return properties.UnicastAddresses
+                    .Select(a => a.Address)
+                    .Where(a => a.AddressFamily == AddressFamily.InterNetwork &&
+                                !IPAddress.IsLoopback(a) &&
+                                !a.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+                    .Select(a => (Address: a, Score: (hasGateway ? 4 : 0) + (IsPrivateIPv4(a) ? 2 : 0) + (virtualAdapter ? 0 : 1)));
+            })
+            .OrderByDescending(candidate => candidate.Score) // stable: ties keep the system's order
+            .Select(candidate => candidate.Address)
+            .FirstOrDefault();
 
-        var privateAddress = candidates.FirstOrDefault(IsPrivateIPv4);
-        return (privateAddress ?? candidates.FirstOrDefault() ?? IPAddress.Loopback).ToString();
+        return (best ?? IPAddress.Loopback).ToString();
     }
+
+    private static readonly string[] VirtualAdapterMarkers = ["Hyper-V", "vEthernet", "Virtual", "VMware", "VirtualBox", "WSL"];
+
+    private static bool LooksVirtual(NetworkInterface adapter) =>
+        VirtualAdapterMarkers.Any(marker =>
+            adapter.Name.Contains(marker, StringComparison.OrdinalIgnoreCase) ||
+            adapter.Description.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsPrivateIPv4(IPAddress address)
     {

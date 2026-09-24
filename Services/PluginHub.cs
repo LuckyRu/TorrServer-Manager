@@ -99,7 +99,9 @@ internal sealed class PluginHub : IDisposable
     private readonly object configLock = new();
     private readonly object cacheStateLock = new();
     private readonly object lampaAppStateLock = new();
-    private readonly HttpListener listener = new();
+    // Recreated on every Start attempt: an HttpListener whose Start failed cannot be started again,
+    // and the manager retries once the URL reservation has been created.
+    private HttpListener? listener;
     private readonly CancellationTokenSource cancellation = new();
     private readonly SemaphoreSlim refreshLock = new(1, 1);
     private readonly SemaphoreSlim lampaAppRefreshLock = new(1, 1);
@@ -135,7 +137,7 @@ internal sealed class PluginHub : IDisposable
         httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/javascript, text/javascript, */*;q=0.8");
     }
 
-    public bool IsRunning => listener.IsListening;
+    public bool IsRunning => listener?.IsListening == true;
     public string LocalPanelUrl => $"http://127.0.0.1:{AppPaths.PluginHubPort}/";
     public string LanLoaderUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/lampa.js";
     public string LampaAppUrl => $"http://{ServerController.GetPreferredLanAddress()}:{AppPaths.PluginHubPort}/app/";
@@ -143,13 +145,24 @@ internal sealed class PluginHub : IDisposable
 
     public void Start()
     {
-        if (listener.IsListening)
+        if (IsRunning)
             return;
 
-        listener.Prefixes.Add($"http://+:{AppPaths.PluginHubPort}/");
-        listener.Start();
-        listenerTask = Task.Run(() => ListenAsync(cancellation.Token));
-        refreshTask = Task.Run(() => RunRefreshLoopAsync(cancellation.Token));
+        var candidate = new HttpListener();
+        candidate.Prefixes.Add(LanAccessService.PluginHubUrlPrefix);
+        try
+        {
+            candidate.Start();
+        }
+        catch
+        {
+            candidate.Close();
+            throw;
+        }
+
+        listener = candidate;
+        listenerTask = Task.Run(() => ListenAsync(candidate, cancellation.Token));
+        refreshTask ??= Task.Run(() => RunRefreshLoopAsync(cancellation.Token));
         AppLog.Write($"Lampa Plugin Hub started at {LanLoaderUrl}.");
     }
 
@@ -195,17 +208,17 @@ internal sealed class PluginHub : IDisposable
         }
     }
 
-    private async Task ListenAsync(CancellationToken cancellationToken)
+    private async Task ListenAsync(HttpListener active, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             HttpListenerContext context;
             try
             {
-                context = await listener.GetContextAsync().WaitAsync(cancellationToken);
+                context = await active.GetContextAsync().WaitAsync(cancellationToken);
             }
             catch (OperationCanceledException) { break; }
-            catch (HttpListenerException) when (!listener.IsListening) { break; }
+            catch (HttpListenerException) when (!active.IsListening) { break; }
             catch (ObjectDisposedException) { break; }
 
             _ = Task.Run(() => HandleAsync(context), cancellationToken);
@@ -297,7 +310,7 @@ internal sealed class PluginHub : IDisposable
 
             if (context.Request.HttpMethod == "POST" && path.Equals("/api/config", StringComparison.OrdinalIgnoreCase))
             {
-                EnsureLoopback(context.Request);
+                EnsureTrustedWriter(context.Request);
                 if (context.Request.ContentLength64 > 512 * 1024)
                     throw new InvalidDataException("Слишком большой запрос.");
 
@@ -323,7 +336,7 @@ internal sealed class PluginHub : IDisposable
 
             if (context.Request.HttpMethod == "POST" && path.Equals("/api/plugins/refresh", StringComparison.OrdinalIgnoreCase))
             {
-                EnsureLoopback(context.Request);
+                EnsureTrustedWriter(context.Request);
                 var refreshed = await RefreshAllAsync(cancellation.Token);
                 await WriteJsonAsync(context.Response, new
                 {
@@ -804,15 +817,13 @@ internal sealed class PluginHub : IDisposable
         if (relativePath.Replace('\\', '/').Equals("app.min.js", StringComparison.OrdinalIgnoreCase))
         {
             var text = await File.ReadAllTextAsync(fullPath, cancellation.Token);
-            text = text
-                .Replace(
-                    "fragLoadingTimeOut:2e4,fragLoadingMaxRetry:6,fragLoadingRetryDelay:1e3,fragLoadingMaxRetryTimeout:64e3",
-                    "fragLoadingTimeOut:6e4,fragLoadingMaxRetry:12,fragLoadingRetryDelay:2e3,fragLoadingMaxRetryTimeout:300e3",
-                    StringComparison.Ordinal)
-                .Replace(
-                    "if (data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) {",
-                    "if (data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT && !data.fatal) return; if (data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) {",
-                    StringComparison.Ordinal);
+            // hls.js retries a fragment that timed out on its own; Lampa would print every such
+            // non-fatal retry over the picture.
+            text = ApplyLampaPatch(
+                text,
+                "app.min.js: FRAG_LOAD_TIMEOUT",
+                "if (data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) {",
+                "if (data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT && !data.fatal) return; if (data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) {");
             await WriteTextAsync(response, text, "application/javascript; charset=utf-8");
             return;
         }
@@ -820,11 +831,9 @@ internal sealed class PluginHub : IDisposable
         if (relativePath.Replace('\\', '/').Equals("vender/hls/hls.js", StringComparison.OrdinalIgnoreCase))
         {
             var text = await File.ReadAllTextAsync(fullPath, cancellation.Token);
-            text = text.Replace(
-                "fragLoadingTimeOut:2e4,fragLoadingMaxRetry:6,fragLoadingRetryDelay:1e3,fragLoadingMaxRetryTimeout:64e3",
-                "fragLoadingTimeOut:6e4,fragLoadingMaxRetry:12,fragLoadingRetryDelay:2e3,fragLoadingMaxRetryTimeout:300e3",
-                StringComparison.Ordinal);
-            await WriteTextAsync(response, text, "application/javascript; charset=utf-8");
+            if (!text.Contains("fragLoadPolicy", StringComparison.Ordinal))
+                ReportLampaPatchMiss("vender/hls/hls.js: fragLoadPolicy");
+            await WriteTextAsync(response, text + HlsFragmentPolicyScript, "application/javascript; charset=utf-8");
             return;
         }
 
@@ -832,6 +841,41 @@ internal sealed class PluginHub : IDisposable
         response.ContentLength64 = new FileInfo(fullPath).Length;
         await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         await stream.CopyToAsync(response.OutputStream, cancellation.Token);
+    }
+
+    // hls.js 1.4+ reads fragment timeouts only from fragLoadPolicy; the old fragLoading* defaults it
+    // still carries are ignored. A GStreamer segment after a seek can need far more than the default
+    // 10 s to its first byte, so the defaults are raised through the public Hls.DefaultConfig.
+    private const string HlsFragmentPolicyScript = """
+
+        ;(function () {
+          try {
+            var config = window.Hls && window.Hls.DefaultConfig;
+            var policy = config && config.fragLoadPolicy && config.fragLoadPolicy.default;
+            if (!policy) { console.warn('TorrServer Manager: hls.js fragLoadPolicy not found, fragment timeouts left at defaults'); return; }
+            policy.maxTimeToFirstByteMs = Math.max(policy.maxTimeToFirstByteMs || 0, 60000);
+            policy.maxLoadTimeMs = Math.max(policy.maxLoadTimeMs || 0, 60000);
+            policy.errorRetry = { maxNumRetry: 12, retryDelayMs: 2000, maxRetryDelayMs: 8000 };
+          } catch (error) { console.warn('TorrServer Manager: hls.js policy patch failed', error); }
+        })();
+        """;
+
+    private readonly ConcurrentDictionary<string, bool> reportedLampaPatchMisses = new();
+
+    // The Lampa app updates itself from upstream; a patch whose anchor disappeared has to say so
+    // instead of silently doing nothing.
+    private string ApplyLampaPatch(string text, string name, string anchor, string replacement)
+    {
+        if (text.Contains(anchor, StringComparison.Ordinal))
+            return text.Replace(anchor, replacement, StringComparison.Ordinal);
+        ReportLampaPatchMiss(name);
+        return text;
+    }
+
+    private void ReportLampaPatchMiss(string name)
+    {
+        if (reportedLampaPatchMisses.TryAdd(name, true))
+            AppLog.Write($"Lampa patch not applied, anchor not found: {name}.");
     }
 
     private static string GetLampaAppContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
@@ -1509,6 +1553,21 @@ internal sealed class PluginHub : IDisposable
             throw new UnauthorizedAccessException("Изменять и обновлять плагины можно только с этого компьютера.");
     }
 
+    // Loopback alone is not enough: any page open in a browser on this machine reaches 127.0.0.1
+    // too. Browsers attach Origin to such requests, so only the hub's own panel is accepted;
+    // clients without Origin (curl, scripts) are not browsers and cannot be tricked into calling.
+    private static void EnsureTrustedWriter(HttpListenerRequest request)
+    {
+        EnsureLoopback(request);
+        var origin = request.Headers["Origin"];
+        if (origin is null)
+            return;
+        if (Uri.TryCreate(origin, UriKind.Absolute, out var uri) &&
+            uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback && uri.Port == AppPaths.PluginHubPort)
+            return;
+        throw new UnauthorizedAccessException("Изменять плагины можно только из панели Plugin Hub на этом компьютере.");
+    }
+
     private string BuildPanelHtml()
     {
         var loaderUrl = WebUtility.HtmlEncode(LanLoaderUrl);
@@ -1617,8 +1676,9 @@ internal sealed class PluginHub : IDisposable
 
     private static void AddCommonHeaders(HttpListenerResponse response)
     {
+        // Lampa on other origins only reads from the hub; writes come from the same-origin panel.
         response.Headers["Access-Control-Allow-Origin"] = "*";
-        response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+        response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
         response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
         response.Headers["Cache-Control"] = "no-store, max-age=0";
         response.Headers["X-Content-Type-Options"] = "nosniff";
@@ -1778,9 +1838,9 @@ internal sealed class PluginHub : IDisposable
     public void Dispose()
     {
         cancellation.Cancel();
-        if (listener.IsListening)
+        if (listener?.IsListening == true)
             listener.Stop();
-        listener.Close();
+        listener?.Close();
         try { listenerTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
         try { refreshTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
         foreach (var jobId in searchJobs.Keys.ToList()) RemoveSearchJob(jobId, cancel: false);

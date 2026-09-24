@@ -94,4 +94,4 @@ Jackett кладёт в `Link` результата свой loopback download-�
 | `GET /gst/{hash}/master.m3u8?index={fileId}&audio=0&client={id}` | **Единственный транспорт воспроизведения**: GST/HLS. Плейлист уводит на `/gst/{hash}/c/{token}/…`, дальше сессия несётся в самом URL |
 | `GET /stream/...` | **Не** транспорт воспроизведения. Используется только для тихого `&preload` — прогрева следующей серии ([ADR-0003](../adr/0003-no-global-player-patching.md): `url_reserve` не передаётся, fallback на прямой поток отсутствует намеренно) |
 | `POST /cache {action:'get', hash}` | Справочный API статуса буферизации; текущий Torrent Mod не поллит его для собственного pre-start buffer |
-| `GET /ffp/{hash}/{fileId}` | ffprobe-снятые характеристики потоков (реальные, не угаданные из названия); 400, если на этой сборке TorrServer нет `ffprobe` |
+| `GET /ffp/{hash}/{fileId}` | ffprobe-снятые характеристики потоков (реальные, не угаданные из названия); 400, если TorrServer не нашёл `ffprobe`; менеджер его не ставит, так что на наших установках — всегда 400 |
