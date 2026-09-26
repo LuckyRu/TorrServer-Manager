@@ -95,10 +95,15 @@ summary:
   and still corrupt a stream by acting in the wrong order. The cache sweep moving a reader that was
   mid-read was silent under `-race` and needed a deterministic rendezvous test
   ([§5.1](docs/system-design/one-torrent-many-streams-concurrency.md)).
-- The cache sweep evicts complete pieces before ones still downloading: the torrent client keeps
-  counting received chunks as had, so a responsive reader coming back to an evicted half-piece
-  reads zeros — demuxer `parse_id` failures right where an earlier session seeked away
+- The cache sweep never evicts a piece still downloading — "last" was not enough: the torrent client
+  keeps counting received chunks as had, so a responsive reader coming back to an evicted half-piece
+  reads zeros, and every pipeline start leaves half-pieces behind at the file head. Symptom: demuxer
+  `Failed to parse Element 0xe7`/`0xab` at the start of a session
   ([§5.3](docs/system-design/one-torrent-many-streams-concurrency.md)).
+- After an accurate seek, segment timestamps start at the first frame **past the clip barrier**, in
+  stream time — the timestamper in front of it shifts buffers by 1000 h. The demuxer's keyframe put
+  every segment after a seek or a thaw up to 10 s early; hls.js hides it only when the shift exceeds
+  the segment's length ([seek-accuracy](docs/system-design/gstreamer-seek-accuracy.md)).
 - Whether video is copied is decided **only** by `videoRemuxChain` (`task.go`): it returns the
   passthrough element chain or `""`, and `""` means transcode unconditionally — no `Transcode*` flag
   overrides it. Never add a second codec `switch` beside it; the old pair of independent switches
