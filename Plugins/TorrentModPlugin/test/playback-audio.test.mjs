@@ -2,6 +2,7 @@ import './helpers/mock-lampa.mjs';
 import { createRunner } from './helpers/test-runner.mjs';
 import { flushMicrotasks } from './helpers/mock-lampa.mjs';
 import { startDownload } from '../playback/smart-preload.js';
+import { startRemoteLog, stopRemoteLog, flushRemoteLog } from '../shared/core/remote-log.js';
 
 const runner = createRunner();
 
@@ -100,6 +101,34 @@ runner.test('ручная смена дорожки рестартует GST с 
     globalThis.__emitPlayerVideo('canplay');
     const stored = Lampa.Storage.get('torrent_mod_audio_preference');
     if (!stored || !stored['42:2'] || stored['42:2'].titleNormalized !== 'original') throw new Error('preference не сохранён после canplay: ' + JSON.stringify(stored));
+});
+
+// На телевизоре выбор дорожки не перезапускал плеер, и понять почему было не из чего: пропуск
+// переключения молчал. Теперь его причина уходит в журнал на ПК.
+runner.test('пропуск переключения дорожки попадает в журнал на ПК с причиной', async () => {
+    globalThis.__clearStorage();
+    globalThis.__resetPlaybackMock();
+    const batches = [];
+    stopRemoteLog();
+    startRemoteLog({ hubBase: 'http://hub:8095', client: () => 'c-tv', send: (url, body) => { batches.push(JSON.parse(body)); return true; } });
+    try {
+        startDownload(candidate(), target());
+        await waitForPlay(1);
+        const voiceovers = globalThis.__playerPlays[0].voiceovers;
+        voiceovers[1].onSelect();
+        await waitForPlay(2);
+        voiceovers[1].onSelect();
+        flushRemoteLog();
+
+        const messages = batches.flatMap((batch) => batch.entries.map((entry) => entry.m));
+        if (!messages.some((m) => m.startsWith('restartGstPlayback: закрываю Player'))) throw new Error('перезапуск не записан: ' + JSON.stringify(messages));
+        if (!messages.some((m) => m.startsWith('switchAudioTrack: 5 → 5, пропуск: переключение уже идёт')))
+            throw new Error('пропуск не записан с причиной: ' + JSON.stringify(messages.filter((m) => m.includes('switchAudioTrack'))));
+    } finally {
+        // Settles the switch: its 70 s canplay timeout would otherwise hold the test process open.
+        globalThis.__emitPlayerVideo('canplay');
+        stopRemoteLog();
+    }
 });
 
 await runner.run();

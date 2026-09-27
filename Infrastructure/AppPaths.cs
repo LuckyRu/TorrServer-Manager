@@ -20,6 +20,9 @@ internal static class AppPaths
     // Паника Go и сообщения нативного слоя не попадают в собственный лог TorrServer: они уходят
     // в stderr, который иначе теряется вместе с процессом.
     public static readonly string ServerCrashLog = Path.Combine(LogsDirectory, "server-crash.log");
+    // Журнал Torrent Mod с устройств в сети (телевизор без devtools), см. ClientLogSink.
+    public static readonly string ClientLog = Path.Combine(LogsDirectory, "clients.log");
+    public static readonly string ClientLogPrevious = Path.Combine(LogsDirectory, "clients.previous.log");
     public static readonly string PluginHubConfig = Path.Combine(StateDirectory, "lampa-plugins.json");
     // Правила поиска, которые пользователь пополняет без пересборки: студии перевода и их
     // написания. Формат и поведение при отсутствии файла —

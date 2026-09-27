@@ -37,6 +37,7 @@
 | `GET` | `/api/config` | Текущая конфигурация (JSON) | LAN |
 | `POST` | `/api/config` | Сохранить конфигурацию + запустить рефреш | loopback |
 | `POST` | `/api/plugins/refresh` | Форс-рефреш кэша плагинов (нужен `-d ""` в curl) | loopback |
+| `POST` | `/api/client-log` | Журнал Torrent Mod с устройства → `logs\clients.log` (≤ 64 КБ, 120 запросов/мин с адреса); `204`, `429` сверх лимита | LAN |
 | `GET` | `/api/search-rules` | Студии перевода из `data\search-rules.json` (пополняются без пересборки) | LAN |
 | `GET` | `/api/torrent-search/start` | Запустить поиск: возвращает `{jobId, totalIndexers, indexers[]}`, по одной задаче на индексатор | LAN |
 | `GET` | `/api/torrent-search/poll` | Накопленные результаты и состояние каждого индексатора (`ok`, `elapsedMs`) | LAN |

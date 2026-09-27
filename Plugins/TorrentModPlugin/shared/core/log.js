@@ -1,3 +1,5 @@
+    import { recordRemote } from './remote-log.js';
+
     var PREFIX = 'Torrent Mod';
 
     export function diagnosticsState() {
@@ -45,12 +47,14 @@
         var line = PREFIX + ' [' + scope + ']: ' + message;
         if (data !== undefined) console.log(line, data);
         else console.log(line);
+        recordRemote('info', scope, message, data);
     }
 
     export function warn(scope, message, data) {
         var line = PREFIX + ' [' + scope + ']: ' + message;
         if (data !== undefined) console.warn(line, data);
         else console.warn(line);
+        recordRemote('warn', scope, message, data);
     }
 
     export function debug(scope, message, data) {

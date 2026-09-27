@@ -840,7 +840,12 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
     }
 
     function switchAudioTrack(session, file, audioIndex) {
-        if (!session.alive || session.switching || !file || audioIndex === session.activeAudioIndex) return;
+        var skipped = !session.alive ? 'сессия закрыта'
+            : session.switching ? 'переключение уже идёт'
+            : !file ? 'нет файла'
+            : audioIndex === session.activeAudioIndex ? 'дорожка уже выбрана' : '';
+        log('playback', 'switchAudioTrack: ' + session.activeAudioIndex + ' → ' + audioIndex + (skipped ? ', пропуск: ' + skipped : ''), { session: session.id });
+        if (skipped) return;
         session.switching = true;
         var track = (session.probes[String(file.id)] || []).filter(function (item) { return item.index === audioIndex; })[0];
         session.pendingAudioPreference = preferenceFromTrack(track);
@@ -852,6 +857,7 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
             session.activeAudioIndex = transport.audioIndex;
             restartGstPlayback(session, file);
         }, function (message) {
+            warn('playback', 'switchAudioTrack: дорожка не подготовлена: ' + message, { session: session.id, alive: session.alive });
             if (!session.alive) return;
             session.pendingAudioPreference = null;
             session.switching = false;
@@ -874,30 +880,32 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
             try { Lampa.PlayerVideo.listener.remove('canplay', onCanPlay); } catch (e) {}
             try { Lampa.PlayerVideo.listener.remove('error', onError); } catch (e) {}
         }
-        function finish(ok) {
+        function finish(ok, how) {
             if (settled) return;
             settled = true;
             cleanup();
+            log('playback', 'watchTrackSwitch: ' + (ok ? 'дорожка переключена' : 'переключение не удалось') + ' (' + how + ')', { session: session.id, alive: session.alive });
             if (!session.alive) return;
             if (ok && session.pendingAudioPreference) rememberAudioPreference(session, session.pendingAudioPreference);
             if (!ok) notify('Не удалось переключить перевод');
             session.pendingAudioPreference = null;
             session.switching = false;
         }
-        function onCanPlay() { finish(true); }
-        function onError(event) { if (!event || event.fatal !== false) finish(false); }
+        function onCanPlay() { finish(true, 'canplay'); }
+        function onError(event) { if (!event || event.fatal !== false) finish(false, 'error ' + (event && event.error || '')); }
         try {
             Lampa.PlayerVideo.listener.follow('canplay', onCanPlay);
             Lampa.PlayerVideo.listener.follow('error', onError);
             untrackCleanup = fileScope.track(cleanup);
-            timer = fileScope.setTimeout(function () { finish(false); }, 70000);
-        } catch (e) { finish(false); }
+            timer = fileScope.setTimeout(function () { finish(false, 'нет canplay за 70 с'); }, 70000);
+        } catch (e) { finish(false, 'исключение ' + e); }
     }
 
     function restartGstPlayback(session, file) {
         // No source-replace API: close() destroys the old video synchronously; the switching guard keeps the session alive until the new Player is created.
-        try { Lampa.Player.close(); } catch (e) {}
-        if (!session.alive) return;
+        log('playback', 'restartGstPlayback: закрываю Player', { session: session.id, audio: session.activeAudioIndex });
+        try { Lampa.Player.close(); } catch (e) { warn('playback', 'restartGstPlayback: Player.close упал', e); }
+        if (!session.alive) { warn('playback', 'restartGstPlayback: сессия закрылась вместе с Player', { session: session.id }); return; }
         session.clicked = false;
         watchTrackSwitch(session);
         startGstPlayback(session);

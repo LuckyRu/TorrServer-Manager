@@ -46,6 +46,8 @@ ADR/system-design/reference там, где одно объясняет друг�
   [`how-to/iterate-on-a-plugin-without-rebuilding.md`](how-to/iterate-on-a-plugin-without-rebuilding.md)
 - **Нужно проверить, как на самом деле ведёт себя Lampa?** →
   [`how-to/verify-lampa-behavior-live.md`](how-to/verify-lampa-behavior-live.md)
+- **Сбой на телевизоре, где нет devtools?** →
+  [`how-to/diagnose-a-tv-client.md`](how-to/diagnose-a-tv-client.md)
 - **Точная карта компонентов** → [`reference/architecture-map.md`](reference/architecture-map.md)
 - **API Lampa для плагинов** (Component/Activity, Explorer/Scroll/Filter/Select/Controller, Template,
   TMDB, дизайн-токены, нативные парсеры сезонов/серий) → [`reference/lampa-plugin-api.md`](reference/lampa-plugin-api.md)

@@ -14,6 +14,7 @@
 | `MainForm.cs` | Трей/окно статуса. Опрос статуса каждые 2.5с. Закрытие окна прячет в трей; выход — только через пункт трея. |
 | `AppPaths.cs` | Единый источник путей и портов. |
 | `AppLog.cs` | Файловый логгер (`manager.log`), ошибки логирования проглатываются — логирование не должно ронять трей-приложение. |
+| `ClientLogSink.cs` | Приём журнала Torrent Mod с устройств в LAN (`POST /api/client-log` хаба) в `logs/clients.log`: лимит тела 64 КБ, частота по адресу, строки без управляющих символов, ротация на 10 МБ. Клиент подписан как `c:…` — тем же хешем, что в `server.log`. См. [диагностику телевизора](../how-to/diagnose-a-tv-client.md). |
 | `IconFactory.cs` | Рендер иконки трея (GDI+, буква «T» + цветной статус-индикатор). |
 
 ## Управляемые процессы
@@ -36,13 +37,15 @@
 - `/lampa.js` — bootstrap loader, читает `/api/config`, инжектит включённые плагины.
 - `/jackett/*` — reverse proxy к loopback Jackett (см. [ADR-0002](../adr/0002-jackett-loopback-reverse-proxy.md)).
 - `/api/torrent-search` — агрегированный поиск через Jackett для Torrent Mod.
+- `POST /api/client-log` — журнал Torrent Mod с телевизора и других устройств (`ClientLogSink`).
 - Хостинг самого Lampa web-app (`/app/*`) с автообновлением по `assembly.json`.
 
 ### Gotchas
 
 - Меняющие `POST` (`/api/config`, `/api/plugins/refresh`) принимаются только с loopback **и** без `Origin` либо с `Origin`
   самой панели (`http://127.0.0.1:8095`, `localhost`): любая страница в браузере на этом ПК тоже ходит на 127.0.0.1.
-  CORS разрешает только `GET` — Lampa с других origin хаб лишь читает.
+  CORS разрешает только `GET` — Lampa с других origin хаб лишь читает. Исключение — `POST /api/client-log`: он
+  открыт для LAN намеренно (иначе телевизор не может сообщить о сбое) и приходит простым запросом без preflight.
 - `hls.js` 1.4+ берёт таймауты фрагментов только из `fragLoadPolicy`; старые `fragLoading*` в его умолчаниях игнорируются.
   Хаб дописывает к отдаваемому `vender/hls/hls.js` скрипт, который поднимает `Hls.DefaultConfig.fragLoadPolicy`
   (первый байт — до 60 с: сегмент GST после перемотки бывает дольше 10 с). Заменам текста в `app.min.js` нужен якорь;

@@ -96,6 +96,7 @@ internal sealed class PluginHub : IDisposable
         WriteIndented = true
     };
 
+    private readonly ClientLogSink clientLog = new();
     private readonly object configLock = new();
     private readonly object cacheStateLock = new();
     private readonly object lampaAppStateLock = new();
@@ -331,6 +332,14 @@ internal sealed class PluginHub : IDisposable
                     refresh = refreshed,
                     plugins = BuildPluginViews(Snapshot())
                 });
+                return;
+            }
+
+            // The one write open to the LAN, not only to the panel: a TV has to be able to report.
+            if (context.Request.HttpMethod == "POST" && path.Equals("/api/client-log", StringComparison.OrdinalIgnoreCase))
+            {
+                var accepted = await clientLog.AcceptAsync(context.Request, cancellation.Token);
+                context.Response.StatusCode = accepted ? (int)HttpStatusCode.NoContent : 429;
                 return;
             }
 
@@ -1676,7 +1685,8 @@ internal sealed class PluginHub : IDisposable
 
     private static void AddCommonHeaders(HttpListenerResponse response)
     {
-        // Lampa on other origins only reads from the hub; writes come from the same-origin panel.
+        // Lampa on other origins only reads, apart from the client log, which it sends as a simple
+        // POST that needs no preflight; configuration writes come from the same-origin panel.
         response.Headers["Access-Control-Allow-Origin"] = "*";
         response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
         response.Headers["Access-Control-Allow-Headers"] = "Content-Type";

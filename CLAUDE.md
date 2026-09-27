@@ -46,6 +46,9 @@ after. Never mix the layers in one commit — mixed commits are what spread conf
 **`release-a-change` skill**; fast JS-only iteration without a full rebuild is the **`iterate-on-a-plugin-
 without-rebuilding`** doc. Verifying UI/navigation/search behavior live is the **`verify-lampa-live`**
 skill — Lampa has no public API docs, its own source and a live instance are the only ground truth.
+The user watches on an LG TV, where Lampa plays HLS natively rather than through hls.js: a browser
+check is not a TV check. The TV's plugin and player logs land in `%LOCALAPPDATA%\TorrServer\logs\
+clients.log` ([`docs/how-to/diagnose-a-tv-client.md`](docs/how-to/diagnose-a-tv-client.md)).
 
 `external/Jackett` is the `LuckyRu/Jackett` fork on branch `jackett-manager`; downstream tags use
 `v<upstream>-JackettManager.<downstream>` (for example `v0.24.2413-JackettManager.1`). The full

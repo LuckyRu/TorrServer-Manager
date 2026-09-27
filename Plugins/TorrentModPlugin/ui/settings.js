@@ -28,6 +28,12 @@
 
         Lampa.SettingsApi.addParam({
             component: 'torrent_mod',
+            param: { name: 'torrent_mod_remote_log', type: 'trigger', default: true },
+            field: { name: 'Журнал на ПК', description: 'Отправлять журнал плагина и плеера в TorrServer Manager, чтобы разбирать сбои на телевизоре' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'torrent_mod',
             param: { name: 'torrent_mod_perf_diagnostics', type: 'trigger', default: false },
             field: { name: 'Диагностика производительности', description: 'Замеры проекций, DOM-коммитов и долгих задач; включать только на время профилирования' }
         });
