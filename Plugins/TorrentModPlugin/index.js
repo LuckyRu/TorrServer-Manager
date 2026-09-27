@@ -6,6 +6,7 @@
     import { log, applyDebugSetting } from './shared/core/log.js';
     import { startRemoteLog } from './shared/core/remote-log.js';
     import { clientId } from './playback/client-identity.js';
+    import { describeEnvironment } from './shared/device-environment.js';
     import { enabled } from './shared/utils.js';
 
     function main() {
@@ -16,7 +17,8 @@
             hubBase: hubBase,
             version: VERSION,
             client: clientId,
-            isEnabled: function () { return enabled('torrent_mod_remote_log', true); }
+            isEnabled: function () { return enabled('torrent_mod_remote_log', true); },
+            environment: describeEnvironment
         });
         applyDebugSetting(enabled('torrent_mod_debug', false));
         addStyles();

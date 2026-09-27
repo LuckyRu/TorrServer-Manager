@@ -16,6 +16,7 @@ internal sealed class ClientLogSink
     private const int MaxBodyBytes = 64 * 1024;
     private const int MaxEntriesPerBatch = 500;
     private const int MaxMessageChars = 2000;
+    private const int MaxEnvironmentChars = 6000;
     private const int MaxRequestsPerMinute = 120;
     private const long MaxBytesPerMinute = 2L * 1024 * 1024;
     private const long RotateAtBytes = 10L * 1024 * 1024;
@@ -40,6 +41,8 @@ internal sealed class ClientLogSink
         string? Ua,
         string? Page,
         string? Lampa,
+        long SentAt,
+        Dictionary<string, JsonElement>? Env,
         List<Entry>? Entries);
 
     private sealed record Entry(long T, string? L, string? S, string? M);
@@ -70,6 +73,12 @@ internal sealed class ClientLogSink
                 .Append(Flatten($"{batch.Platform}, Lampa {batch.Lampa}, Torrent Mod {batch.Version}, {batch.Page}, UA: {batch.Ua}", MaxMessageChars))
                 .Append('\n');
         }
+        if (batch.Env is { Count: > 0 })
+        {
+            lines.Append(Stamp(DateTimeOffset.Now)).Append("  ").Append(prefix).Append("  ---- env: ")
+                .Append(Flatten(DescribeEnvironment(batch.Env, batch.SentAt), MaxEnvironmentChars))
+                .Append('\n');
+        }
         foreach (var entry in entries)
         {
             var time = entry.T > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(entry.T).ToLocalTime() : DateTimeOffset.Now;
@@ -81,6 +90,19 @@ internal sealed class ClientLogSink
         }
         Append(lines.ToString());
         return true;
+    }
+
+    // The device clock stamps every entry, so its offset from this PC is what lines them up
+    // against server.log.
+    private static string DescribeEnvironment(Dictionary<string, JsonElement> environment, long sentAt)
+    {
+        var parts = environment
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => $"{pair.Key}={(pair.Value.ValueKind == JsonValueKind.String ? pair.Value.GetString() : pair.Value.GetRawText())}");
+        var text = string.Join("; ", parts);
+        if (sentAt > 0)
+            text = $"clockOffsetMs={sentAt - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds():+0;-0;0}; " + text;
+        return text;
     }
 
     // Matches TorrServer's shortSum, so a line here and a `client=c:…` line in server.log name

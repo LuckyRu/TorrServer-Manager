@@ -99,6 +99,12 @@ export function flushRemoteLog() {
     if (!state.buffer.length) return;
 
     var payload = header();
+    var environment = null;
+    if (state.environment) {
+        try { environment = JSON.stringify(state.environment()); } catch (e) { environment = JSON.stringify({ error: String(e) }); }
+        if (environment !== state.sentEnvironment) payload.env = JSON.parse(environment);
+    }
+    payload.sentAt = now();
     payload.entries = [];
     var size = JSON.stringify(payload).length;
     while (state.buffer.length) {
@@ -107,7 +113,10 @@ export function flushRemoteLog() {
         payload.entries.push(state.buffer.shift());
         size += entrySize;
     }
-    if (state.send(state.hubBase + '/api/client-log', JSON.stringify(payload))) state.sentMeta = true;
+    if (state.send(state.hubBase + '/api/client-log', JSON.stringify(payload))) {
+        state.sentMeta = true;
+        if (payload.env) state.sentEnvironment = environment;
+    }
     if (state.buffer.length) schedule(FLUSH_MS);
 }
 
@@ -124,7 +133,7 @@ export function recordRemote(level, scope, message, data) {
     schedule(level === 'warn' || level === 'error' ? URGENT_FLUSH_MS : FLUSH_MS);
 }
 
-// options: hubBase, version, client(), isEnabled(); send(url, body) only for tests.
+// options: hubBase, version, client(), isEnabled(), environment(); send(url, body) only for tests.
 export function startRemoteLog(options) {
     options = options || {};
     if (state) return;
@@ -132,6 +141,8 @@ export function startRemoteLog(options) {
         hubBase: String(options.hubBase || ''),
         version: String(options.version || ''),
         client: options.client || null,
+        environment: options.environment || null,
+        sentEnvironment: '',
         isEnabled: options.isEnabled || function () { return true; },
         send: options.send || defaultSend,
         buffer: [],
