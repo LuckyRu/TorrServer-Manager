@@ -7,6 +7,7 @@ import { scoreSeriesFile } from './series-file-selection.js';
     import { buildSeriesPlayerData } from './series-player.js';
     import { normalizeAudioTracks, preferenceFromTrack, resolvePreferredTrack } from './audio-tracks.js';
     import { clientId } from './client-identity.js';
+    import { traceMenuItem } from './audio-track-trace.js';
 import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
     import { createLifecycle } from '../shared/core/lifecycle.js';
     import {
@@ -242,14 +243,14 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
 
     function voiceoversFor(session, file, tracks, selectedIndex) {
         return tracks.map(function (track) {
-            return {
+            return traceMenuItem({
                 index: track.index,
                 language: track.language,
                 label: track.label,
                 extra: track.extra,
                 selected: track.index === selectedIndex,
                 onSelect: function () { switchAudioTrack(session, file, track.index); }
-            };
+            });
         });
     }
 
@@ -936,6 +937,10 @@ import { log, warn, debug, debugEnabled } from '../shared/core/log.js';
         var started = false;
         var cancelHandoff = handoffPreparationShell(session);
         try { Lampa.Player.play(data); started = true; } catch (e) { warn('playback', 'startGstPlayback: Player.play failed', e); }
+        try {
+            var accepted = Lampa.Player.playdata && Lampa.Player.playdata();
+            log('playback', 'startGstPlayback: дорожек в данных плеера Lampa: ' + (accepted && accepted.voiceovers ? accepted.voiceovers.length : 'нет'));
+        } catch (e) {}
         if (!started) {
             cancelHandoff();
             closePreparationShell(session, false);
